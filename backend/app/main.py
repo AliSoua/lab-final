@@ -1,3 +1,4 @@
+# app/main.py
 import os
 from fastapi import FastAPI, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -33,12 +34,19 @@ app.include_router(admin.router)
 app.include_router(vcenter_router)
 app.include_router(esxi_router)
 
-# Conditionally include test router
+# Conditionally include test routers
 if TEST_MODE:
     from app.routers.vsphere.esxi_test import router as esxi_test_router
+    from app.routers.vsphere.vcenter_test import router as vcenter_test_router
+    
     app.include_router(esxi_test_router)
-    print(f"⚠️  TEST MODE ENABLED: ESXi test routes mounted at /vsphere/esxi-test/")
-    print(f"   Using ESXi host: {os.getenv('ESXI_TEST_HOST', '192.168.1.100')}")
+    app.include_router(vcenter_test_router)
+    
+    print(f"⚠️  TEST MODE ENABLED:")
+    print(f"   - ESXi test routes: /vsphere/esxi-test/")
+    print(f"   - vCenter test routes: /vsphere/vcenter-test/")
+    print(f"   Using ESXi host: {os.getenv('ESXI_TEST_HOST', 'Not set')}")
+    print(f"   Using vCenter host: {os.getenv('VCENTER_HOST', 'Not set')}")
 
 @app.get("/")
 def root():
@@ -66,7 +74,7 @@ def custom_openapi():
         }
     }
     
-    # Apply security to specific paths (only secure non-test paths)
+    # Apply security to specific paths (production routes only)
     paths_to_secure = [
         "/auth/check",
         "/auth/logout", 
@@ -74,10 +82,10 @@ def custom_openapi():
         "/admin/users/{user_id}/roles",
         "/credentials/moderators/",
         "/credentials/moderators/{user_id}",
-        "/vsphere/vcenter/connection",
+        "/vsphere/vcenter/health",  # Production vCenter routes
+        "/vsphere/vcenter/hosts",
         "/vsphere/vcenter/templates",
-        "/vsphere/vcenter/info",
-        "/vsphere/esxi/connection",
+        "/vsphere/esxi/connection",  # Production ESXi routes
         "/vsphere/esxi/templates",
         "/vsphere/esxi/info"
     ]
