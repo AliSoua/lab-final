@@ -7,9 +7,9 @@ import sys
 
 load_dotenv()
 
-KEYCLOAK_SERVER = os.getenv("KEYCLOAK_SERVER", "http://localhost:8080")
-ADMIN_USER = os.getenv("KEYCLOAK_ADMIN_USER", "admin")
-ADMIN_PASSWORD = os.getenv("KEYCLOAK_ADMIN_PASSWORD", "admin")
+KEYCLOAK_SERVER = os.getenv("KEYCLOAK_SERVER")
+ADMIN_USER = os.getenv("KEYCLOAK_ADMIN_USER")
+ADMIN_PASSWORD = os.getenv("KEYCLOAK_ADMIN_PASSWORD")
 
 REALM_NAME = "lab-orchestration"
 CLIENT_ID = "lab-backend"
@@ -113,6 +113,8 @@ for role in ROLES:
 USERS = [
     {"username": "testadmin", "email": "testadmin@local.test", "firstName": "Test", "lastName": "Admin", "password": "testadmin123", "role": "admin"},
     {"username": "testmoderator", "email": "testmoderator@local.test", "firstName": "Test", "lastName": "Moderator", "password": "testmoderator123", "role": "moderator"},
+    {"username": "testmoderator2", "email": "testmoderator2@local.test", "firstName": "Test", "lastName": "Moderator", "password": "testmoderator123", "role": "moderator"},
+    {"username": "testmoderator3", "email": "testmoderator3@local.test", "firstName": "Test", "lastName": "Moderator", "password": "testmoderator123", "role": "moderator"},
     {"username": "testtrainee", "email": "testtrainee@local.test", "firstName": "Test", "lastName": "Trainee", "password": "testtrainee123", "role": "trainee"},
 ]
 

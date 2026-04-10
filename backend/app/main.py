@@ -1,5 +1,6 @@
 # app/main.py
 import os
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.openapi.docs import get_swagger_ui_html
@@ -15,6 +16,22 @@ from app.routers.credentials import router as credentials_router
 from app.routers.users import admin
 from app.routers.auth import router as auth_router
 from app.routers.vsphere import vcenter_router, esxi_router
+from app.routers.LabDefinition import lab_definition_router
+from app.config.connection.postgres_client import init_db  # Changed from create_db_tables/drop_db_tables
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # ── Startup ────────────────────────────────────────────────────────────────
+    # Initialize database: creates tables (optionally drops first if uncommented in init_db)
+    init_db()
+    
+    yield
+
+    # ── Shutdown ───────────────────────────────────────────────────────────────
+    # No database cleanup on shutdown (data persists between restarts)
+    pass
+
 
 app = FastAPI(
     title="Lab Platform API",
@@ -22,6 +39,7 @@ app = FastAPI(
     description="API with Keycloak Authentication",
     docs_url=None,
     redoc_url=None,
+    lifespan=lifespan,
 )
 
 # Security scheme
@@ -33,6 +51,7 @@ app.include_router(auth_router)
 app.include_router(admin.router)
 app.include_router(vcenter_router)
 app.include_router(esxi_router)
+app.include_router(lab_definition_router)
 
 # Conditionally include test routers
 if TEST_MODE:
@@ -87,7 +106,10 @@ def custom_openapi():
         "/vsphere/vcenter/templates",
         "/vsphere/esxi/connection",  # Production ESXi routes
         "/vsphere/esxi/templates",
-        "/vsphere/esxi/info"
+        "/vsphere/esxi/info",
+        "/lab-definitions/",
+        "/lab-definitions/full",
+        "/lab-definitions/{lab_id}",
     ]
     
     for path in paths_to_secure:
