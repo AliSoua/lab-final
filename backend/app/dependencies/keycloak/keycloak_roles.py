@@ -1,3 +1,4 @@
+# app/dependencies/keycloak/keycloak_roles.py
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from keycloak.exceptions import KeycloakInvalidTokenError, KeycloakConnectionError
