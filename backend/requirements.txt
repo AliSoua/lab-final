@@ -25,9 +25,16 @@ flower>=2.0.0  # Web UI for Celery monitoring
 # Async PostgreSQL (for SQLAlchemy async operations)
 asyncpg>=0.29.0
 
+# PostgreSQL driver (required by asyncpg)
+psycopg2-binary>=2.9.9
+
+# ORM layer
+SQLAlchemy>=2.0.0
+
 # Additional utilities for background tasks
 tenacity>=8.2.0  # Retry logic (alternative to Celery's built-in)
 orjson>=3.9.0    # Fast JSON processing for Celery serialization
+
 
 # Monitoring/Metrics (optional but recommended)
 prometheus-client>=0.19.0  # For metrics export

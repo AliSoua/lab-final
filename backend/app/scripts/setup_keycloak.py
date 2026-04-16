@@ -1,4 +1,4 @@
-# app/scripts/setup_keycloak.py
+# backend/app/scripts/setup_keycloak.py
 from keycloak import KeycloakAdmin
 from keycloak.exceptions import KeycloakConnectionError, KeycloakGetError
 from dotenv import load_dotenv

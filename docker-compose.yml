@@ -1,60 +1,52 @@
-version: "3.9"
+  services:
+    db:
+      image: postgres:15-alpine
+      container_name: database-lab
+      restart: always
+      environment:
+        POSTGRES_USER: ${POSTGRES_USER}
+        POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+        POSTGRES_DB: ${POSTGRES_DB}
+      ports:
+        - "5432:5432"
+      volumes:
+        - pgdata_lab_platform:/var/lib/postgresql/data
 
-services:
-  db:
-    image: postgres:15-alpine
-    container_name: db-lab-platform
-    restart: always
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: lab_platform
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata_lab_platform:/var/lib/postgresql/data
+    keycloak:
+      image: quay.io/keycloak/keycloak:24.0.3
+      container_name: keycloak
+      command: start-dev
+      restart: always
+      environment:
+        KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN}
+        KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      ports:
+        - "8080:8080"
 
-  keycloak:
-    image: quay.io/keycloak/keycloak:24.0.3
-    container_name: dev-keycloak
-    command: start-dev
-    restart: always
-    environment:
-      KEYCLOAK_ADMIN: admin
-      KEYCLOAK_ADMIN_PASSWORD: admin
-    ports:
-      - "8080:8080"
+    backend:
+      build:
+        context: ./backend
+      container_name: fastapi-backend
+      restart: always
+      depends_on:
+        - db
+      ports:
+        - "8000:8000"
+      volumes:
+        - ./backend:/app
 
-  backend:
-    build: ./backend
-    container_name: backend-lab
-    restart: always
-    depends_on:
-      - db
-      - keycloak
-    env_file:
-      - ./backend/.env
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./backend:/app
-    command: >
-      sh -c "pip install --no-cache-dir -r requirements.txt &&
-             uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    frontend:
+      build:
+        context: ./frontend
+      container_name: react-frontend
+      restart: always
+      depends_on:
+        - backend
+      ports:
+        - "5173:5173"
+      volumes:
+        - ./frontend:/app
+        - /app/node_modules
 
-  frontend:
-    build: ./frontend
-    container_name: frontend-lab
-    restart: always
-    depends_on:
-      - backend
-    ports:
-      - "5173:5173"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
-    command: >
-      sh -c "npm install && npm run dev -- --host"
-
-volumes:
-  pgdata_lab_platform:
+  volumes:
+    pgdata_lab_platform:
