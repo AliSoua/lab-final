@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Optional, List
 from uuid import UUID
 
 from pydantic import BaseModel, Field, ConfigDict
@@ -25,7 +25,6 @@ class LabDifficulty(str, Enum):
 
 
 class LabCategory(str, Enum):
-    """Predefined lab categories for consistent classification"""
     networking = "networking"
     security = "security"
     cloud = "cloud"
@@ -81,12 +80,12 @@ class LabDefinitionBase(BaseModel):
     )
     category: LabCategory = Field(
         default=LabCategory.other,
-        description="Primary category (now enforced as enum)"
+        description="Primary category"
     )
     track: Optional[str] = Field(
         None, 
         max_length=100,
-        description="Learning track/collection name (e.g., 'CCNA', 'Security+')"
+        description="Learning track/collection name"
     )
 
     # Media
@@ -94,6 +93,20 @@ class LabDefinitionBase(BaseModel):
         None, 
         max_length=500,
         description="URL to lab thumbnail image"
+    )
+
+    # Learning Content
+    objectives: List[str] = Field(
+        default_factory=list,
+        description="Learning objectives for this lab"
+    )
+    prerequisites: List[str] = Field(
+        default_factory=list,
+        description="Prerequisites needed before starting"
+    )
+    tags: List[str] = Field(
+        default_factory=list,
+        description="Searchable tags for categorization"
     )
 
     model_config = ConfigDict(
@@ -109,7 +122,10 @@ class LabDefinitionBase(BaseModel):
                 "cooldown_minutes": 30,
                 "difficulty": "beginner",
                 "category": "security",
-                "track": "CCNA Security"
+                "track": "CCNA Security",
+                "objectives": ["Configure firewalls", "Understand VLANs"],
+                "prerequisites": ["Basic networking knowledge"],
+                "tags": ["security", "networking", "firewall"]
             }
         }
     )
@@ -124,7 +140,6 @@ class LabDefinitionCreate(BaseModel):
     Schema for creating a new lab definition.
     
     Note: created_by is injected from Keycloak token (sub claim) by the router.
-    Do not send this in the request body - it will be overwritten.
     """
     slug: str = Field(..., max_length=255)
     name: str = Field(..., max_length=255)
@@ -138,12 +153,17 @@ class LabDefinitionCreate(BaseModel):
     cooldown_minutes: int = Field(0, ge=0)
 
     difficulty: LabDifficulty = LabDifficulty.beginner
-    category: LabCategory = LabCategory.other  # Now required as enum
+    category: LabCategory = LabCategory.other
     track: Optional[str] = Field(None, max_length=100)
 
     thumbnail_url: Optional[str] = Field(None, max_length=500)
 
-    # This is set by the router from JWT token - not required in request
+    # Learning Content
+    objectives: List[str] = Field(default_factory=list)
+    prerequisites: List[str] = Field(default_factory=list)
+    tags: List[str] = Field(default_factory=list)
+
+    # Injected by API
     created_by: Optional[str] = Field(
         default=None,
         description="Keycloak user ID (sub claim) - injected by API"
@@ -153,6 +173,14 @@ class LabDefinitionCreate(BaseModel):
 # =============================================================================
 # UPDATE SCHEMA
 # =============================================================================
+
+class FeatureLabDefinition(BaseModel):
+    is_featured: bool
+    featured_priority: int = 0
+    updated_by: Optional[str] = Field(
+        default=None,
+        description="Keycloak user ID (sub claim) - injected by API"
+    )
 
 class LabDefinitionUpdate(BaseModel):
     """
@@ -171,10 +199,24 @@ class LabDefinitionUpdate(BaseModel):
     cooldown_minutes: Optional[int] = Field(None, ge=0)
 
     difficulty: Optional[LabDifficulty] = None
-    category: Optional[LabCategory] = None  # Changed to enum
+    category: Optional[LabCategory] = None
     track: Optional[str] = Field(None, max_length=100)
 
     thumbnail_url: Optional[str] = Field(None, max_length=500)
+
+    # Learning Content - Added
+    objectives: Optional[List[str]] = Field(
+        default=None,
+        description="Learning objectives for this lab"
+    )
+    prerequisites: Optional[List[str]] = Field(
+        default=None,
+        description="Prerequisites needed before starting"
+    )
+    tags: Optional[List[str]] = Field(
+        default=None,
+        description="Searchable tags for categorization"
+    )
 
     # This is set by the router from JWT token - not required in request
     updated_by: Optional[str] = Field(
@@ -206,25 +248,59 @@ class LabDefinitionResponse(BaseModel):
 
     # Classification
     difficulty: LabDifficulty
-    category: LabCategory  # Now returns as enum string
+    category: LabCategory
     track: Optional[str]
 
     thumbnail_url: Optional[str]
 
-    # Audit fields - Keycloak user IDs (sub claims)
-    created_by: str = Field(
-        ...,
-        description="Keycloak User ID (sub) who created this lab"
-    )
+    # Learning Content
+    objectives: List[str] = Field(default_factory=list)
+    prerequisites: List[str] = Field(default_factory=list)
+    tags: List[str] = Field(default_factory=list)
+
+    # Featured fields
+    is_featured: bool = Field(default=False, description="Whether this lab is featured in hero section")
+    featured_priority: int = Field(default=0, description="Display priority for featured labs")
+
+    # Audit fields
+    created_by: str = Field(...)
     created_at: datetime
     
-    updated_by: Optional[str] = Field(
-        None,
-        description="Keycloak User ID (sub) who last updated this lab"
-    )
+    updated_by: Optional[str] = Field(None)
     updated_at: datetime
 
     published_at: Optional[datetime]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PublicLabDefinitionResponse(BaseModel):
+    """Public lab definition response - excludes audit fields and internal metadata"""
+    id: UUID
+    
+    # Core fields
+    slug: str
+    name: str
+    description: str
+    short_description: Optional[str] = None
+
+    status: LabStatus
+    
+    # Configuration - user-facing only
+    duration_minutes: int
+    max_concurrent_users: int
+
+    # Classification
+    difficulty: LabDifficulty
+    category: LabCategory
+    track: Optional[str] = None
+
+    thumbnail_url: Optional[str] = None
+
+    # Learning Content - Added for public catalog
+    objectives: List[str] = Field(default_factory=list)
+    prerequisites: List[str] = Field(default_factory=list)
+    tags: List[str] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -239,8 +315,13 @@ class LabDefinitionFilter(BaseModel):
     difficulty: Optional[LabDifficulty] = None
     status: Optional[LabStatus] = None
     track: Optional[str] = None
-    created_by: Optional[str] = None  # Filter by Keycloak user ID
+    created_by: Optional[str] = None
     search: Optional[str] = Field(
         None, 
         description="Search in name, description, or slug"
+    )
+    # New filter options
+    tag: Optional[str] = Field(
+        None,
+        description="Filter by specific tag"
     )

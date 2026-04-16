@@ -14,7 +14,10 @@ class LabVM(Base):
 
     # Relationships
     lab_id = Column(UUID(as_uuid=True), ForeignKey("lab_definitions.id"), nullable=False)
-    vm_template_id = Column(UUID(as_uuid=True), ForeignKey("vm_templates.id"), nullable=False)
+
+    # This references external templates from vCenter/ESXi, not local db records
+    vm_template_id = Column(String(255), nullable=False, index=True)
+    # Examples: "550e8400-e29b-41d4-a716-446655440001" or "esxi-template-01"
 
     # Lab-specific config
     name = Column(String(255), nullable=False)  # e.g. "web-server"
@@ -31,7 +34,6 @@ class LabVM(Base):
 
     # Relationships
     lab = relationship("LabDefinition", back_populates="vms")
-    vm_template = relationship("VMTemplate", back_populates="lab_vms")
 
     def __repr__(self):
         return f"<LabVM(id={self.id}, name={self.name}, lab_id={self.lab_id})>"

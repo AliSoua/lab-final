@@ -1,0 +1,107 @@
+version: "3.8"
+
+services:
+  # Your existing services (backend, frontend, db, keycloak...)
+  
+  # Redis - Celery Broker & Result Backend
+  redis:
+    image: redis:7-alpine
+    container_name: platform-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - platform-network
+
+  # Celery Worker - Processes background tasks
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: platform-celery-worker
+    restart: unless-stopped
+    command: >
+      celery -A app.core.celery worker 
+      --loglevel=info 
+      --queues=lab.provisioning,lab.cleanup,lab.monitoring,default
+      --concurrency=4
+      --hostname=worker@%h
+      --max-tasks-per-child=100
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/platform
+      - KEYCLOAK_URL=http://keycloak:8080
+    volumes:
+      - ./backend:/app
+      - /var/run/docker.sock:/var/run/docker.sock  # If need Docker-in-Docker
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - platform-network
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+
+  # Celery Beat - Task Scheduler
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: platform-celery-beat
+    restart: unless-stopped
+    command: >
+      celery -A app.core.celery beat 
+      --loglevel=info 
+      --scheduler celery.beat.PersistentScheduler
+      --schedule /tmp/celerybeat-schedule
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/platform
+    volumes:
+      - ./backend:/app
+      - celery-beat-data:/tmp
+    depends_on:
+      redis:
+        condition: service_healthy
+      celery-worker:
+        condition: service_started
+    networks:
+      - platform-network
+
+  # Flower - Celery Monitoring Dashboard
+  flower:
+    image: mher/flower:2.0
+    container_name: platform-flower
+    restart: unless-stopped
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - FLOWER_PORT=5555
+      - FLOWER_BASIC_AUTH=admin:your-secure-password-here  # Change this!
+    ports:
+      - "5555:5555"
+    depends_on:
+      - redis
+      - celery-worker
+    networks:
+      - platform-network
+
+volumes:
+  redis-data:
+  celery-beat-data:
+
+networks:
+  platform-network:
+    driver: bridge

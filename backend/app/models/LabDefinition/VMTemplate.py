@@ -24,8 +24,5 @@ class VMTemplate(Base):
     ram = Column(Integer, default=2048)  # MB
     disk = Column(Integer, default=20)   # GB
 
-    # Reverse relationship
-    lab_vms = relationship("LabVM", back_populates="vm_template")
-
     def __repr__(self):
         return f"<VMTemplate(id={self.id}, name={self.name})>"

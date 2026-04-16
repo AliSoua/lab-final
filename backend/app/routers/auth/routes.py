@@ -1,4 +1,4 @@
-# app/routers/auth.py
+# app/routers/auth/routes.py
 from fastapi import APIRouter, HTTPException, status, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from keycloak.exceptions import (
@@ -10,7 +10,7 @@ from keycloak.exceptions import (
 )
 import logging
 
-from app.schemas.auth import LoginRequest, TokenResponse, CheckAuthResponse, LogoutRequest
+from app.schemas.auth import LoginRequest, TokenResponse, CheckAuthResponse, LogoutRequest, RefreshRequest
 from app.config.connection.keycloak_client import keycloak_connection, keycloak_openid
 
 logger = logging.getLogger(__name__)
@@ -56,6 +56,59 @@ def login(data: LoginRequest):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal error"
+        )
+
+# REFRESH TOKEN - Exchange refresh token for new access token
+@router.post("/refresh", response_model=TokenResponse)
+def refresh_token(data: RefreshRequest):
+    """
+    Exchange a refresh token for a new access token and refresh token pair.
+    Called automatically by frontend before access token expires.
+    """
+    if not keycloak_connection.is_connected:
+        conn_status = keycloak_connection.check_connection()
+        if not conn_status["connected"]:
+            logger.error(f"Keycloak unavailable: {conn_status.get('error')}")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Authentication service unavailable"
+            )
+    
+    try:
+        # Keycloak refresh token flow
+        token = keycloak_openid.refresh_token(data.refresh_token)
+        logger.info("Token refreshed successfully")
+        return TokenResponse(
+            access_token=token["access_token"],
+            refresh_token=token["refresh_token"],
+            expires_in=token["expires_in"],
+            refresh_expires_in=token["refresh_expires_in"],
+            token_type=token.get("token_type", "Bearer"),
+            scope=token.get("scope", "")
+        )
+    except KeycloakInvalidTokenError:
+        logger.warning("Refresh failed - invalid or expired refresh token")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired refresh token. Please log in again."
+        )
+    except KeycloakAuthenticationError as e:
+        logger.warning(f"Refresh authentication error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid refresh token"
+        )
+    except KeycloakConnectionError:
+        logger.error("Keycloak connection error during token refresh")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Service unavailable"
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error during token refresh: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to refresh token"
         )
 
 # CHECK AUTH - Requires Bearer token

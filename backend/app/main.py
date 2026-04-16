@@ -5,8 +5,10 @@ from fastapi import FastAPI, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
+from fastapi.middleware.cors import CORSMiddleware  # ADD THIS IMPORT
 from dotenv import load_dotenv
-
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
 load_dotenv()
 
 # Check test mode
@@ -17,6 +19,8 @@ from app.routers.users import admin
 from app.routers.auth import router as auth_router
 from app.routers.vsphere import vcenter_router, esxi_router
 from app.routers.LabDefinition import lab_definition_router
+from app.routers.profile import routes as profile_router
+from app.routers.LabInstance import router as lab_instance_router
 from app.config.connection.postgres_client import init_db  # Changed from create_db_tables/drop_db_tables
 
 
@@ -45,6 +49,37 @@ app = FastAPI(
 # Security scheme
 security = HTTPBearer(auto_error=False)
 
+# ============================================
+# CORS CONFIGURATION - ADD THIS SECTION
+# ============================================
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",    # Vite dev server
+        "http://localhost:3000",    # Alternative React dev server
+        "http://127.0.0.1:5173",    # Alternative localhost address
+    ],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "Accept",
+        "Origin",
+        "X-Requested-With",
+        "X-Total-Count",
+    ],
+)
+
+
+# ============================================
+# STATIC FILES - Serve uploaded images
+# ============================================
+uploads_dir = Path("uploads/images")
+uploads_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/images", StaticFiles(directory=str(uploads_dir)), name="images")
+
+# ============================================
 # Include standard routers
 app.include_router(credentials_router)
 app.include_router(auth_router)
@@ -52,6 +87,8 @@ app.include_router(admin.router)
 app.include_router(vcenter_router)
 app.include_router(esxi_router)
 app.include_router(lab_definition_router)
+app.include_router(profile_router.router)
+app.include_router(lab_instance_router) 
 
 # Conditionally include test routers
 if TEST_MODE:
@@ -110,6 +147,15 @@ def custom_openapi():
         "/lab-definitions/",
         "/lab-definitions/full",
         "/lab-definitions/{lab_id}",
+        "/lab-definitions/{lab_id}/guide-blocks",
+        "/lab-definitions/{lab_id}/guide-blocks/{block_id}",
+        "/lab-definitions/featured",
+        "/lab-definitions/{lab_id}/feature",
+        "/lab-definitions/{lab_id}/feature/{priority}",
+        "/lab-definitions/{lab_id}/unfeature",
+        "/profile/me",
+        "/profile/me/stats",
+        "/profile/sync",
     ]
     
     for path in paths_to_secure:

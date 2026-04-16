@@ -1,11 +1,33 @@
 fastapi==0.115.6
-uvicorn[standard]==0.23.2
+uvicorn[standard]>=0.27
+
 python-dotenv==1.0.0
 hvac==2.4.0
 python-keycloak==7.1.1
-pydantic==2.6.0
+
+pydantic[email]>=2.7,<3
+
 requests==2.33.1
 python-jose==3.5.0
 PyJWT>=2.8.0
 cryptography>=41.0.0
+
 pyvmomi>=8.0.0
+Pillow>=10.0.0
+aiofiles>=23.2.1
+python-multipart>=0.0.6
+
+# Celery & Task Queue
+celery[redis]>=5.3.0
+redis>=5.0.0
+flower>=2.0.0  # Web UI for Celery monitoring
+
+# Async PostgreSQL (for SQLAlchemy async operations)
+asyncpg>=0.29.0
+
+# Additional utilities for background tasks
+tenacity>=8.2.0  # Retry logic (alternative to Celery's built-in)
+orjson>=3.9.0    # Fast JSON processing for Celery serialization
+
+# Monitoring/Metrics (optional but recommended)
+prometheus-client>=0.19.0  # For metrics export

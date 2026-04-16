@@ -1,50 +1,82 @@
 # Python
 __pycache__/
+**/__pycache__/
+**/**/__pycache__/
+**/**/**/__pycache__/
+
 *.py[cod]
 *.pyo
 *.pyd
 *.so
 *.pyc
-**/__pycache__/
+**/*.pyc
+**/**/*.pyc
+**/**/**/*.pyc
 
 # Virtual environments
 venv/
 .venv/
 env/
 ENV/
+**/venv/
+**/.venv/
+**/env/
+**/ENV/
 
 # Environment variables
 .env
 .env.*
 !.env.example
+**/.env
+**/.env.*
 
 # Logs
 *.log
+**/*.log
 
 # Database
 *.db
 *.sqlite3
+**/*.db
+**/*.sqlite3
 
 # IDEs / Editors
 .vscode/
 .idea/
 *.swp
 *.swo
+**/.vscode/
+**/.idea/
 
 # OS files
 .DS_Store
 Thumbs.db
+**/.DS_Store
+**/Thumbs.db
 
 # Pytest / coverage
 .pytest_cache/
 .coverage
 htmlcov/
+**/.pytest_cache/
+**/htmlcov/
 
 # Build / dist
 build/
 dist/
 *.egg-info/
+**/build/
+**/dist/
+**/*.egg-info/
 
 # Misc
 *.bak
 *.tmp
+**/*.bak
+**/*.tmp
+
+# public images
+uploads/
+
+# celery beat schedule files
+celerybeat-schedule*
