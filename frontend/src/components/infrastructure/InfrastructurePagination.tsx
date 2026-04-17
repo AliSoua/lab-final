@@ -1,8 +1,8 @@
-// src/components/LabDefinition/ListLabDefinitions/Pagination.tsx
+// src/components/infrastructure/InfrastructurePagination.tsx
 import { cn } from "@/lib/utils"
 import { ChevronLeft, ChevronRight } from "lucide-react"
 
-interface PaginationProps {
+interface InfrastructurePaginationProps {
     currentPage: number
     totalPages: number
     totalItems: number
@@ -11,14 +11,14 @@ interface PaginationProps {
     isLoading?: boolean
 }
 
-export function Pagination({
+export function InfrastructurePagination({
     currentPage,
     totalPages,
     totalItems,
     itemsPerPage,
     onPageChange,
     isLoading
-}: PaginationProps) {
+}: InfrastructurePaginationProps) {
     const startItem = totalItems === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1
     const endItem = Math.min(currentPage * itemsPerPage, totalItems)
 
@@ -26,37 +26,29 @@ export function Pagination({
         const pages: (number | string)[] = []
 
         if (totalPages <= 7) {
-            // Show all pages if 7 or fewer
             for (let i = 1; i <= totalPages; i++) {
                 pages.push(i)
             }
         } else {
-            // Always show first page
-            pages.push(1)
-
             if (currentPage <= 3) {
-                // Near start: show 2, 3, 4, 5, then ellipsis and last
-                pages.push(2, 3, 4, 5, "...", totalPages)
+                pages.push(1, 2, 3, 4, 5, "...", totalPages)
             } else if (currentPage >= totalPages - 2) {
-                // Near end: show ellipsis, then last 5 pages
-                pages.push("...", totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages)
+                pages.push(1, "...", totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages)
             } else {
-                // Middle: show ellipsis, current-1, current, current+1, ellipsis, last
-                pages.push("...", currentPage - 1, currentPage, currentPage + 1, "...", totalPages)
+                pages.push(1, "...", currentPage - 1, currentPage, currentPage + 1, "...", totalPages)
             }
         }
 
         return pages
     }
 
-    // Don't render if only one page
     if (totalPages <= 1) {
         return (
             <div className="flex items-center justify-between pt-4 border-t border-[#e8e8e8]">
                 <span className="text-xs text-[#727373]">
                     Showing <span className="font-medium text-[#3a3a3a]">{startItem}</span> -{" "}
                     <span className="font-medium text-[#3a3a3a]">{endItem}</span> of{" "}
-                    <span className="font-medium text-[#3a3a3a]">{totalItems}</span> lab definitions
+                    <span className="font-medium text-[#3a3a3a]">{totalItems}</span> items
                 </span>
             </div>
         )
@@ -64,16 +56,13 @@ export function Pagination({
 
     return (
         <div className="flex items-center justify-between pt-4 border-t border-[#e8e8e8]">
-            {/* Results info */}
             <span className="text-xs text-[#727373]">
                 Showing <span className="font-medium text-[#3a3a3a]">{startItem}</span> -{" "}
                 <span className="font-medium text-[#3a3a3a]">{endItem}</span> of{" "}
-                <span className="font-medium text-[#3a3a3a]">{totalItems}</span> lab definitions
+                <span className="font-medium text-[#3a3a3a]">{totalItems}</span> items
             </span>
 
-            {/* Pagination controls */}
             <div className="flex items-center gap-1">
-                {/* Previous button */}
                 <button
                     onClick={() => onPageChange(currentPage - 1)}
                     disabled={currentPage === 1 || isLoading}
@@ -88,7 +77,6 @@ export function Pagination({
                     <ChevronLeft className="h-4 w-4" />
                 </button>
 
-                {/* Page numbers */}
                 {getPageNumbers().map((page, index) => (
                     <button
                         key={index}
@@ -108,7 +96,6 @@ export function Pagination({
                     </button>
                 ))}
 
-                {/* Next button */}
                 <button
                     onClick={() => onPageChange(currentPage + 1)}
                     disabled={currentPage === totalPages || isLoading}

@@ -316,6 +316,14 @@ async def create_full_lab_definition_with_thumbnail(
         # Validate guide blocks (now they're Pydantic models)
         guide_service.validate_guide(guide_blocks_list)
         
+        # CHECK FOR EXISTING SLUG BEFORE CREATING
+        existing = db.query(LabDefinition).filter(LabDefinition.slug == slug).first()
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Lab with slug '{slug}' already exists"
+            )
+
         # Create Lab Definition
         lab = LabDefinition(
             name=name,

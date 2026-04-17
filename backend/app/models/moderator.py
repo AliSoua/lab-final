@@ -2,8 +2,7 @@
 from dataclasses import dataclass
 
 @dataclass
-class Moderator:
+class ModeratorCredentials:
     user_id: str
     esxi_host: str = ""
     username: str = ""
-    password: str = ""

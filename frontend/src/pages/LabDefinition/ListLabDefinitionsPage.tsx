@@ -21,7 +21,7 @@ const DEFAULT_FILTERS: LabDefinitionFilters = {
 
 export default function ListLabDefinitionsPage() {
     const navigate = useNavigate()
-    const { user } = useAuth() // Get current user for role-based actions
+    const { user } = useAuth()
     const [currentPage, setCurrentPage] = useState(1)
     const [filters, setFilters] = useState<LabDefinitionFilters>(DEFAULT_FILTERS)
 
@@ -34,8 +34,11 @@ export default function ListLabDefinitionsPage() {
         search: filters.searchQuery || undefined,
     }), [currentPage, filters])
 
-    const { labs, isLoading, error, refetch, totalCount } = useListLabs(apiParams)
-    const totalPages = Math.ceil(totalCount / ITEMS_PER_PAGE)
+    const { labs, isLoading, error, refetch, totalCount = 0 } = useListLabs(apiParams)
+
+    // Ensure we have valid numbers for pagination
+    const validTotalCount = typeof totalCount === 'number' ? totalCount : 0
+    const totalPages = Math.max(1, Math.ceil(validTotalCount / ITEMS_PER_PAGE))
 
     const handleFiltersChange = useCallback((newFilters: LabDefinitionFilters) => {
         setFilters(newFilters)
@@ -55,10 +58,9 @@ export default function ListLabDefinitionsPage() {
         }
     }
 
-    // Feature/Unfeature handlers - Admin only
     const handleFeature = async (lab: LabDefinition) => {
         try {
-            await featureLab(lab.id, 0) // Default priority 0
+            await featureLab(lab.id, 0)
             toast.success(`"${lab.name}" is now featured`)
             refetch()
         } catch (err) {
@@ -88,34 +90,33 @@ export default function ListLabDefinitionsPage() {
     const handleDelete = async (lab: LabDefinition) => console.log("Delete lab:", lab.id)
 
     return (
-        <div className="flex flex-col h-full bg-slate-50/50">
+        <div className="flex flex-col h-full bg-[#f9f9f9]">
             {/* Header Section */}
-            <div className="bg-white border-b border-slate-200 px-6 py-5 shrink-0">
+            <div className="bg-white border-b border-[#e8e8e8] px-6 py-5 shrink-0">
                 <div className="flex items-center justify-between w-full px-4">
                     <div>
-                        <h1 className="text-xl font-semibold text-slate-900">
+                        <h1 className="text-xl font-semibold text-[#3a3a3a]">
                             Lab Definitions
                         </h1>
-                        <p className="text-sm text-slate-500 mt-0.5">
+                        <p className="text-sm text-[#727373] mt-0.5">
                             Manage and publish lab environments for trainees
                         </p>
                     </div>
 
-                    {/* Button Group */}
                     <div className="flex items-center gap-2">
                         <button
                             onClick={handleCreateFull}
                             disabled={isLoading}
                             className={cn(
                                 "flex items-center gap-2 rounded-lg px-4 py-2",
-                                "border border-slate-300 bg-white text-slate-700",
+                                "border border-[#d4d4d4] bg-white text-[#3a3a3a]",
                                 "text-sm font-medium",
-                                "hover:bg-slate-50 hover:border-slate-400",
+                                "hover:bg-[#f5f5f5] hover:border-[#c4c4c4]",
                                 "transition-all duration-200",
                                 "disabled:opacity-50 disabled:cursor-not-allowed"
                             )}
                         >
-                            <Layers className="h-4 w-4 text-slate-500" />
+                            <Layers className="h-4 w-4 text-[#727373]" />
                             <span>Create Full Lab</span>
                         </button>
 
@@ -125,7 +126,7 @@ export default function ListLabDefinitionsPage() {
                             className={cn(
                                 "flex items-center gap-2 rounded-lg px-4 py-2",
                                 "bg-[#1ca9b1] text-white text-sm font-medium",
-                                "hover:bg-[#158a91] hover:shadow-md",
+                                "hover:bg-[#17959c] hover:shadow-md",
                                 "transition-all duration-200",
                                 "disabled:opacity-50 disabled:cursor-not-allowed"
                             )}
@@ -138,7 +139,7 @@ export default function ListLabDefinitionsPage() {
             </div>
 
             {/* Filters Toolbar */}
-            <div className="bg-white border-b border-slate-200 px-6 py-4 shrink-0">
+            <div className="bg-white border-b border-[#e8e8e8] px-6 py-4 shrink-0">
                 <div className="w-full px-4">
                     <FilterComponent
                         filters={filters}
@@ -151,7 +152,6 @@ export default function ListLabDefinitionsPage() {
             {/* Main Content Area */}
             <div className="flex-1 overflow-y-auto p-6">
                 <div className="w-full px-4 space-y-4">
-                    {/* Error State */}
                     {error && (
                         <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
                             <p className="text-sm text-red-700">{error}</p>
@@ -164,25 +164,24 @@ export default function ListLabDefinitionsPage() {
                         </div>
                     )}
 
-                    {/* Table Container - Updated with userRole and feature handlers */}
                     <LabDefinitionTable
                         labs={labs}
                         isLoading={isLoading}
-                        userRole={user?.role} // Pass user role for admin checks
+                        userRole={user?.role}
                         onView={handleView}
                         onEdit={handleEdit}
                         onDelete={handleDelete}
                         onPublish={handlePublish}
-                        onFeature={handleFeature}      // Admin only
-                        onUnfeature={handleUnfeature}  // Admin only
+                        onFeature={handleFeature}
+                        onUnfeature={handleUnfeature}
                     />
 
-                    {/* Pagination */}
-                    {!isLoading && totalCount > 0 && (
+                    {/* Pagination - Always show if we have items */}
+                    {!isLoading && validTotalCount > 0 && (
                         <Pagination
                             currentPage={currentPage}
-                            totalPages={totalPages || 1}
-                            totalItems={totalCount}
+                            totalPages={totalPages}
+                            totalItems={validTotalCount}
                             itemsPerPage={ITEMS_PER_PAGE}
                             onPageChange={handlePageChange}
                             isLoading={isLoading}

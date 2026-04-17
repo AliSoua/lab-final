@@ -1,18 +1,19 @@
 // src/components/LabDefinition/CreateFullLabDefinitions/GuideStep.tsx
 import { cn } from "@/lib/utils"
 import { useFormContext, useFieldArray } from "react-hook-form"
-import type { CreateFullLabDefinitionFormData, GuideBlockType } from "@/types/LabDefinition/CreateFullLabDefinition"
+import { GuideBlockType } from "@/types/LabDefinition/CreateFullLabDefinition"
+import type { CreateFullLabDefinitionFormData } from "@/types/LabDefinition/CreateFullLabDefinition"
 import { BookOpen, Plus, Trash2, Type, Terminal, GripVertical } from "lucide-react"
 
 const BLOCK_TYPES: { value: GuideBlockType; label: string; icon: React.ReactNode }[] = [
-    { value: "text", label: "Text Block", icon: <Type className="h-4 w-4" /> },
-    { value: "cmd", label: "Command Block", icon: <Terminal className="h-4 w-4" /> },
+    { value: GuideBlockType.TEXT, label: "Text Block", icon: <Type className="h-4 w-4" /> },
+    { value: GuideBlockType.CMD, label: "Command Block", icon: <Terminal className="h-4 w-4" /> },
 ]
 
 export function GuideStep() {
-    const { control, register, watch, setValue } = useFormContext<CreateFullLabDefinitionFormData>()
+    const { control, register, watch } = useFormContext<CreateFullLabDefinitionFormData>()
 
-    const { fields, append, remove, move } = useFieldArray({
+    const { fields, append, remove } = useFieldArray({
         control,
         name: "guide_blocks",
     })
@@ -23,7 +24,7 @@ export function GuideStep() {
             content: "",
             title: "",
             order: fields.length,
-            block_metadata: type === "cmd" ? {
+            block_metadata: type === GuideBlockType.CMD ? {
                 working_directory: "/home/user",
                 timeout: 300,
                 sudo: false,
@@ -48,7 +49,7 @@ export function GuideStep() {
                 <div className="flex items-center gap-2">
                     <button
                         type="button"
-                        onClick={() => addBlock("text")}
+                        onClick={() => addBlock(GuideBlockType.TEXT)}
                         className={cn(
                             "flex items-center gap-2 px-3 py-2 rounded-lg border border-[#e8e8e8]",
                             "text-[12px] font-medium text-[#3a3a3a] hover:bg-[#f5f5f5]",
@@ -60,7 +61,7 @@ export function GuideStep() {
                     </button>
                     <button
                         type="button"
-                        onClick={() => addBlock("cmd")}
+                        onClick={() => addBlock(GuideBlockType.CMD)}
                         className={cn(
                             "flex items-center gap-2 px-3 py-2 rounded-lg",
                             "bg-[#1ca9b1] text-white text-[12px] font-medium",
@@ -87,13 +88,13 @@ export function GuideStep() {
                                 <div className="flex-1 space-y-3">
                                     <div className="flex items-center justify-between">
                                         <div className="flex items-center gap-2">
-                                            {blockType === "text" ? (
+                                            {blockType === GuideBlockType.TEXT ? (
                                                 <Type className="h-4 w-4 text-[#1ca9b1]" />
                                             ) : (
                                                 <Terminal className="h-4 w-4 text-[#1ca9b1]" />
                                             )}
                                             <span className="text-[12px] font-medium text-[#727373] uppercase">
-                                                {blockType === "text" ? "Text Block" : "Command Block"}
+                                                {blockType === GuideBlockType.TEXT ? "Text Block" : "Command Block"}
                                             </span>
                                         </div>
                                         <button
@@ -121,9 +122,9 @@ export function GuideStep() {
                                     {/* Content */}
                                     <div className="space-y-2">
                                         <label className="text-[11px] font-medium text-[#727373] uppercase">
-                                            {blockType === "text" ? "Content" : "Command"}
+                                            {blockType === GuideBlockType.TEXT ? "Content" : "Command"}
                                         </label>
-                                        {blockType === "text" ? (
+                                        {blockType === GuideBlockType.TEXT ? (
                                             <textarea
                                                 {...register(`guide_blocks.${index}.content` as const, { required: true })}
                                                 rows={4}
@@ -154,7 +155,7 @@ export function GuideStep() {
                                     </div>
 
                                     {/* Block-specific settings */}
-                                    {blockType === "cmd" && (
+                                    {blockType === GuideBlockType.CMD && (
                                         <div className="grid grid-cols-3 gap-3 pt-3 border-t border-[#f0f0f0]">
                                             <label className="flex items-center gap-2 text-[12px] text-[#727373]">
                                                 <input
@@ -196,7 +197,7 @@ export function GuideStep() {
                         <div className="flex items-center justify-center gap-3">
                             <button
                                 type="button"
-                                onClick={() => addBlock("text")}
+                                onClick={() => addBlock(GuideBlockType.TEXT)}
                                 className="text-[13px] text-[#1ca9b1] font-medium hover:text-[#17959c]"
                             >
                                 Add text block
@@ -204,7 +205,7 @@ export function GuideStep() {
                             <span className="text-[#c4c4c4]">or</span>
                             <button
                                 type="button"
-                                onClick={() => addBlock("cmd")}
+                                onClick={() => addBlock(GuideBlockType.CMD)}
                                 className="text-[13px] text-[#1ca9b1] font-medium hover:text-[#17959c]"
                             >
                                 Add command block

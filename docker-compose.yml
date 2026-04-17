@@ -1,3 +1,4 @@
+version: '3.8'
 services:
   db:
     image: postgres:15-alpine
@@ -22,6 +23,24 @@ services:
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
     ports:
       - "8080:8080"
+    volumes:
+      - keycloak_data:/opt/keycloak/data  # Persist H2 database
+
+  vault:
+    image: hashicorp/vault:latest
+    container_name: vault
+    restart: always
+    ports:
+      - "127.0.0.1:8200:8200"
+    cap_add:
+      - IPC_LOCK
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: root
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+    command: >
+      server -dev
+      -dev-root-token-id=root
+      -dev-listen-address=0.0.0.0:8200
 
   backend:
     build:
@@ -30,10 +49,16 @@ services:
     restart: always
     depends_on:
       - db
+      - vault
     ports:
       - "8000:8000"
     volumes:
       - ./backend:/app
+    environment:
+      # HARD-CODE the Docker-internal URL here
+      - VAULT_ADDR=http://vault:8200
+      - VAULT_TOKEN=root
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
 
   frontend:
     build:
@@ -50,3 +75,4 @@ services:
 
 volumes:
   pgdata_lab_platform:
+  keycloak_data:  # Add this volume

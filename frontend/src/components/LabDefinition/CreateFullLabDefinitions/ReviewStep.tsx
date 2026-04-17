@@ -1,7 +1,7 @@
 // src/components/LabDefinition/CreateFullLabDefinitions/ReviewStep.tsx
 import { cn } from "@/lib/utils"
 import { useFormContext } from "react-hook-form"
-import type { CreateFullLabDefinitionFormData } from "@/types/LabDefinition/CreateLabDefinition"
+import type { CreateFullLabDefinitionFormData } from "@/types/LabDefinition/CreateFullLabDefinition"
 import { FileText, Server, BookOpen, Clock, Tag, GraduationCap, Check, Sparkles } from "lucide-react"
 
 export function ReviewStep() {

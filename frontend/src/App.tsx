@@ -12,6 +12,11 @@ import CreateFullLabDefinitionsPage from "@/pages/LabDefinition/CreateFullLabDef
 import LabDetailPage from "@/pages/LabDefinition/detail/index"
 import { ProfilePage } from "@/pages/profile/ProfilePage"
 
+// Infrastructure
+import InfrastructurePage from "@/pages/infrastructure/InfrastructurePage"
+// Credentials Vault
+import CredentialsPage from "@/pages/credentials/CredentialsPage"
+
 import { Loader2 } from "lucide-react"
 
 // ── Route guards ────────────────────────────────────────────────────────────────
@@ -137,6 +142,10 @@ function App() {
         <Route path="lab-definitions" element={<ListLabDefinitionsPage />} />
         <Route path="lab-definitions/create-simple" element={<CreateSimpleLabDefinitionsPage />} />
         <Route path="lab-definitions/create-full" element={<CreateFullLabDefinitionsPage />} />
+
+        <Route path="infrastructure" element={<InfrastructurePage />} />
+
+        <Route path="credentials" element={<CredentialsPage />} />
       </Route>
 
       {/* Catch all - redirect to home */}

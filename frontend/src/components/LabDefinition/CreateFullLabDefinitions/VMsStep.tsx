@@ -57,8 +57,6 @@ export function VMsStep() {
         name: "vms",
     })
 
-    const vms = watch("vms")
-
     // Load demo data with VALID UUIDs
     useEffect(() => {
         if (fields.length === 0) {
@@ -66,7 +64,7 @@ export function VMsStep() {
                 {
                     name: "ESXi Host 01",
                     description: "Primary ESXi host for virtualization lab",
-                    vm_template_id: "550e8400-e29b-41d4-a716-446655440001", // Valid UUID
+                    vm_template_id: "550e8400-e29b-41d4-a716-446655440001",
                     cpu_cores: 4,
                     memory_mb: 8192,
                     disk_gb: 100,
@@ -77,7 +75,7 @@ export function VMsStep() {
                 {
                     name: "vCenter Server",
                     description: "vCenter Server Appliance for managing ESXi hosts",
-                    vm_template_id: "550e8400-e29b-41d4-a716-446655440002", // Valid UUID
+                    vm_template_id: "550e8400-e29b-41d4-a716-446655440002",
                     cpu_cores: 4,
                     memory_mb: 16384,
                     disk_gb: 200,
@@ -88,7 +86,7 @@ export function VMsStep() {
                 {
                     name: "Ubuntu Workstation",
                     description: "Student workstation for lab exercises",
-                    vm_template_id: "550e8400-e29b-41d4-a716-446655440003", // Valid UUID
+                    vm_template_id: "550e8400-e29b-41d4-a716-446655440003",
                     cpu_cores: 2,
                     memory_mb: 4096,
                     disk_gb: 50,

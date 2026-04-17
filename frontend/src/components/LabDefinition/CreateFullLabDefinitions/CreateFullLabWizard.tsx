@@ -53,7 +53,8 @@ export function CreateFullLabWizard({ onSuccess }: CreateFullLabWizardProps) {
         return result
     }
 
-    const handleNext = async () => {
+    const handleNext = async (e?: React.MouseEvent) => {
+        e?.preventDefault()
         resetError()
         const isValid = await validateCurrentStep()
 
@@ -139,16 +140,9 @@ export function CreateFullLabWizard({ onSuccess }: CreateFullLabWizardProps) {
                 {/* Scrollable Content */}
                 <div className="flex-1 overflow-y-auto bg-slate-50 min-h-0">
                     <div className="w-full p-6">
-                        {error && (
-                            <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
-                                <p className="text-sm text-red-700">{error}</p>
-                            </div>
-                        )}
-
                         <div className="max-w-4xl mx-auto bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
                             {renderStep()}
                         </div>
-
                         <div className="h-8" />
                     </div>
                 </div>
@@ -212,7 +206,7 @@ export function CreateFullLabWizard({ onSuccess }: CreateFullLabWizardProps) {
                         ) : (
                             <button
                                 type="button"
-                                onClick={handleNext}
+                                onClick={(e) => handleNext(e)}
                                 disabled={isLoading}
                                 className={cn(
                                     "flex items-center gap-2 rounded-lg px-6 py-2.5",

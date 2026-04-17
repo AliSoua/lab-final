@@ -1,82 +1,96 @@
 // src/components/layout/Sidebar.tsx
 import { NavLink, useLocation } from "react-router-dom"
 import { cn } from "@/lib/utils"
-import { FlaskConical, ChevronRight } from "lucide-react"
+import { FlaskConical, ChevronRight, Shield } from "lucide-react"
 
 interface SidebarProps {
   userRole?: string
 }
 
+interface NavItem {
+  to: string
+  label: string
+}
+
+const navItems: NavItem[] = [
+  { to: "/admin/lab-definitions", label: "Lab Management" },
+  { to: "/admin/infrastructure", label: "Infrastructure" },
+  { to: "/admin/credentials", label: "Host Credentials" },
+]
+
 export function Sidebar({ userRole }: SidebarProps) {
   const location = useLocation()
-  const isActive = location.pathname.startsWith("/admin/lab-definitions")
 
   return (
-    <aside className="flex h-full w-60 flex-col bg-white border-r border-slate-200">
+    <aside className="flex h-full w-60 flex-col bg-white border-r border-[#e8e8e8]">
       {/* Header - Logo matching Header.tsx */}
-      <div className="flex h-16 items-center px-5 border-b border-slate-200 shrink-0">
+      <div className="flex h-16 items-center px-5 border-b border-[#e8e8e8] shrink-0">
         <NavLink to="/admin/lab-definitions" className="flex items-center gap-2.5">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#1ca9b1]">
             <FlaskConical className="h-4 w-4 text-white" />
           </div>
           <div className="flex flex-col leading-none">
-            <span className="text-[14px] font-semibold tracking-tight text-slate-800">
+            <span className="text-[14px] font-semibold tracking-tight text-[#3a3a3a]">
               Lab Orchestration
             </span>
-            <span className="text-[10.5px] font-medium tracking-wide text-slate-500 uppercase">
+            <span className="text-[10.5px] font-medium tracking-wide text-[#727373] uppercase">
               Training Platform
             </span>
           </div>
         </NavLink>
       </div>
 
-      {/* Navigation - Clean slate design */}
+      {/* Navigation - Clean minimal design */}
       <div className="flex-1 px-3 py-4">
-        <nav className="space-y-1">
-          <NavLink
-            to="/admin/lab-definitions"
-            className={({ isActive }) =>
-              cn(
-                "group flex items-center justify-between rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-200",
-                isActive
-                  ? "bg-slate-100 text-slate-900"
-                  : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-              )
-            }
-          >
-            <div className="flex items-center gap-3">
-              <span className={cn(
-                "text-xs font-semibold uppercase tracking-wider transition-colors",
-                isActive ? "text-sky-600" : "text-slate-400 group-hover:text-slate-600"
-              )}>
-                Lab Management
-              </span>
-            </div>
-            {isActive && (
-              <ChevronRight className="h-4 w-4 text-sky-500" />
-            )}
-          </NavLink>
+        <nav className="space-y-3">
+          {navItems.map((item) => {
+            const isActive = location.pathname.startsWith(item.to)
 
-          {/* Subtle underline indicator when active */}
-          <div className={cn(
-            "mx-3 h-0.5 rounded-full transition-all duration-200",
-            isActive ? "bg-sky-500 w-12" : "bg-transparent w-0"
-          )} />
+            return (
+              <div key={item.to}>
+                <NavLink
+                  to={item.to}
+                  className={cn(
+                    "group flex items-center justify-between rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-200",
+                    isActive
+                      ? "bg-[#f5f5f5] text-[#3a3a3a]"
+                      : "text-[#727373] hover:bg-[#f9f9f9] hover:text-[#3a3a3a]"
+                  )}
+                >
+                  <span className={cn(
+                    "text-xs font-semibold uppercase tracking-wider transition-colors",
+                    isActive ? "text-[#1ca9b1]" : "text-[#727373] group-hover:text-[#3a3a3a]"
+                  )}>
+                    {item.label}
+                  </span>
+                  {isActive && (
+                    <ChevronRight className="h-4 w-4 text-[#1ca9b1]" />
+                  )}
+                </NavLink>
+
+                {/* Teal underline indicator when active */}
+                <div className={cn(
+                  "mx-3 h-0.5 rounded-full transition-all duration-300",
+                  isActive ? "bg-[#1ca9b1] w-12" : "bg-transparent w-0"
+                )} />
+              </div>
+            )
+          })}
         </nav>
       </div>
 
       {/* Bottom - Clean role indicator */}
-      <div className="px-4 py-4 border-t border-slate-200 bg-slate-50/50">
+      <div className="px-4 py-4 border-t border-[#e8e8e8] bg-[#f9f9f9]/50">
         <div className="flex items-center justify-between">
           <div className="flex flex-col">
-            <span className="text-[11px] font-medium text-slate-600 capitalize">
+            <span className="text-[11px] font-medium text-[#727373] capitalize">
               {userRole || "User"}
             </span>
-            <span className="text-[10px] text-slate-400">
+            <span className="text-[10px] text-[#c4c4c4]">
               Admin Console
             </span>
           </div>
-          <span className="h-2 w-2 rounded-full bg-emerald-500 ring-2 ring-emerald-100" />
+          <span className="h-2 w-2 rounded-full bg-[#1ca9b1] ring-2 ring-[#1ca9b1]/20" />
         </div>
       </div>
     </aside>

@@ -156,6 +156,9 @@ def custom_openapi():
         "/profile/me",
         "/profile/me/stats",
         "/profile/sync",
+        "/credentials/moderators/wrap-token",
+        "/credentials/moderators/hosts",
+        "/credentials/moderators/hosts/{esxi_host}",
     ]
     
     for path in paths_to_secure:

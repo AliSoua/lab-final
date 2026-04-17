@@ -1,5 +1,6 @@
 // src/hooks/LabDefinition/useCreateFullLabs.ts
 import { useState, useCallback } from "react"
+import { toast } from "sonner"
 import type {
     CreateFullLabDefinitionRequest,
     CreateFullLabDefinitionFormData
@@ -38,10 +39,14 @@ export function useCreateFullLabs(): UseCreateFullLabsReturn {
             setIsLoading(true)
             setError(null)
 
+            const loadingToast = toast.loading("Creating full lab definition...")
+
             try {
                 const token = localStorage.getItem("access_token")
 
                 if (!token) {
+                    toast.dismiss(loadingToast)
+                    toast.error("Authentication required")
                     throw new Error("Authentication required")
                 }
 
@@ -131,29 +136,66 @@ export function useCreateFullLabs(): UseCreateFullLabsReturn {
                 }
 
                 if (!response.ok) {
+                    // Dismiss loading toast before showing error
+                    toast.dismiss(loadingToast)
+
                     if (response.status === 401) {
-                        throw new Error("Unauthorized. Please log in.")
+                        const msg = "Unauthorized. Please log in."
+                        toast.error(msg)
+                        throw new Error(msg)
                     }
                     if (response.status === 403) {
-                        throw new Error("Forbidden. Admin or moderator access required.")
+                        const msg = "Forbidden. Admin or moderator access required."
+                        toast.error(msg)
+                        throw new Error(msg)
                     }
                     if (response.status === 409) {
-                        const errorData = await response.json()
-                        throw new Error(errorData.detail || "Lab with this slug already exists")
+                        const errorData = await response.json().catch(() => ({}))
+                        const msg = errorData.detail || "Lab with this slug already exists"
+                        toast.error(msg)
+                        setError(null) // Prevent inline UI error for 409 conflicts
+                        throw new Error(msg)
                     }
                     if (response.status === 422) {
-                        const errorData = await response.json()
+                        const errorData = await response.json().catch(() => ({}))
                         const detail = errorData.detail?.[0]?.msg || "Validation error"
-                        throw new Error(`Validation error: ${detail}`)
+                        const msg = `Validation error: ${detail}`
+                        toast.error(msg)
+                        throw new Error(msg)
                     }
-                    throw new Error(`Failed to create lab: ${response.statusText}`)
+                    const msg = `Failed to create lab: ${response.statusText}`
+                    toast.error(msg)
+                    throw new Error(msg)
                 }
 
                 const createdLab: LabDefinition = await response.json()
+
+                // Dismiss loading and show success
+                toast.dismiss(loadingToast)
+                toast.success("Full lab created successfully!", {
+                    description: createdLab.name
+                })
+
                 return createdLab
+
             } catch (err) {
                 const message = err instanceof Error ? err.message : "Failed to create lab definition"
-                setError(message)
+
+                // Avoid double-toasting for response errors already handled above
+                const alreadyHandled =
+                    message === "Authentication required" ||
+                    message === "Unauthorized. Please log in." ||
+                    message === "Forbidden. Admin or moderator access required." ||
+                    message.includes("already exists") ||
+                    message.includes("Validation error") ||
+                    message.includes("Failed to create lab")
+
+                if (!alreadyHandled) {
+                    toast.dismiss(loadingToast)
+                    toast.error(message)
+                    setError(message)
+                }
+
                 throw new Error(message)
             } finally {
                 setIsLoading(false)
