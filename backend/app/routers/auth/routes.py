@@ -11,7 +11,7 @@ from keycloak.exceptions import (
 import logging
 
 from app.schemas.auth import LoginRequest, TokenResponse, CheckAuthResponse, LogoutRequest, RefreshRequest
-from app.config.connection.keycloak_client import keycloak_connection, keycloak_openid
+from app.config.connection.keycloak_client import get_keycloak_connection, get_keycloak_openid
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -20,8 +20,9 @@ security = HTTPBearer(auto_error=False)
 # LOGIN - No auth required
 @router.post("/login", response_model=TokenResponse)
 def login(data: LoginRequest):
-    if not keycloak_connection.is_connected:
-        conn_status = keycloak_connection.check_connection()
+    kc_conn = get_keycloak_connection()  # CHANGED
+    if not kc_conn.is_connected:
+        conn_status = kc_conn.check_connection()
         if not conn_status["connected"]:
             logger.error(f"Keycloak unavailable: {conn_status.get('error')}")
             raise HTTPException(
@@ -30,7 +31,8 @@ def login(data: LoginRequest):
             )
     
     try:
-        token = keycloak_openid.token(data.username, data.password)
+        kc_openid = get_keycloak_openid()  # CHANGED
+        token = kc_openid.token(data.username, data.password)
         logger.info(f"Login successful: {data.username}")
         return TokenResponse(
             access_token=token["access_token"],
@@ -61,12 +63,9 @@ def login(data: LoginRequest):
 # REFRESH TOKEN - Exchange refresh token for new access token
 @router.post("/refresh", response_model=TokenResponse)
 def refresh_token(data: RefreshRequest):
-    """
-    Exchange a refresh token for a new access token and refresh token pair.
-    Called automatically by frontend before access token expires.
-    """
-    if not keycloak_connection.is_connected:
-        conn_status = keycloak_connection.check_connection()
+    kc_conn = get_keycloak_connection()  # CHANGED
+    if not kc_conn.is_connected:
+        conn_status = kc_conn.check_connection()
         if not conn_status["connected"]:
             logger.error(f"Keycloak unavailable: {conn_status.get('error')}")
             raise HTTPException(
@@ -75,8 +74,8 @@ def refresh_token(data: RefreshRequest):
             )
     
     try:
-        # Keycloak refresh token flow
-        token = keycloak_openid.refresh_token(data.refresh_token)
+        kc_openid = get_keycloak_openid()  # CHANGED
+        token = kc_openid.refresh_token(data.refresh_token)
         logger.info("Token refreshed successfully")
         return TokenResponse(
             access_token=token["access_token"],
@@ -120,8 +119,9 @@ def check_auth(credentials: HTTPAuthorizationCredentials = Depends(security)):
     token = credentials.credentials
     
     try:
-        keycloak_openid.introspect(token)
-        userinfo = keycloak_openid.userinfo(token)
+        kc_openid = get_keycloak_openid()  # CHANGED
+        kc_openid.introspect(token)
+        userinfo = kc_openid.userinfo(token)
         return CheckAuthResponse(logged_in=True, user=userinfo)
     except KeycloakInvalidTokenError:
         return CheckAuthResponse(logged_in=False, user=None)
@@ -149,12 +149,11 @@ def logout(
     refresh_token = data.refresh_token
     
     try:
-        # Keycloak logout requires refresh token
-        keycloak_openid.logout(refresh_token)
+        kc_openid = get_keycloak_openid()  # CHANGED
+        kc_openid.logout(refresh_token)
         logger.info("User logged out successfully")
         return {"message": "Logged out successfully"}
     except KeycloakPostError as e:
-        # Handle specific Keycloak errors
         error_msg = str(e)
         if "invalid_grant" in error_msg:
             logger.warning(f"Logout failed - invalid refresh token: {e}")
@@ -189,7 +188,8 @@ def logout(
 # HEALTH CHECK - No auth required
 @router.get("/health")
 def auth_health():
-    status_info = keycloak_connection.check_connection()
+    kc_conn = get_keycloak_connection()  # CHANGED
+    status_info = kc_conn.check_connection()
     if status_info["connected"]:
         return {"status": "healthy", "service": "keycloak"}
     else:

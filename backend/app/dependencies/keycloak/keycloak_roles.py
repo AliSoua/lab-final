@@ -2,7 +2,7 @@
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from keycloak.exceptions import KeycloakInvalidTokenError, KeycloakConnectionError
-from app.config.connection.keycloak_client import keycloak_openid, KEYCLOAK_SERVER, KEYCLOAK_REALM
+from app.config.connection.keycloak_client import KEYCLOAK_SERVER, KEYCLOAK_REALM
 import logging
 import requests
 import jwt as pyjwt
@@ -17,7 +17,13 @@ _jwks_client = None
 def get_jwks_client():
     global _jwks_client
     if _jwks_client is None:
-        jwks_url = f"{KEYCLOAK_SERVER}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/certs"
+        # Add validation
+        if not KEYCLOAK_SERVER or not KEYCLOAK_REALM:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Keycloak configuration missing"
+            )
+        jwks_url = f"{KEYCLOAK_SERVER.rstrip('/')}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/certs"
         _jwks_client = PyJWKClient(jwks_url)
     return _jwks_client
 
