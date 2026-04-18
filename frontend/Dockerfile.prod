@@ -1,0 +1,48 @@
+# ---------- Build stage ----------
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# 1. Install dependencies
+COPY package*.json ./
+RUN npm ci
+
+# 2. Copy source
+COPY . .
+
+# 3. Fix TS 5.6+ deprecation errors for baseUrl + moduleResolution node10
+#    (TypeScript 7.0 will remove these; official workaround is ignoreDeprecations)
+RUN node -e "\
+  const fs = require('fs'); \
+  const ts = JSON.parse(fs.readFileSync('tsconfig.json', 'utf8')); \
+  ts.compilerOptions.ignoreDeprecations = '6.0'; \
+  fs.writeFileSync('tsconfig.json', JSON.stringify(ts, null, 2)); \
+"
+
+# 4. Build
+RUN npm run build
+
+# ---------- Serve stage ----------
+FROM nginx:stable-alpine
+
+# Copy Vite build output
+COPY --from=builder /app/dist /usr/share/nginx/html
+
+# SPA fallback: serve index.html for any 404
+RUN cat > /etc/nginx/conf.d/default.conf << 'EOF'
+server {
+    listen 80;
+    server_name localhost;
+    location / {
+        root /usr/share/nginx/html;
+        index index.html;
+        try_files $uri $uri/ /index.html;
+    }
+    gzip on;
+    gzip_vary on;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript image/svg+xml;
+}
+EOF
+
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]

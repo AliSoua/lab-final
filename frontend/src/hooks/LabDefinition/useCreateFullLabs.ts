@@ -5,7 +5,7 @@ import type {
     CreateFullLabDefinitionRequest,
     CreateFullLabDefinitionFormData
 } from "@/types/LabDefinition/CreateFullLabDefinition"
-import type { LabDefinition } from "@/types/LabDefinition"
+import type { LabDefinition } from "@/types/LabDefinition/ListLabs"
 
 const API_BASE_URL =
     import.meta.env.VITE_API_BASE_URL || "http://localhost:8000"
@@ -78,10 +78,10 @@ export function useCreateFullLabs(): UseCreateFullLabsReturn {
                         formData.append("network_profile_id", data.network_profile_id)
                     }
 
-                    // Arrays and objects as JSON strings
-                    formData.append("objectives", JSON.stringify(data.objectives || []))
-                    formData.append("prerequisites", JSON.stringify(data.prerequisites || []))
-                    formData.append("tags", JSON.stringify(data.tags || []))
+                    // Arrays and objects as JSON strings - map StringFieldItem[] to string[]
+                    formData.append("objectives", JSON.stringify(data.objectives.map(o => o.value)))
+                    formData.append("prerequisites", JSON.stringify(data.prerequisites.map(p => p.value)))
+                    formData.append("tags", JSON.stringify(data.tags.map(t => t.value)))
                     formData.append("vms", JSON.stringify(data.vms || []))
                     formData.append("guide_blocks", JSON.stringify(data.guide_blocks || []))
 
@@ -115,9 +115,10 @@ export function useCreateFullLabs(): UseCreateFullLabsReturn {
                         track: jsonData.track || undefined,
                         thumbnail_url: jsonData.thumbnail_url || undefined,
                         status: jsonData.status,
-                        objectives: jsonData.objectives,
-                        prerequisites: jsonData.prerequisites,
-                        tags: jsonData.tags,
+                        // Map StringFieldItem[] to string[]
+                        objectives: jsonData.objectives.map(o => o.value),
+                        prerequisites: jsonData.prerequisites.map(p => p.value),
+                        tags: jsonData.tags.map(t => t.value),
                         network_profile_id: jsonData.network_profile_id || undefined,
                         vms: jsonData.vms,
                         guide_blocks: jsonData.guide_blocks,

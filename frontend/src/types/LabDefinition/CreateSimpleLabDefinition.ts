@@ -30,6 +30,14 @@ export enum LabStatus {
 }
 
 // =============================================================================
+// FIELD ARRAY HELPERS
+// =============================================================================
+
+export interface StringFieldItem {
+    value: string
+}
+
+// =============================================================================
 // SIMPLE LAB DEFINITION (Basic create)
 // =============================================================================
 
@@ -65,9 +73,9 @@ export interface CreateSimpleLabDefinitionFormData {
     thumbnail_url: string
     thumbnail_file?: File | null
     status: LabStatus
-    objectives: string[]
-    prerequisites: string[]
-    tags: string[]
+    objectives: StringFieldItem[]
+    prerequisites: StringFieldItem[]
+    tags: StringFieldItem[]
 }
 
 export const DEFAULT_CREATE_SIMPLE_LAB_FORM_DATA: CreateSimpleLabDefinitionFormData = {
@@ -118,9 +126,9 @@ export function toSimpleCreateRequest(
         track: formData.track || undefined,
         thumbnail_url: formData.thumbnail_url || undefined,
         status: formData.status,
-        objectives: formData.objectives,
-        prerequisites: formData.prerequisites,
-        tags: formData.tags
+        objectives: formData.objectives.map(o => o.value),
+        prerequisites: formData.prerequisites.map(p => p.value),
+        tags: formData.tags.map(t => t.value)
     }
 }
 
@@ -140,8 +148,9 @@ export function addObjective(
     data: CreateSimpleLabDefinitionFormData,
     objective: string
 ): void {
-    if (objective.trim() && !data.objectives.includes(objective.trim())) {
-        data.objectives.push(objective.trim())
+    const trimmed = objective.trim()
+    if (trimmed && !data.objectives.some(o => o.value === trimmed)) {
+        data.objectives.push({ value: trimmed })
     }
 }
 
@@ -156,8 +165,9 @@ export function addPrerequisite(
     data: CreateSimpleLabDefinitionFormData,
     prerequisite: string
 ): void {
-    if (prerequisite.trim() && !data.prerequisites.includes(prerequisite.trim())) {
-        data.prerequisites.push(prerequisite.trim())
+    const trimmed = prerequisite.trim()
+    if (trimmed && !data.prerequisites.some(p => p.value === trimmed)) {
+        data.prerequisites.push({ value: trimmed })
     }
 }
 
@@ -173,8 +183,8 @@ export function addTag(
     tag: string
 ): void {
     const cleanTag = tag.trim().toLowerCase().replace(/\s+/g, '-')
-    if (cleanTag && !data.tags.includes(cleanTag)) {
-        data.tags.push(cleanTag)
+    if (cleanTag && !data.tags.some(t => t.value === cleanTag)) {
+        data.tags.push({ value: cleanTag })
     }
 }
 

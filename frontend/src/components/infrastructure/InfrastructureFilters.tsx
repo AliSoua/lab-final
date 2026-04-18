@@ -1,4 +1,3 @@
-// src/components/infrastructure/InfrastructureFilters.tsx
 import { cn } from "@/lib/utils"
 import { Search, Filter, X } from "lucide-react"
 import type { InfrastructureFilters } from "@/types/infrastructure"
@@ -8,6 +7,7 @@ interface InfrastructureFiltersProps {
     onFiltersChange: (filters: InfrastructureFilters) => void
     isLoading?: boolean
     hosts: { id: string; name: string }[]
+    showTypeFilter?: boolean  // Added optional prop
 }
 
 export function InfrastructureFilters({
@@ -15,6 +15,7 @@ export function InfrastructureFilters({
     onFiltersChange,
     isLoading,
     hosts,
+    showTypeFilter = true,  // Default to true for backward compatibility
 }: InfrastructureFiltersProps) {
     const hasActiveFilters =
         filters.host !== "all" ||
@@ -80,31 +81,33 @@ export function InfrastructureFilters({
                     <Filter className="absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#727373] pointer-events-none" />
                 </div>
 
-                {/* Type Filter */}
-                <div className="relative">
-                    <select
-                        value={filters.type}
-                        onChange={(e) =>
-                            onFiltersChange({ ...filters, type: e.target.value })
-                        }
-                        disabled={isLoading}
-                        className={cn(
-                            "appearance-none rounded-lg border border-[#d4d4d4] bg-white pl-3 pr-8 py-2",
-                            "text-[13px] text-[#3a3a3a]",
-                            "outline-none focus:border-[#1ca9b1] transition-colors",
-                            "disabled:opacity-60 cursor-pointer"
-                        )}
-                    >
-                        <option value="all">All Types</option>
-                        <option value="esxi">ESXi</option>
-                        <option value="vcenter">vCenter</option>
-                        <option value="linux">Linux</option>
-                        <option value="windows">Windows</option>
-                        <option value="security">Security</option>
-                        <option value="other">Other</option>
-                    </select>
-                    <Filter className="absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#727373] pointer-events-none" />
-                </div>
+                {/* Type Filter - conditionally shown */}
+                {showTypeFilter && (
+                    <div className="relative">
+                        <select
+                            value={filters.type}
+                            onChange={(e) =>
+                                onFiltersChange({ ...filters, type: e.target.value })
+                            }
+                            disabled={isLoading}
+                            className={cn(
+                                "appearance-none rounded-lg border border-[#d4d4d4] bg-white pl-3 pr-8 py-2",
+                                "text-[13px] text-[#3a3a3a]",
+                                "outline-none focus:border-[#1ca9b1] transition-colors",
+                                "disabled:opacity-60 cursor-pointer"
+                            )}
+                        >
+                            <option value="all">All Types</option>
+                            <option value="esxi">ESXi</option>
+                            <option value="vcenter">vCenter</option>
+                            <option value="linux">Linux</option>
+                            <option value="windows">Windows</option>
+                            <option value="security">Security</option>
+                            <option value="other">Other</option>
+                        </select>
+                        <Filter className="absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#727373] pointer-events-none" />
+                    </div>
+                )}
 
                 {/* Status Filter */}
                 <div className="relative">

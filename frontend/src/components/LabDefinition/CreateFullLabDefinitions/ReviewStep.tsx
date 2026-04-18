@@ -72,7 +72,7 @@ export function ReviewStep() {
                         <div className="flex flex-wrap gap-1">
                             {data.objectives?.map((obj, i) => (
                                 <span key={i} className="text-[11px] bg-[#e6f7f8] text-[#1ca9b1] px-2 py-1 rounded">
-                                    {obj}
+                                    {obj.value}
                                 </span>
                             ))}
                             {(!data.objectives || data.objectives.length === 0) && (
@@ -89,7 +89,7 @@ export function ReviewStep() {
                         <div className="flex flex-wrap gap-1">
                             {data.prerequisites?.map((pre, i) => (
                                 <span key={i} className="text-[11px] bg-[#f5f5f5] text-[#727373] px-2 py-1 rounded">
-                                    {pre}
+                                    {pre.value}
                                 </span>
                             ))}
                             {(!data.prerequisites || data.prerequisites.length === 0) && (
@@ -106,7 +106,7 @@ export function ReviewStep() {
                         <div className="flex flex-wrap gap-1">
                             {data.tags?.map((tag, i) => (
                                 <span key={i} className="text-[11px] bg-[#1ca9b1]/10 text-[#1ca9b1] px-2 py-1 rounded">
-                                    #{tag}
+                                    #{tag.value}
                                 </span>
                             ))}
                             {(!data.tags || data.tags.length === 0) && (

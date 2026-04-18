@@ -12,14 +12,14 @@ const highlightBadgeVariants = cva(
         // Neutral
         default: "bg-slate-50 text-slate-700 border-slate-200",
         secondary: "bg-slate-100 text-slate-700 border-slate-200",
-        
+
         // Semantic colors (like your execution badges)
         primary: "bg-sky-50 text-sky-700 border-sky-200",
         success: "bg-emerald-50 text-emerald-700 border-emerald-200",
         warning: "bg-amber-50 text-amber-700 border-amber-200",
         error: "bg-rose-50 text-rose-700 border-rose-200",
         danger: "bg-rose-50 text-rose-700 border-rose-200", // alias for error
-        
+
         // Extended palette
         violet: "bg-violet-50 text-violet-700 border-violet-200",
         orange: "bg-orange-50 text-orange-700 border-orange-200",
@@ -40,7 +40,7 @@ const highlightBadgeVariants = cva(
 
 export interface HighlightBadgeProps
   extends React.HTMLAttributes<HTMLDivElement>,
-    VariantProps<typeof highlightBadgeVariants> {
+  VariantProps<typeof highlightBadgeVariants> {
   label?: string;
   value?: string | number;
   icon?: React.ReactNode;
@@ -80,14 +80,14 @@ function HighlightBadge({
     cyan: "bg-cyan-600 text-white border-cyan-600",
   };
 
-  const variantClass = solid && variant 
+  const variantClass = solid && variant
     ? solidClasses[variant as keyof typeof solidClasses] || solidClasses.default
     : undefined;
 
   return (
     <div
       className={cn(
-        highlightBadgeVariants({ variant, size }), 
+        highlightBadgeVariants({ variant, size }),
         variantClass,
         className
       )}
@@ -98,27 +98,27 @@ function HighlightBadge({
           {icon}
         </span>
       )}
-      
+
       {label && (
         <span className="text-[10px] uppercase tracking-wider opacity-70 font-sans">
           {label}
         </span>
       )}
-      
+
       {(value !== undefined || children) && (
         <span
           className={cn(
             truncate && "truncate",
             mono && "font-mono",
-            maxWidth && typeof maxWidth === 'number' 
-              ? `max-w-[${maxWidth}px]` 
-              : maxWidth 
-                ? `max-w-[${maxWidth}]` 
+            maxWidth && typeof maxWidth === 'number'
+              ? `max-w-[${maxWidth}px]`
+              : maxWidth
+                ? `max-w-[${maxWidth}]`
                 : undefined
           )}
           style={{
-            maxWidth: typeof maxWidth === 'number' 
-              ? `${maxWidth}px` 
+            maxWidth: typeof maxWidth === 'number'
+              ? `${maxWidth}px`
               : maxWidth
           }}
           title={value !== undefined ? String(value) : undefined}
@@ -131,11 +131,11 @@ function HighlightBadge({
 }
 
 // Convenience components for common patterns
-export function StatusBadge({ 
-  status, 
-  ...props 
-}: Omit<HighlightBadgeProps, 'variant'> & { 
-  status: 'pending' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'timeout' 
+export function StatusBadge({
+  status,
+  ...props
+}: Omit<HighlightBadgeProps, 'variant'> & {
+  status: 'pending' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'timeout'
 }) {
   const config = {
     pending: { variant: 'warning' as const, label: 'Pending' },
@@ -148,8 +148,8 @@ export function StatusBadge({
   }[status];
 
   return (
-    <HighlightBadge 
-      variant={config.variant} 
+    <HighlightBadge
+      variant={config.variant}
       {...props}
     >
       {config.label}
@@ -157,9 +157,9 @@ export function StatusBadge({
   );
 }
 
-export function ExitCodeBadge({ 
-  code, 
-  ...props 
+export function ExitCodeBadge({
+  code,
+  ...props
 }: Omit<HighlightBadgeProps, 'variant' | 'value'> & { code: number }) {
   return (
     <HighlightBadge
@@ -172,12 +172,13 @@ export function ExitCodeBadge({
   );
 }
 
-export function ResultBadge({ 
-  type, 
-  count, 
-  ...props 
-}: Omit<HighlightBadgeProps, 'variant' | 'icon'> & { 
-  type: 'ok' | 'changed' | 'failed' | 'unreachable' 
+export function ResultBadge({
+  type,
+  count,
+  ...props
+}: Omit<HighlightBadgeProps, 'variant' | 'icon'> & {
+  type: 'ok' | 'changed' | 'failed' | 'unreachable'
+  count: number
 }) {
   const config = {
     ok: { variant: 'success' as const, icon: CheckCircle2, label: 'OK' },

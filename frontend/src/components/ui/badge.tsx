@@ -1,3 +1,4 @@
+// src/components/ui/badge.tsx
 import * as React from "react"
 import { Slot } from "@radix-ui/react-slot"
 import { cva, type VariantProps } from "class-variance-authority"
@@ -28,7 +29,7 @@ const badgeVariants = cva(
   }
 )
 
-interface BadgeProps
+export interface BadgeProps
   extends React.HTMLAttributes<HTMLSpanElement>,
   VariantProps<typeof badgeVariants> {
   asChild?: boolean

@@ -1,31 +1,31 @@
 // src/components/LabDefinition/catalogue/FilterBar.tsx
 import { Search, SlidersHorizontal, X } from "lucide-react"
 import { cn } from "@/lib/utils"
-import type { LabFilters } from "@/types/LabDefinition"
-import { LabCategory, LabDifficulty } from "@/types"
+import type { LabCatalogFilters } from "@/types/LabDefinition/publicLabs"
+import { LabCategory, LabDifficulty } from "@/types/LabDefinition/publicLabs"
 
 interface FilterBarProps {
-    filters: LabFilters
-    onFiltersChange: (filters: LabFilters) => void
+    filters: LabCatalogFilters
+    onFiltersChange: (filters: LabCatalogFilters) => void
     totalResults: number
     isLoading?: boolean
 }
 
 const categories: { value: LabCategory | "all"; label: string }[] = [
     { value: "all", label: "All Categories" },
-    { value: "database", label: "Database" },
-    { value: "networking", label: "Networking" },
-    { value: "security", label: "Security" },
-    { value: "devops", label: "DevOps" },
-    { value: "cloud", label: "Cloud" },
-    { value: "programming", label: "Programming" },
+    { value: LabCategory.DATABASE, label: "Database" },
+    { value: LabCategory.NETWORKING, label: "Networking" },
+    { value: LabCategory.SECURITY, label: "Security" },
+    { value: LabCategory.DEVOPS, label: "DevOps" },
+    { value: LabCategory.CLOUD, label: "Cloud" },
+    { value: LabCategory.PROGRAMMING, label: "Programming" },
 ]
 
 const difficulties: { value: LabDifficulty | "all"; label: string }[] = [
     { value: "all", label: "All Levels" },
-    { value: "beginner", label: "Beginner" },
-    { value: "intermediate", label: "Intermediate" },
-    { value: "advanced", label: "Advanced" },
+    { value: LabDifficulty.BEGINNER, label: "Beginner" },
+    { value: LabDifficulty.INTERMEDIATE, label: "Intermediate" },
+    { value: LabDifficulty.ADVANCED, label: "Advanced" },
 ]
 
 export function FilterBar({ filters, onFiltersChange, totalResults, isLoading }: FilterBarProps) {

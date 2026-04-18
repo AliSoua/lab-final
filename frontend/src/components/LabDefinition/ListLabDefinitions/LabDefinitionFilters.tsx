@@ -3,7 +3,7 @@ import { useState, useEffect } from "react"
 import { cn } from "@/lib/utils"
 import { Search, Filter, X } from "lucide-react"
 import type { LabDefinitionFilters } from "@/types/LabDefinition/ListLabs"
-import { LabCategory, LabDifficulty } from "@/types/LabDefinition/CreateLabDefinition"
+import { LabCategory, LabDifficulty } from "@/types/LabDefinition/CreateFullLabDefinition"
 
 interface LabDefinitionFiltersProps {
     filters: LabDefinitionFilters

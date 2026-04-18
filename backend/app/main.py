@@ -55,6 +55,8 @@ security = HTTPBearer(auto_error=False)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        "http://localhost",
+        "http://localhost:80",
         "http://localhost:5173",    # Vite dev server
         "http://localhost:3000",    # Alternative React dev server
         "http://127.0.0.1:5173",    # Alternative localhost address

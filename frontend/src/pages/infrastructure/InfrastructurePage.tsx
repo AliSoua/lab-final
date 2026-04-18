@@ -2,13 +2,14 @@
 import { useState, useCallback, useMemo } from "react"
 import { useNavigate } from "react-router-dom"
 import { cn } from "@/lib/utils"
-import { Server, Database, Plus, AlertCircle } from "lucide-react"
+import { Server, Database, Monitor, Plus, AlertCircle } from "lucide-react"
 import { useAuth } from "@/hooks/useAuth"
 import { useESXiData } from "@/hooks/vsphere/useESXiData"
 import {
     InfrastructureFilters as InfrastructureFilterBar,
     VMTemplateTable,
     ESXiHostTable,
+    VMTable,
     InfrastructurePagination,
 } from "@/components/infrastructure"
 import {
@@ -16,23 +17,23 @@ import {
     type InfrastructureFilters
 } from "@/types/infrastructure"
 import { toast } from "sonner"
-import type { VMTemplate, ESXiHost } from "@/types/infrastructure"
+import type { VMTemplate, ESXiHost, VirtualMachine } from "@/types/infrastructure"
 
 const ITEMS_PER_PAGE = 10
 
-type ViewTab = "templates" | "hosts"
+type ViewTab = "templates" | "hosts" | "vms"
 
 export default function InfrastructurePage() {
     const navigate = useNavigate()
     const { user } = useAuth()
-    const { hosts, templates, isLoading, error, refetch } = useESXiData()
+    const { hosts, templates, vms, isLoading, error, refetch } = useESXiData()
     const [currentPage, setCurrentPage] = useState(1)
     const [filters, setFilters] = useState<InfrastructureFilters>(DEFAULT_INFRASTRUCTURE_FILTERS)
     const [activeTab, setActiveTab] = useState<ViewTab>("templates")
 
     const filteredTemplates = useMemo(() => {
         return templates.filter((template) => {
-            const matchesHost = filters.host === "all" || template.esxi_host_id === filters.host
+            const matchesHost = filters.host === "all" || template.esxi_host_name === filters.host
             const matchesType = filters.type === "all" || template.type === filters.type
             const matchesStatus = filters.status === "all" || template.status === filters.status
             const matchesSearch =
@@ -45,13 +46,29 @@ export default function InfrastructurePage() {
         })
     }, [templates, filters])
 
-    const totalItems = filteredTemplates.length
+    const filteredVMs = useMemo(() => {
+        return (vms || []).filter((vm) => {
+            const matchesHost = filters.host === "all" || vm.esxi_host_name === filters.host
+            const matchesStatus = filters.status === "all" ||
+                (filters.status === "running" && vm.power_state === "poweredOn") ||
+                (filters.status === "stopped" && vm.power_state === "poweredOff")
+            const matchesSearch =
+                filters.searchQuery === "" ||
+                vm.name.toLowerCase().includes(filters.searchQuery.toLowerCase()) ||
+                (vm.guest_os && vm.guest_os.toLowerCase().includes(filters.searchQuery.toLowerCase()))
+
+            return matchesHost && matchesStatus && matchesSearch
+        })
+    }, [vms, filters])
+
+    const currentItems = activeTab === "templates" ? filteredTemplates : filteredVMs
+    const totalItems = currentItems.length
     const totalPages = Math.max(1, Math.ceil(totalItems / ITEMS_PER_PAGE))
 
-    const paginatedTemplates = useMemo(() => {
+    const paginatedItems = useMemo(() => {
         const start = (currentPage - 1) * ITEMS_PER_PAGE
-        return filteredTemplates.slice(start, start + ITEMS_PER_PAGE)
-    }, [filteredTemplates, currentPage])
+        return currentItems.slice(start, start + ITEMS_PER_PAGE)
+    }, [currentItems, currentPage])
 
     const handleFiltersChange = useCallback((newFilters: InfrastructureFilters) => {
         setFilters(newFilters)
@@ -76,6 +93,22 @@ export default function InfrastructurePage() {
         toast.success(`Provisioning VM from template: ${template.name}`)
     }
 
+    const handleStartVM = (vm: VirtualMachine) => {
+        toast.success(`Starting VM: ${vm.name}`)
+    }
+
+    const handleStopVM = (vm: VirtualMachine) => {
+        toast.success(`Stopping VM: ${vm.name}`)
+    }
+
+    const handleRestartVM = (vm: VirtualMachine) => {
+        toast.success(`Restarting VM: ${vm.name}`)
+    }
+
+    const handleDeleteVM = (vm: VirtualMachine) => {
+        toast.info(`Delete VM: ${vm.name}`)
+    }
+
     const isEmptyState = !isLoading && hosts.length === 0 && !error
 
     return (
@@ -88,7 +121,7 @@ export default function InfrastructurePage() {
                             Infrastructure
                         </h1>
                         <p className="text-sm text-[#727373] mt-0.5">
-                            Manage ESXi hosts and VM templates
+                            Manage ESXi hosts, VM templates, and virtual machines
                         </p>
                     </div>
 
@@ -133,6 +166,27 @@ export default function InfrastructurePage() {
                         </button>
 
                         <button
+                            onClick={() => setActiveTab("vms")}
+                            className={cn(
+                                "flex items-center gap-2 py-4 text-sm font-medium border-b-2 transition-colors",
+                                activeTab === "vms"
+                                    ? "border-[#1ca9b1] text-[#1ca9b1]"
+                                    : "border-transparent text-[#727373] hover:text-[#3a3a3a]"
+                            )}
+                        >
+                            <Monitor className="h-4 w-4" />
+                            Virtual Machines
+                            <span className={cn(
+                                "ml-1 px-2 py-0.5 rounded-full text-xs",
+                                activeTab === "vms"
+                                    ? "bg-[#1ca9b1]/10 text-[#1ca9b1]"
+                                    : "bg-[#f5f5f5] text-[#727373]"
+                            )}>
+                                {vms?.length || 0}
+                            </span>
+                        </button>
+
+                        <button
                             onClick={() => setActiveTab("hosts")}
                             className={cn(
                                 "flex items-center gap-2 py-4 text-sm font-medium border-b-2 transition-colors",
@@ -163,7 +217,8 @@ export default function InfrastructurePage() {
                         filters={filters}
                         onFiltersChange={handleFiltersChange}
                         isLoading={isLoading}
-                        hosts={hosts.map(h => ({ id: h.id, name: h.name }))}
+                        hosts={hosts.map(h => ({ id: h.name, name: h.name }))}
+                        showTypeFilter={activeTab === "templates"}
                     />
                 </div>
             </div>
@@ -225,12 +280,35 @@ export default function InfrastructurePage() {
                     {activeTab === "templates" ? (
                         <>
                             <VMTemplateTable
-                                templates={paginatedTemplates}
+                                templates={paginatedItems as VMTemplate[]}
                                 isLoading={isLoading}
                                 onView={(t: VMTemplate) => toast.info(`View: ${t.name}`)}
                                 onEdit={(t: VMTemplate) => toast.info(`Edit: ${t.name}`)}
                                 onDelete={(t: VMTemplate) => toast.info(`Delete: ${t.name}`)}
                                 onProvision={handleProvisionTemplate}
+                            />
+
+                            {!isLoading && totalItems > 0 && (
+                                <InfrastructurePagination
+                                    currentPage={currentPage}
+                                    totalPages={totalPages}
+                                    totalItems={totalItems}
+                                    itemsPerPage={ITEMS_PER_PAGE}
+                                    onPageChange={handlePageChange}
+                                    isLoading={isLoading}
+                                />
+                            )}
+                        </>
+                    ) : activeTab === "vms" ? (
+                        <>
+                            <VMTable
+                                vms={paginatedItems as VirtualMachine[]}
+                                isLoading={isLoading}
+                                onView={(vm: VirtualMachine) => toast.info(`View: ${vm.name}`)}
+                                onStart={handleStartVM}
+                                onStop={handleStopVM}
+                                onRestart={handleRestartVM}
+                                onDelete={handleDeleteVM}
                             />
 
                             {!isLoading && totalItems > 0 && (

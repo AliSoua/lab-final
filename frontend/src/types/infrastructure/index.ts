@@ -1,59 +1,93 @@
-// src/types/infrastructure/index.ts
-
-export interface VMTemplate {
-    id: string
-    name: string
-    description: string
-    type: "esxi" | "vcenter" | "linux" | "windows" | "security" | "other"
-    cpu_cores: number
-    memory_mb: number
-    disk_gb: number
-    esxi_host_id: string
-    esxi_host_name: string
-    status: "available" | "in_use" | "maintenance" | "deprecated"
-    created_at: string
-    updated_at: string
-    tags: string[]
-    os_family: string
-    os_version: string
-}
+// ============================================
+// ESXi Host Types (matches backend /info endpoint)
+// ============================================
 
 export interface ESXiHost {
-    id: string
+    // Identity
     name: string
-    hostname: string
-    status: "online" | "offline" | "maintenance" | "error"
-    data_center: string
-    cluster: string
-    cpu_total: number
-    cpu_used: number
-    memory_total_gb: number
-    memory_used_gb: number
-    storage_total_gb: number
-    storage_used_gb: number
+    model: string | null
+    vendor: string | null
+
+    // CPU Info
+    cpu_model: string | null
+    cpu_cores: number
+    cpu_threads: number
+    cpu_packages: number
+    cpu_mhz: number
+
+    // Memory
+    memory_gb: number
+
+    // ESXi Version Info
+    esxi_version: string | null
+    esxi_build: string | null
+    license_name: string | null
+
+    // Connection & Power State
+    connection_state: string
+    power_state: string
+    in_maintenance_mode: boolean
+    overall_status: string
+
+    // Inventory
     vm_count: number
-    template_count: number
-    last_synced_at: string
+
+    // System
+    boot_time: string | null
 }
 
-export interface VirtualMachine {
-    id: string
+// ============================================
+// VM Template Types (matches backend /templates endpoint)
+// ============================================
+
+export interface VMTemplate {
+    uuid: string         // Canonical vSphere UUID from backend
+    id: string           // Kept for backward compatibility: same as uuid
     name: string
-    template_id: string
-    template_name: string
+    guest_os: string
+    cpu_count: number
+    memory_mb: number
+    path: string | null  // Backend uses getattr safe access
+    host: string         // ESXi host this template belongs to
+
+    // UI-enriched fields
+    esxi_host_id: string
+    esxi_host_name: string
+    cpu_cores: number    // Alias for cpu_count
+    type: "esxi" | "vcenter" | "linux" | "windows" | "security" | "other"
+    status: "available" | "in_use" | "maintenance" | "deprecated"
+    os_family: string
+    os_version: string
+    description: string
+    disk_gb: number      // Placeholder - not provided by backend
+}
+
+// ============================================
+// Virtual Machine Types (from /vms endpoint)
+// ============================================
+
+export interface VirtualMachine {
+    uuid: string | null  // From vm.config.uuid (null if config unavailable)
+    id: string           // Same as uuid for consistency, or synthetic fallback
+    name: string
+    power_state: string
+    guest_os: string | null
+    cpu_count: number
+    memory_mb: number
+    ip_address: string | null
+    tools_status: string // "toolsOk", "toolsNotRunning", "toolsNotInstalled", etc.
+    is_template: boolean // Backend includes this in /vms response
+    host: string
+
+    // UI-enriched fields
     esxi_host_id: string
     esxi_host_name: string
     status: "running" | "stopped" | "suspended" | "provisioning" | "error"
-    ip_address: string | null
-    cpu_cores: number
-    memory_mb: number
-    disk_gb: number
-    lab_instance_id: string | null
-    lab_name: string | null
-    assigned_to: string | null
-    created_at: string
-    started_at: string | null
 }
+
+// ============================================
+// Filters & Options
+// ============================================
 
 export interface InfrastructureFilters {
     host: string
@@ -87,10 +121,10 @@ export const VM_STATUS_OPTIONS = [
     { value: "deprecated", label: "Deprecated" },
 ] as const
 
+// Updated to match backend connection_state values
 export const ESXI_STATUS_OPTIONS = [
     { value: "all", label: "All Status" },
-    { value: "online", label: "Online" },
-    { value: "offline", label: "Offline" },
-    { value: "maintenance", label: "Maintenance" },
-    { value: "error", label: "Error" },
+    { value: "connected", label: "Connected" },
+    { value: "disconnected", label: "Disconnected" },
+    { value: "notResponding", label: "Not Responding" },
 ] as const

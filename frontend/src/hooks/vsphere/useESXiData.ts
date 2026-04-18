@@ -1,26 +1,73 @@
-// src/hooks/vsphere/useESXiData.ts
 import { useState, useCallback, useEffect } from "react"
 import { toast } from "sonner"
-import type { ESXiHost, VMTemplate } from "@/types/infrastructure"
+import type { ESXiHost, VMTemplate, VirtualMachine } from "@/types/infrastructure"
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000"
 
-interface ESXiApiEnvelope {
-    results: Array<{ host: string; data: unknown }>
+// Backend API envelope structure
+interface ESXiApiEnvelope<T> {
+    results: Array<{ host: string; data: T }>
     errors: Array<{ host?: string; host_name?: string; error: string }>
     total_hosts: number
     successful: number
     failed: number
 }
 
+// Raw types from backend (before transformation)
+interface RawESXiHostInfo {
+    name: string
+    model: string | null
+    vendor: string | null
+    cpu_model: string | null
+    cpu_cores: number
+    cpu_threads: number
+    cpu_packages: number
+    cpu_mhz: number
+    memory_gb: number
+    esxi_version: string | null
+    esxi_build: string | null
+    license_name: string | null
+    connection_state: string
+    power_state: string
+    in_maintenance_mode: boolean
+    overall_status: string
+    vm_count: number
+    boot_time: string | null
+}
+
+interface RawVMTemplate {
+    uuid: string
+    name: string
+    guest_os: string
+    cpu_count: number
+    memory_mb: number
+    path: string | null
+    host: string
+}
+
+interface RawVirtualMachine {
+    uuid: string | null
+    name: string
+    power_state: string
+    guest_os: string | null
+    cpu_count: number
+    memory_mb: number
+    ip_address: string | null
+    tools_status: string
+    is_template: boolean
+    host: string
+}
+
 interface UseESXiDataReturn {
     hosts: ESXiHost[]
     templates: VMTemplate[]
+    vms: VirtualMachine[]
     isLoading: boolean
     error: string | null
     refetch: () => void
 }
 
+// Helper: Infer template type from guest OS
 function inferTypeFromGuestOS(guestOS: string): VMTemplate["type"] {
     const lower = guestOS.toLowerCase()
     if (lower.includes("esxi")) return "esxi"
@@ -31,6 +78,7 @@ function inferTypeFromGuestOS(guestOS: string): VMTemplate["type"] {
     return "other"
 }
 
+// Helper: Infer OS family from guest OS
 function inferOSFamily(guestOS: string): string {
     const lower = guestOS.toLowerCase()
     if (lower.includes("windows")) return "Windows"
@@ -39,9 +87,20 @@ function inferOSFamily(guestOS: string): string {
     return "Linux"
 }
 
+// Helper: Map VM power state to UI status
+function mapVMStatus(powerState: string): VirtualMachine["status"] {
+    switch (powerState) {
+        case "poweredOn": return "running"
+        case "poweredOff": return "stopped"
+        case "suspended": return "suspended"
+        default: return "error"
+    }
+}
+
 export function useESXiData(): UseESXiDataReturn {
     const [hosts, setHosts] = useState<ESXiHost[]>([])
     const [templates, setTemplates] = useState<VMTemplate[]>([])
+    const [vms, setVMs] = useState<VirtualMachine[]>([])
     const [isLoading, setIsLoading] = useState(false)
     const [error, setError] = useState<string | null>(null)
 
@@ -62,16 +121,17 @@ export function useESXiData(): UseESXiDataReturn {
                 "Accept": "application/json",
             }
 
-            const [infoRes, templateRes] = await Promise.all([
+            const [infoRes, templateRes, vmsRes] = await Promise.all([
                 fetch(`${API_BASE_URL}/vsphere/esxi/info`, { headers }),
                 fetch(`${API_BASE_URL}/vsphere/esxi/templates`, { headers }),
+                fetch(`${API_BASE_URL}/vsphere/esxi/vms`, { headers }),
             ])
 
-            if (!infoRes.ok || !templateRes.ok) {
-                if (infoRes.status === 401 || templateRes.status === 401) {
+            if (!infoRes.ok || !templateRes.ok || !vmsRes.ok) {
+                if (infoRes.status === 401 || templateRes.status === 401 || vmsRes.status === 401) {
                     throw new Error("Unauthorized. Please log in.")
                 }
-                if (infoRes.status === 403 || templateRes.status === 403) {
+                if (infoRes.status === 403 || templateRes.status === 403 || vmsRes.status === 403) {
                     throw new Error("Forbidden. Moderator access required.")
                 }
                 if (infoRes.status === 404) {
@@ -82,119 +142,85 @@ export function useESXiData(): UseESXiDataReturn {
                 throw new Error(`Failed to load data: ${text}`)
             }
 
-            const infoData: ESXiApiEnvelope = await infoRes.json()
-            const templateData: ESXiApiEnvelope = await templateRes.json()
+            const infoData: ESXiApiEnvelope<RawESXiHostInfo> = await infoRes.json()
+            const templateData: ESXiApiEnvelope<RawVMTemplate[]> = await templateRes.json()
+            const vmsData: ESXiApiEnvelope<RawVirtualMachine[]> = await vmsRes.json()
 
-            const hostMap = new Map<string, ESXiHost>()
+            // Transform hosts - use raw data directly as it matches our type
+            const transformedHosts: ESXiHost[] = infoData.results.map((r) => r.data)
 
-            // Successful host connections
-            infoData.results.forEach((r) => {
-                const info = r.data as {
-                    name: string
-                    model: string | null
-                    cpu_cores: number
-                    memory_gb: number
-                    esxi_version: string | null
-                    connection_state: string
-                    power_state: string
-                }
-
-                const connState = info.connection_state.toLowerCase()
-                const status: ESXiHost["status"] =
-                    connState.includes("connected") ? "online" :
-                        connState.includes("disconnected") ? "offline" :
-                            connState.includes("maintenance") ? "maintenance" : "error"
-
-                hostMap.set(r.host, {
-                    id: r.host,
-                    name: info.name || r.host,
-                    hostname: r.host,
-                    status,
-                    data_center: "Default DC",
-                    cluster: "Default Cluster",
-                    cpu_total: info.cpu_cores || 0,
-                    cpu_used: 0,
-                    memory_total_gb: info.memory_gb || 0,
-                    memory_used_gb: 0,
-                    storage_total_gb: 0,
-                    storage_used_gb: 0,
-                    vm_count: 0,
-                    template_count: 0,
-                    last_synced_at: new Date().toISOString(),
-                })
-            })
-
-            // Failed hosts shown as offline
-            infoData.errors.forEach((err) => {
-                const key = err.host || err.host_name || "unknown"
-                if (!hostMap.has(key)) {
-                    hostMap.set(key, {
-                        id: key,
-                        name: key,
-                        hostname: key,
-                        status: "offline",
-                        data_center: "Unknown",
-                        cluster: "Unknown",
-                        cpu_total: 0,
-                        cpu_used: 0,
-                        memory_total_gb: 0,
-                        memory_used_gb: 0,
-                        storage_total_gb: 0,
-                        storage_used_gb: 0,
-                        vm_count: 0,
-                        template_count: 0,
-                        last_synced_at: new Date().toISOString(),
-                    })
-                }
-            })
-
-            // Map templates
-            const allTemplates: VMTemplate[] = []
+            // Track template counts per host for any additional UI needs
             const templateCounts = new Map<string, number>()
 
+            // Transform templates
+            const transformedTemplates: VMTemplate[] = []
+
             templateData.results.forEach((r) => {
-                const list = r.data as Array<{
-                    name: string
-                    guest_os: string
-                    cpu_count: number
-                    memory_mb: number
-                    path: string
-                    host: string
-                }>
+                const hostTemplates = r.data || []
+                templateCounts.set(r.host, hostTemplates.length)
 
-                templateCounts.set(r.host, list.length)
-
-                list.forEach((t, idx) => {
-                    allTemplates.push({
-                        id: `tpl-${r.host}-${idx}`,
+                hostTemplates.forEach((t) => {
+                    transformedTemplates.push({
+                        // Core backend fields
+                        uuid: t.uuid,
+                        id: t.uuid,
                         name: t.name,
-                        description: t.guest_os || "VM Template",
-                        type: inferTypeFromGuestOS(t.guest_os),
-                        cpu_cores: t.cpu_count,
+                        guest_os: t.guest_os,
+                        cpu_count: t.cpu_count,
                         memory_mb: t.memory_mb,
-                        disk_gb: 0,
+                        path: t.path,
+                        host: t.host,
+
+                        // UI-enriched fields
                         esxi_host_id: r.host,
                         esxi_host_name: r.host,
+                        cpu_cores: t.cpu_count,
+                        type: inferTypeFromGuestOS(t.guest_os),
                         status: "available",
-                        created_at: new Date().toISOString(),
-                        updated_at: new Date().toISOString(),
-                        tags: [],
                         os_family: inferOSFamily(t.guest_os),
                         os_version: t.guest_os,
+                        description: t.guest_os || "VM Template",
+                        disk_gb: 0,
                     })
                 })
             })
 
-            // Attach template counts to hosts
-            hostMap.forEach((host) => {
-                host.template_count = templateCounts.get(host.hostname) || 0
+            // Transform VMs
+            const transformedVMs: VirtualMachine[] = []
+
+            vmsData.results.forEach((r) => {
+                const hostVMs = r.data || []
+
+                hostVMs.forEach((vm) => {
+                    transformedVMs.push({
+                        // Core backend fields
+                        uuid: vm.uuid,
+                        id: vm.uuid || `${r.host}-${vm.name}`,
+                        name: vm.name,
+                        power_state: vm.power_state,
+                        guest_os: vm.guest_os,
+                        cpu_count: vm.cpu_count,
+                        memory_mb: vm.memory_mb,
+                        ip_address: vm.ip_address,
+                        tools_status: vm.tools_status,
+                        is_template: vm.is_template,
+                        host: vm.host,
+
+                        // UI-enriched fields
+                        esxi_host_id: r.host,
+                        esxi_host_name: r.host,
+                        status: mapVMStatus(vm.power_state),
+                    })
+                })
             })
 
-            setHosts(Array.from(hostMap.values()))
-            setTemplates(allTemplates)
+            setHosts(transformedHosts)
+            setTemplates(transformedTemplates)
+            setVMs(transformedVMs)
 
-            if (infoData.failed > 0) {
-                toast.warning(`${infoData.failed} host(s) unreachable`, {
+            if (infoData.failed > 0 || vmsData.failed > 0) {
+                const totalFailed = infoData.failed + vmsData.failed
+                toast.warning(`${totalFailed} host(s) unreachable`, {
                     description: "Check credentials or network connectivity",
                 })
             }
@@ -212,5 +238,5 @@ export function useESXiData(): UseESXiDataReturn {
         fetchData()
     }, [fetchData])
 
-    return { hosts, templates, isLoading, error, refetch: fetchData }
+    return { hosts, templates, vms, isLoading, error, refetch: fetchData }
 }

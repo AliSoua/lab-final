@@ -35,6 +35,14 @@ export enum GuideBlockType {
 }
 
 // =============================================================================
+// FIELD ARRAY HELPERS
+// =============================================================================
+
+export interface StringFieldItem {
+    value: string
+}
+
+// =============================================================================
 // FULL LAB DEFINITION (With VMs and Guide Blocks)
 // =============================================================================
 
@@ -111,7 +119,7 @@ export interface CreateFullLabDefinitionFormData {
     category: LabCategory | ""
     difficulty: LabDifficulty | ""
     track: string
-    tags: string[]  // Required for field array
+    tags: StringFieldItem[]
 
     // Configuration
     duration_minutes: number
@@ -121,9 +129,9 @@ export interface CreateFullLabDefinitionFormData {
     thumbnail_file?: File | null
     status: LabStatus
 
-    // Learning Content - REQUIRED for the Details step
-    objectives: string[]  // Required for field array
-    prerequisites: string[]  // Required for field array
+    // Learning Content
+    objectives: StringFieldItem[]
+    prerequisites: StringFieldItem[]
 
     // VMs
     vms: LabVMItemCreate[]
@@ -166,7 +174,7 @@ export const DEFAULT_CREATE_FULL_LAB_FORM_DATA: CreateFullLabDefinitionFormData 
     category: "",
     difficulty: "",
     track: "",
-    tags: [],  // Empty array default
+    tags: [],
 
     // Config
     duration_minutes: 60,
@@ -176,9 +184,9 @@ export const DEFAULT_CREATE_FULL_LAB_FORM_DATA: CreateFullLabDefinitionFormData 
     thumbnail_file: null,
     status: LabStatus.DRAFT,
 
-    // Learning Content - REQUIRED
-    objectives: [],  // Empty array default
-    prerequisites: [],  // Empty array default
+    // Learning Content
+    objectives: [],
+    prerequisites: [],
 
     // VMs & Guide
     vms: [],
@@ -217,9 +225,9 @@ export function toFullCreateRequest(
         track: formData.track || undefined,
         thumbnail_url: formData.thumbnail_url || undefined,
         status: formData.status,
-        objectives: formData.objectives,
-        prerequisites: formData.prerequisites,
-        tags: formData.tags,
+        objectives: formData.objectives.map(o => o.value),
+        prerequisites: formData.prerequisites.map(p => p.value),
+        tags: formData.tags.map(t => t.value),
         network_profile_id: formData.network_profile_id || undefined,
         vms: formData.vms.map((vm, index) => ({
             ...vm,
@@ -254,8 +262,9 @@ export function addObjective(
     data: CreateFullLabDefinitionFormData,
     objective: string
 ): void {
-    if (objective.trim() && !data.objectives.includes(objective.trim())) {
-        data.objectives.push(objective.trim())
+    const trimmed = objective.trim()
+    if (trimmed && !data.objectives.some(o => o.value === trimmed)) {
+        data.objectives.push({ value: trimmed })
     }
 }
 
@@ -270,8 +279,9 @@ export function addPrerequisite(
     data: CreateFullLabDefinitionFormData,
     prerequisite: string
 ): void {
-    if (prerequisite.trim() && !data.prerequisites.includes(prerequisite.trim())) {
-        data.prerequisites.push(prerequisite.trim())
+    const trimmed = prerequisite.trim()
+    if (trimmed && !data.prerequisites.some(p => p.value === trimmed)) {
+        data.prerequisites.push({ value: trimmed })
     }
 }
 
@@ -287,8 +297,8 @@ export function addTag(
     tag: string
 ): void {
     const cleanTag = tag.trim().toLowerCase().replace(/\s+/g, '-')
-    if (cleanTag && !data.tags.includes(cleanTag)) {
-        data.tags.push(cleanTag)
+    if (cleanTag && !data.tags.some(t => t.value === cleanTag)) {
+        data.tags.push({ value: cleanTag })
     }
 }
 

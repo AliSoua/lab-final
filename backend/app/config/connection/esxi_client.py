@@ -79,22 +79,34 @@ class ESXiClient:
 
         try:
             for vm in container.view:
-                if vm.config and vm.config.template:
+                try:
+                    if not vm.config or not vm.config.template:
+                        continue
+
+                    hardware = vm.config.hardware
+                    files = vm.config.files
+
                     templates.append({
+                        "uuid": vm.config.uuid,                     # Canonical ID
                         "name": vm.name,
                         "guest_os": vm.config.guestFullName,
-                        "cpu_count": vm.config.hardware.numCPU,
-                        "memory_mb": vm.config.hardware.memoryMB,
-                        "path": vm.config.files.vmPathName,
-                        "host": self.host
+                        "cpu_count": getattr(hardware, "numCPU", 0) if hardware else 0,
+                        "memory_mb": getattr(hardware, "memoryMB", 0) if hardware else 0,
+                        "path": getattr(files, "vmPathName", None) if files else None,
+                        "host": self.host,
                     })
+                except Exception as e:
+                    # Log and skip individual bad VMs instead of failing the whole host
+                    vm_name = getattr(vm, "name", "unknown")
+                    logger.warning(f"Skipping template '{vm_name}' on {self.host}: {e}")
+                    continue
         finally:
             container.Destroy()
 
         return templates
 
     def get_vms(self) -> List[Dict]:
-        """Get all VMs with power status."""
+        """Get all non-template VMs with power status."""
         if not self._service_instance:
             raise RuntimeError("Not connected to ESXi")
 
@@ -105,17 +117,33 @@ class ESXiClient:
 
         try:
             for vm in container.view:
-                summary = vm.summary
-                vms.append({
-                    "name": vm.name,
-                    "power_state": str(summary.runtime.powerState),
-                    "guest_os": summary.config.guestFullName,
-                    "cpu_count": summary.config.numCpu,
-                    "memory_mb": summary.config.memorySizeMB,
-                    "ip_address": summary.guest.ipAddress if summary.guest else None,
-                    "is_template": summary.config.template,
-                    "host": self.host
-                })
+                try:
+                    summary = vm.summary
+
+                    # Exclude templates — they belong to /templates
+                    if summary.config and summary.config.template:
+                        continue
+
+                    guest = summary.guest
+                    runtime = summary.runtime
+                    config = summary.config
+
+                    vms.append({
+                        "uuid": vm.config.uuid if vm.config else None,
+                        "name": vm.name,
+                        "power_state": str(runtime.powerState) if runtime else "unknown",
+                        "guest_os": config.guestFullName if config else None,
+                        "cpu_count": getattr(config, "numCpu", 0) if config else 0,
+                        "memory_mb": getattr(config, "memorySizeMB", 0) if config else 0,
+                        "ip_address": guest.ipAddress if guest else None,
+                        "tools_status": str(guest.toolsStatus) if guest else "toolsNotInstalled",
+                        "is_template": summary.config.template if summary.config else False,
+                        "host": self.host,
+                    })
+                except Exception as e:
+                    vm_name = getattr(vm, "name", "unknown")
+                    logger.warning(f"Skipping VM '{vm_name}' on {self.host}: {e}")
+                    continue
         finally:
             container.Destroy()
 
@@ -143,15 +171,39 @@ class ESXiClient:
 
         hardware = host_system.hardware
         config = host_system.config
+        runtime = host_system.runtime
+        summary = host_system.summary
+
+        # CPU model from the first package description
+        cpu_model = None
+        if hardware and hardware.cpuPkg:
+            cpu_model = hardware.cpuPkg[0].description
+
+        # VM count directly from the host reference
+        vm_count = len(host_system.vm) if host_system.vm else 0
+
+        # Overall health status: gray, green, yellow, red
+        overall_status = str(summary.overallStatus) if summary else "gray"
 
         return {
             "name": host_system.name,
             "model": hardware.systemInfo.model if hardware else None,
+            "vendor": hardware.systemInfo.vendor if hardware else None,
+            "cpu_model": cpu_model,
             "cpu_cores": hardware.cpuInfo.numCpuCores if hardware else 0,
+            "cpu_threads": hardware.cpuInfo.numCpuThreads if hardware else 0,
+            "cpu_packages": hardware.cpuInfo.numCpuPackages if hardware else 0,
+            "cpu_mhz": round(hardware.cpuInfo.hz / (10 ** 6), 2) if hardware and hardware.cpuInfo else 0,
             "memory_gb": round(hardware.memorySize / (1024 ** 3), 2) if hardware else 0,
             "esxi_version": config.product.version if config and config.product else None,
-            "connection_state": str(host_system.runtime.connectionState),
-            "power_state": str(host_system.runtime.powerState)
+            "esxi_build": config.product.build if config and config.product else None,
+            "license_name": config.product.name if config and config.product else None,
+            "connection_state": str(runtime.connectionState),
+            "power_state": str(runtime.powerState),
+            "in_maintenance_mode": runtime.inMaintenanceMode if runtime else False,
+            "overall_status": overall_status,
+            "vm_count": vm_count,
+            "boot_time": runtime.bootTime.isoformat() if runtime.bootTime else None,
         }
 
 

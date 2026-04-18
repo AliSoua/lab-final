@@ -5,7 +5,7 @@ import type { CreateSimpleLabDefinitionFormData } from "@/types/LabDefinition/Cr
 import { ListChecks, GraduationCap, Tags, Plus, X } from "lucide-react"
 
 export function DetailsSection() {
-    const { control } = useFormContext<CreateSimpleLabDefinitionFormData>()
+    const { control, register } = useFormContext<CreateSimpleLabDefinitionFormData>()
 
     const {
         fields: objectiveFields,
@@ -52,7 +52,7 @@ export function DetailsSection() {
                     </label>
                     <button
                         type="button"
-                        onClick={() => appendObjective("")}
+                        onClick={() => appendObjective({ value: "" })}
                         className="text-[11px] text-[#1ca9b1] hover:text-[#17959c] font-medium flex items-center gap-1 transition-colors"
                     >
                         <Plus className="h-3 w-3" />
@@ -64,7 +64,7 @@ export function DetailsSection() {
                         <div key={field.id} className="flex gap-2">
                             <input
                                 type="text"
-                                {...control.register(`objectives.${index}` as const)}
+                                {...register(`objectives.${index}.value` as const)}
                                 placeholder={`Objective ${index + 1}`}
                                 className={cn(
                                     "flex-1 bg-transparent px-3 py-2 text-[13px] text-[#3a3a3a]",
@@ -100,7 +100,7 @@ export function DetailsSection() {
                     </label>
                     <button
                         type="button"
-                        onClick={() => appendPrereq("")}
+                        onClick={() => appendPrereq({ value: "" })}
                         className="text-[11px] text-[#1ca9b1] hover:text-[#17959c] font-medium flex items-center gap-1 transition-colors"
                     >
                         <Plus className="h-3 w-3" />
@@ -112,7 +112,7 @@ export function DetailsSection() {
                         <div key={field.id} className="flex gap-2">
                             <input
                                 type="text"
-                                {...control.register(`prerequisites.${index}` as const)}
+                                {...register(`prerequisites.${index}.value` as const)}
                                 placeholder={`Prerequisite ${index + 1}`}
                                 className={cn(
                                     "flex-1 bg-transparent px-3 py-2 text-[13px] text-[#3a3a3a]",
@@ -148,7 +148,7 @@ export function DetailsSection() {
                     </label>
                     <button
                         type="button"
-                        onClick={() => appendTag("")}
+                        onClick={() => appendTag({ value: "" })}
                         className="text-[11px] text-[#1ca9b1] hover:text-[#17959c] font-medium flex items-center gap-1 transition-colors"
                     >
                         <Plus className="h-3 w-3" />
@@ -163,7 +163,7 @@ export function DetailsSection() {
                         >
                             <input
                                 type="text"
-                                {...control.register(`tags.${index}` as const)}
+                                {...register(`tags.${index}.value` as const)}
                                 placeholder="tag-name"
                                 className={cn(
                                     "bg-transparent text-[12px] text-[#3a3a3a] outline-none w-20",

@@ -1,14 +1,18 @@
 // src/hooks/LabDefinition/useCreateSimpleLabs.ts
 import { useState, useCallback } from "react"
 import { toast } from "sonner"
-import type { CreateSimpleLabDefinitionRequest } from "@/types/LabDefinition/CreateSimpleLabDefinition"
-import type { LabDefinition } from "@/types/LabDefinition"
+import type {
+    CreateSimpleLabDefinitionFormData,
+    CreateSimpleLabDefinitionRequest
+} from "@/types/LabDefinition/CreateSimpleLabDefinition"
+import { toSimpleCreateRequest } from "@/types/LabDefinition/CreateSimpleLabDefinition"
+import type { LabDefinition } from "@/types/LabDefinition/ListLabs"
 
 const API_BASE_URL =
     import.meta.env.VITE_API_BASE_URL || "http://localhost:8000"
 
 interface UseCreateSimpleLabsReturn {
-    createLab: (data: CreateSimpleLabDefinitionRequest & { thumbnail_file?: File | null }) => Promise<LabDefinition>
+    createLab: (data: CreateSimpleLabDefinitionFormData) => Promise<LabDefinition>
     isLoading: boolean
     error: string | null
     resetError: () => void
@@ -51,9 +55,7 @@ export function useCreateSimpleLabs(): UseCreateSimpleLabsReturn {
     }, [])
 
     const createLab = useCallback(
-        async (
-            data: CreateSimpleLabDefinitionRequest & { thumbnail_file?: File | null }
-        ): Promise<LabDefinition> => {
+        async (data: CreateSimpleLabDefinitionFormData): Promise<LabDefinition> => {
             setIsLoading(true)
             setError(null)
 
@@ -68,6 +70,9 @@ export function useCreateSimpleLabs(): UseCreateSimpleLabsReturn {
                     throw new Error("Authentication required")
                 }
 
+                // Convert form data to API request format
+                const requestData = toSimpleCreateRequest(data)
+
                 const hasFile = data.thumbnail_file instanceof File
                 const url = hasFile
                     ? `${API_BASE_URL}/lab-definitions/thumbnail`
@@ -78,24 +83,24 @@ export function useCreateSimpleLabs(): UseCreateSimpleLabsReturn {
                 if (hasFile) {
                     // Use FormData for file upload
                     const formData = new FormData()
-                    formData.append("name", data.name)
-                    formData.append("slug", data.slug)
-                    formData.append("description", data.description)
-                    formData.append("short_description", data.short_description || "")
-                    formData.append("duration_minutes", data.duration_minutes.toString())
-                    formData.append("max_concurrent_users", (data.max_concurrent_users ?? 1).toString())
-                    formData.append("cooldown_minutes", (data.cooldown_minutes ?? 0).toString())
-                    formData.append("difficulty", data.difficulty)
-                    formData.append("category", data.category)
+                    formData.append("name", requestData.name)
+                    formData.append("slug", requestData.slug)
+                    formData.append("description", requestData.description)
+                    formData.append("short_description", requestData.short_description || "")
+                    formData.append("duration_minutes", requestData.duration_minutes.toString())
+                    formData.append("max_concurrent_users", (requestData.max_concurrent_users ?? 1).toString())
+                    formData.append("cooldown_minutes", (requestData.cooldown_minutes ?? 0).toString())
+                    formData.append("difficulty", requestData.difficulty)
+                    formData.append("category", requestData.category)
 
-                    if (data.track) {
-                        formData.append("track", data.track)
+                    if (requestData.track) {
+                        formData.append("track", requestData.track)
                     }
 
-                    // Arrays as JSON strings
-                    formData.append("objectives", JSON.stringify(data.objectives || []))
-                    formData.append("prerequisites", JSON.stringify(data.prerequisites || []))
-                    formData.append("tags", JSON.stringify(data.tags || []))
+                    // Arrays as JSON strings - map from StringFieldItem[] to string[]
+                    formData.append("objectives", JSON.stringify(requestData.objectives || []))
+                    formData.append("prerequisites", JSON.stringify(requestData.prerequisites || []))
+                    formData.append("tags", JSON.stringify(requestData.tags || []))
 
                     // Add the file - this is the key difference
                     if (data.thumbnail_file instanceof File) {
@@ -112,11 +117,9 @@ export function useCreateSimpleLabs(): UseCreateSimpleLabsReturn {
                     })
                 } else {
                     // Use JSON for regular request (no file)
-                    const { thumbnail_file, ...jsonData } = data
-
-                    // If thumbnail_url exists, include it
-                    if (data.thumbnail_url) {
-                        (jsonData as CreateSimpleLabDefinitionRequest).thumbnail_url = data.thumbnail_url
+                    const jsonData: CreateSimpleLabDefinitionRequest = {
+                        ...requestData,
+                        thumbnail_url: data.thumbnail_url || undefined
                     }
 
                     response = await fetch(url, {

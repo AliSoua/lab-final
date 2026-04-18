@@ -1,5 +1,9 @@
 {
   "compilerOptions": {
+    "moduleResolution": "Bundler",
+    "types": [
+      "node"
+    ],
     "baseUrl": ".",
     "paths": {
       "@/*": [
@@ -9,11 +13,6 @@
     "jsx": "react-jsx",
     "module": "ESNext",
     "target": "ES6",
-    "moduleResolution": "Node",
-    "lib": [
-      "DOM",
-      "ESNext"
-    ],
     "esModuleInterop": true,
     "strict": true,
     "skipLibCheck": true
