@@ -14,15 +14,17 @@ load_dotenv()
 # Check test mode
 TEST_MODE = os.getenv("TEST_MODE", "false").lower() == "true"
 
-from app.routers.credentials import router as credentials_router
+from app.routers.credentials import moderator_credentials_router, admin_credentials_router
 from app.routers.users import admin
 from app.routers.auth import router as auth_router
 from app.routers.vsphere import vcenter_router, esxi_router
 from app.routers.LabDefinition import lab_definition_router
 from app.routers.profile import routes as profile_router
 from app.routers.LabInstance import router as lab_instance_router
-from app.config.connection.postgres_client import init_db  # Changed from create_db_tables/drop_db_tables
+from app.routers.LabGuide import guides_router, steps_router
 
+from app.config.connection.postgres_client import init_db  # Changed from create_db_tables/drop_db_tables
+from app.routers.database import router as db_admin_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -83,7 +85,8 @@ app.mount("/images", StaticFiles(directory=str(uploads_dir)), name="images")
 
 # ============================================
 # Include standard routers
-app.include_router(credentials_router)
+app.include_router(moderator_credentials_router)
+app.include_router(admin_credentials_router)
 app.include_router(auth_router)
 app.include_router(admin.router)
 app.include_router(vcenter_router)
@@ -91,6 +94,9 @@ app.include_router(esxi_router)
 app.include_router(lab_definition_router)
 app.include_router(profile_router.router)
 app.include_router(lab_instance_router) 
+app.include_router(guides_router)
+app.include_router(steps_router)
+app.include_router(db_admin_router)
 
 # Conditionally include test routers
 if TEST_MODE:

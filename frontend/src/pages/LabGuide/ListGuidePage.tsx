@@ -1,56 +1,39 @@
-// src/pages/credentials/CredentialsPage.tsx
 import { useState } from "react"
+import { useNavigate } from "react-router-dom"
 import { cn } from "@/lib/utils"
-import { Shield, Plus } from "lucide-react"
-import { useCredentials } from "@/hooks/credentials/useCredentials"
-import { CredentialsTable, HostModal } from "@/components/credentials"
-import type { HostInfo, CredentialsCreateRequest, CredentialsUpdateRequest } from "@/types/credentials"
+import { BookOpen, Plus, Shield } from "lucide-react"
+import { useLabGuides } from "@/hooks/LabGuide/useLabGuides"
+import { GuidesTable } from "@/components/LabGuide/ListGuideLab/GuidesTable"
+import type { LabGuideListItem } from "@/types/LabGuide"
 import { toast } from "sonner"
 
-export default function CredentialsPage() {
-    const { hosts, isLoading, isSubmitting, refetch, createHost, updateHost, deleteHost } = useCredentials()
-    const [modalOpen, setModalOpen] = useState(false)
-    const [modalMode, setModalMode] = useState<"create" | "edit">("create")
-    const [selectedHost, setSelectedHost] = useState<HostInfo | null>(null)
+export default function ListGuidePage() {
+    const navigate = useNavigate()
+    const { guides, isLoading, refetch, deleteGuide } = useLabGuides()
     const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
 
     const handleAdd = () => {
-        setSelectedHost(null)
-        setModalMode("create")
-        setModalOpen(true)
+        navigate("/admin/lab-guides/create")
     }
 
-    const handleEdit = (host: HostInfo) => {
-        setSelectedHost(host)
-        setModalMode("edit")
-        setModalOpen(true)
+    const handlePreview = (guide: LabGuideListItem) => {
+        navigate(`/admin/lab-guides/${guide.id}/preview`)
     }
 
-    const handleDelete = (host: HostInfo) => {
-        setDeleteConfirm(host.esxi_host)
+    const handleEdit = (guide: LabGuideListItem) => {
+        navigate(`/admin/lab-guides/${guide.id}/edit`)
     }
 
-    const confirmDelete = async (hostName: string) => {
+    const handleDelete = (guide: LabGuideListItem) => {
+        setDeleteConfirm(guide.id)
+    }
+
+    const confirmDelete = async (guideId: string) => {
         try {
-            await deleteHost(hostName)
+            await deleteGuide(guideId)
             setDeleteConfirm(null)
         } catch {
             // Error handled by hook
-        }
-    }
-
-    const handleSubmit = async (data: CredentialsCreateRequest | CredentialsUpdateRequest) => {
-        try {
-            if (modalMode === "create") {
-                await createHost(data as CredentialsCreateRequest)
-                setModalOpen(false)
-            } else {
-                if (!selectedHost) return
-                await updateHost(selectedHost.esxi_host, data as CredentialsUpdateRequest)
-                setModalOpen(false)
-            }
-        } catch {
-            // Error handled by hook (toast shown)
         }
     }
 
@@ -61,10 +44,10 @@ export default function CredentialsPage() {
                 <div className="flex items-center justify-between w-full px-4">
                     <div>
                         <h1 className="text-xl font-semibold text-[#3a3a3a]">
-                            Host Credentials
+                            Lab Guides
                         </h1>
                         <p className="text-sm text-[#727373] mt-0.5">
-                            Securely manage ESXi host credentials in Vault
+                            Manage interactive step-by-step lab guides
                         </p>
                     </div>
 
@@ -78,7 +61,7 @@ export default function CredentialsPage() {
                         )}
                     >
                         <Plus className="h-4 w-4" />
-                        <span>Add Host</span>
+                        <span>Create Guide</span>
                     </button>
                 </div>
             </div>
@@ -90,16 +73,17 @@ export default function CredentialsPage() {
                     <div className="flex items-start gap-3 p-4 bg-[#e6f7f8] border border-[#1ca9b1]/20 rounded-lg">
                         <Shield className="h-5 w-5 text-[#1ca9b1] shrink-0 mt-0.5" />
                         <div>
-                            <p className="text-sm font-medium text-[#3a3a3a]">Secure Storage</p>
+                            <p className="text-sm font-medium text-[#3a3a3a]">Standalone Guides</p>
                             <p className="text-xs text-[#727373] mt-0.5">
-                                Passwords are encrypted at rest in HashiCorp Vault. Only hostnames and usernames are displayed.
+                                Guides are created independently and assigned to lab definitions. Changes here affect all linked labs.
                             </p>
                         </div>
                     </div>
 
-                    <CredentialsTable
-                        hosts={hosts}
+                    <GuidesTable
+                        guides={guides}
                         isLoading={isLoading}
+                        onPreview={handlePreview}
                         onEdit={handleEdit}
                         onDelete={handleDelete}
                     />
@@ -107,11 +91,16 @@ export default function CredentialsPage() {
                     {/* Delete confirmation inline */}
                     {deleteConfirm && (
                         <div className="fixed inset-0 z-50 flex items-center justify-center">
-                            <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setDeleteConfirm(null)} />
+                            <div
+                                className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+                                onClick={() => setDeleteConfirm(null)}
+                            />
                             <div className="relative bg-white rounded-xl border border-[#e8e8e8] shadow-xl p-6 w-full max-w-sm mx-4">
-                                <h3 className="text-[15px] font-semibold text-[#3a3a3a] mb-2">Remove Host?</h3>
+                                <h3 className="text-[15px] font-semibold text-[#3a3a3a] mb-2">
+                                    Delete Guide?
+                                </h3>
                                 <p className="text-sm text-[#727373] mb-6">
-                                    This will permanently delete credentials for <span className="font-medium text-[#3a3a3a]">{deleteConfirm}</span> from Vault.
+                                    This will permanently delete the guide and all its steps. Labs using this guide will lose their content.
                                 </p>
                                 <div className="flex items-center justify-end gap-2">
                                     <button
@@ -132,16 +121,6 @@ export default function CredentialsPage() {
                     )}
                 </div>
             </div>
-
-            {/* Modal */}
-            <HostModal
-                isOpen={modalOpen}
-                onClose={() => setModalOpen(false)}
-                mode={modalMode}
-                host={selectedHost}
-                onSubmit={handleSubmit}
-                isSubmitting={isSubmitting}
-            />
         </div>
     )
 }

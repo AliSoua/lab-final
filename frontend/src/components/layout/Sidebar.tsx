@@ -10,16 +10,23 @@ interface SidebarProps {
 interface NavItem {
   to: string
   label: string
+  adminOnly?: boolean
 }
 
-const navItems: NavItem[] = [
+const allNavItems: NavItem[] = [
   { to: "/admin/lab-definitions", label: "Lab Management" },
   { to: "/admin/infrastructure", label: "Infrastructure" },
   { to: "/admin/credentials", label: "Host Credentials" },
+  { to: "/admin/vcenter-credentials", label: "vCenter Credentials", adminOnly: true },
+  { to: "/admin/lab-guides/", label: "Lab Guides" },
 ]
 
 export function Sidebar({ userRole }: SidebarProps) {
   const location = useLocation()
+
+  const navItems = allNavItems.filter(
+    (item) => !item.adminOnly || userRole === "admin"
+  )
 
   return (
     <aside className="flex h-full w-60 flex-col bg-white border-r border-[#e8e8e8]">

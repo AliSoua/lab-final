@@ -8,28 +8,26 @@ import uuid
 from app.config.connection.postgres_client import get_db
 from app.services.LabDefinition.lab_service import LabService
 from app.services.LabDefinition.lab_vm_service import LabVMService
-from app.services.LabDefinition.lab_guide_service import LabGuideService
+from app.services.LabGuide.guide_service import create_guide as create_guide_service
 from app.services.file_upload_service import file_upload_service
 from app.schemas.LabDefinition.core import LabDefinitionCreate, LabDefinitionResponse, LabDifficulty, LabCategory
-from app.schemas.LabDefinition.LabGuideBlock import LabGuideBlockCreate  # ADD THIS IMPORT
+from app.schemas.LabDefinition.LabGuide import LabGuideCreate, LabGuideStepCreate
 from app.models.LabDefinition.core import LabDefinition
 from app.models.LabDefinition.LabVM import LabVM
 from app.dependencies.keycloak.keycloak_roles import require_any_role
 from app.schemas.LabDefinition.full_lab import (
     FullLabDefinitionCreate, 
     FullLabDefinitionResponse,
-    LabVMItemCreate
 )
 
 router = APIRouter()
 require_admin_or_moderator = require_any_role(["admin", "moderator"])
 lab_service = LabService()
 vm_service = LabVMService()
-guide_service = LabGuideService()
 
 
 # ==============================================================================
-# BASIC LAB DEFINITION ENDPOINTS (No VMs)
+# BASIC LAB DEFINITION ENDPOINTS (No VMs, guide assigned by ID only)
 # ==============================================================================
 
 @router.post(
@@ -44,10 +42,8 @@ def create_lab_definition(
     current_user: dict = Depends(require_admin_or_moderator),
 ):
     """
-    Create a basic lab definition without VMs or thumbnail.
-    
-    - **Content-Type**: application/json
-    - **Returns**: Created lab definition
+    Create a basic lab definition without VMs.
+    Optionally assign an existing guide via guide_id.
     """
     creation_data = data.model_dump()
     creation_data["created_by"] = current_user["sub"]
@@ -81,18 +77,16 @@ async def create_lab_definition_with_thumbnail(
     objectives: Optional[str] = Form("[]"),
     prerequisites: Optional[str] = Form("[]"),
     tags: Optional[str] = Form("[]"),
-    thumbnail: UploadFile = File(...),  # Required for this endpoint
+    guide_id: Optional[str] = Form(None),  # Optional: assign existing guide
+    thumbnail: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_admin_or_moderator),
 ):
     """
     Create a lab definition with thumbnail image upload.
     
-    - **Content-Type**: multipart/form-data
-    - **objectives/prerequisites/tags**: JSON string arrays (e.g., '["learn sql"]')
-    - **thumbnail**: Required image file (jpg, png, webp, max 5MB)
+    - **guide_id**: Optional existing guide UUID to assign
     """
-    # Parse JSON strings
     try:
         objectives_list = json.loads(objectives) if objectives else []
         prerequisites_list = json.loads(prerequisites) if prerequisites else []
@@ -100,7 +94,6 @@ async def create_lab_definition_with_thumbnail(
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=400, detail=f"Invalid JSON in array fields: {str(e)}")
 
-    # Validate enums
     try:
         difficulty_enum = LabDifficulty(difficulty)
     except ValueError:
@@ -123,17 +116,16 @@ async def create_lab_definition_with_thumbnail(
         "difficulty": difficulty_enum,
         "category": category_enum,
         "track": track,
-        "thumbnail_url": None,  # Will be set after upload
+        "thumbnail_url": None,
         "objectives": objectives_list,
         "prerequisites": prerequisites_list,
         "tags": tags_list,
         "created_by": current_user["sub"],
+        "guide_id": uuid.UUID(guide_id) if guide_id else None,
     }
 
-    # Create lab first (without image)
     lab = lab_service.create_lab(db, creation_data)
     
-    # Handle image upload
     try:
         image_url = await file_upload_service.save_lab_thumbnail(
             file=thumbnail,
@@ -143,7 +135,6 @@ async def create_lab_definition_with_thumbnail(
         db.commit()
         db.refresh(lab)
     except HTTPException:
-        # If image upload fails, delete the created lab and re-raise
         db.delete(lab)
         db.commit()
         raise
@@ -152,7 +143,7 @@ async def create_lab_definition_with_thumbnail(
 
 
 # ==============================================================================
-# FULL LAB DEFINITION ENDPOINTS (With VMs and Guide Blocks)
+# FULL LAB DEFINITION ENDPOINTS (With VMs + Guide assignment or inline creation)
 # ==============================================================================
 
 @router.post(
@@ -167,23 +158,21 @@ def create_full_lab_definition(
     current_user: dict = Depends(require_admin_or_moderator)
 ):
     """
-    Atomic creation of LabDefinition + LabVMs + GuideBlocks via JSON.
+    Atomic creation of LabDefinition + LabVMs + optional Guide.
     
-    - **Content-Type**: application/json
-    - VMs reference external ESXi/vCenter templates via vm_template_id
+    Guide options (mutually exclusive):
+    - **guide_id**: Assign an existing standalone guide
+    - **guide_steps**: Create a new guide inline from steps
     """
     try:
-        # Validate guide blocks before starting transaction
-        guide_service.validate_guide(data.guide_blocks)
-        
         # Create Lab Definition
         lab = LabDefinition(
             name=data.name,
             slug=data.slug,
             description=data.description,
             short_description=data.short_description,
-            category=data.category,
-            difficulty=data.difficulty,
+            category=data.category.value if data.category else None,
+            difficulty=data.difficulty.value if data.difficulty else None,
             duration_minutes=data.duration_minutes,
             max_concurrent_users=data.max_concurrent_users or 1,
             cooldown_minutes=data.cooldown_minutes or 0,
@@ -196,47 +185,51 @@ def create_full_lab_definition(
             status=data.status or "draft",
             is_featured=data.is_featured or False,
             featured_priority=data.featured_priority or 0,
+            infrastructure_provider=data.infrastructure_provider.value if data.infrastructure_provider else "vsphere",
         )
         
         db.add(lab)
-        db.flush()  # Get lab.id without committing
+        db.flush()
         
-        # Create VMs
+        # Create VMs (clones from vCenter/ESXi source VMs)
         created_vms = []
         for idx, vm_data in enumerate(data.vms):
-            config = {
-                "cpu_cores": vm_data.cpu_cores or 2,
-                "memory_mb": vm_data.memory_mb or 4096,
-                "disk_gb": vm_data.disk_gb or 50,
-                "network_config": vm_data.network_config or {},
-                "startup_delay": vm_data.startup_delay or 0,
-                "description": vm_data.description,
-            }
-            
             vm = LabVM(
                 lab_id=lab.id,
+                source_vm_id=str(vm_data.source_vm_id),
                 name=vm_data.name,
-                vm_template_id=str(vm_data.vm_template_id),
+                description=vm_data.description,
+                snapshot_name=vm_data.snapshot_name,
+                cpu_cores=vm_data.cpu_cores,
+                memory_mb=vm_data.memory_mb,
                 order=vm_data.order if vm_data.order is not None else idx,
-                config=config
             )
             db.add(vm)
             created_vms.append(vm)
         
-        # Create Guide Blocks
-        created_blocks = guide_service.create_many(db, lab.id, data.guide_blocks)
+        # Handle Guide (assign existing OR create inline)
+        if data.guide_id:
+            lab.guide_id = data.guide_id
+        elif data.guide_steps:
+            guide_data = LabGuideCreate(
+                title=f"{data.name} - Guide",
+                description=data.short_description or data.description,
+                category=data.category.value if data.category else None,
+                difficulty=data.difficulty.value if data.difficulty else None,
+                estimated_duration_minutes=data.duration_minutes or 30,
+                tags=data.tags or [],
+                steps=data.guide_steps,
+            )
+            guide = create_guide_service(db, guide_data, current_user["sub"])
+            lab.guide_id = guide.id
         
         db.commit()
         
-        # Refresh all objects
         db.refresh(lab)
         for vm in created_vms:
             db.refresh(vm)
-        for block in created_blocks:
-            db.refresh(block)
         
         lab.vms = created_vms
-        lab.guide_blocks = created_blocks
         
         return lab
         
@@ -271,37 +264,34 @@ async def create_full_lab_definition_with_thumbnail(
     objectives: Optional[str] = Form("[]"),
     prerequisites: Optional[str] = Form("[]"),
     tags: Optional[str] = Form("[]"),
-    vms: str = Form(...),  # JSON array of LabVMItemCreate
-    guide_blocks: str = Form(...),  # JSON array of LabGuideBlockCreate
+    vms: str = Form(...),
+    guide_id: Optional[str] = Form(None),
+    guide_steps: Optional[str] = Form(None),
     thumbnail: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_admin_or_moderator)
 ):
     """
-    Atomic creation of LabDefinition + LabVMs + GuideBlocks with thumbnail upload.
+    Atomic creation of LabDefinition + LabVMs + Guide with thumbnail upload.
     
-    - **Content-Type**: multipart/form-data
-    - **vms**: JSON string array of VM configurations
-    - **guide_blocks**: JSON string array of guide content blocks
-    - **thumbnail**: Required image file
+    - **vms**: JSON array of VM clone configs
+    - **guide_id**: Optional existing guide UUID
+    - **guide_steps**: Optional JSON array of guide steps (creates new guide)
     """
     try:
-        # Parse JSON strings
         objectives_list = json.loads(objectives) if objectives else []
         prerequisites_list = json.loads(prerequisites) if prerequisites else []
         tags_list = json.loads(tags) if tags else []
         vms_list = json.loads(vms) if vms else []
-        guide_blocks_raw = json.loads(guide_blocks) if guide_blocks else []
         
-        # Convert guide blocks dicts to Pydantic models
-        guide_blocks_list = [LabGuideBlockCreate(**block) for block in guide_blocks_raw]
+        guide_steps_raw = json.loads(guide_steps) if guide_steps else []
+        guide_steps_list = [LabGuideStepCreate(**step) for step in guide_steps_raw]
         
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}")
     except (TypeError, ValueError) as e:
-        raise HTTPException(status_code=400, detail=f"Invalid block data: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Invalid data format: {str(e)}")
 
-    # Validate enums
     try:
         difficulty_enum = LabDifficulty(difficulty)
     except ValueError:
@@ -313,10 +303,6 @@ async def create_full_lab_definition_with_thumbnail(
         raise HTTPException(status_code=400, detail=f"Invalid category: {category}")
 
     try:
-        # Validate guide blocks (now they're Pydantic models)
-        guide_service.validate_guide(guide_blocks_list)
-        
-        # CHECK FOR EXISTING SLUG BEFORE CREATING
         existing = db.query(LabDefinition).filter(LabDefinition.slug == slug).first()
         if existing:
             raise HTTPException(
@@ -324,7 +310,6 @@ async def create_full_lab_definition_with_thumbnail(
                 detail=f"Lab with slug '{slug}' already exists"
             )
 
-        # Create Lab Definition
         lab = LabDefinition(
             name=name,
             slug=slug,
@@ -339,38 +324,48 @@ async def create_full_lab_definition_with_thumbnail(
             prerequisites=prerequisites_list,
             tags=tags_list,
             track=track,
-            thumbnail_url=None,  # Will set after upload
+            thumbnail_url=None,
             created_by=current_user["sub"],
             status="draft",
-            is_featured=False,  # Default for creation via form
+            is_featured=False,
             featured_priority=0,
+            infrastructure_provider="vsphere",
         )
         
         db.add(lab)
-        db.flush()  # Get lab.id
+        db.flush()
         
         # Create VMs
         created_vms = []
         for idx, vm_data in enumerate(vms_list):
             vm = LabVM(
                 lab_id=lab.id,
+                source_vm_id=str(vm_data["source_vm_id"]),
                 name=vm_data["name"],
-                vm_template_id=str(vm_data["vm_template_id"]),
+                description=vm_data.get("description"),
+                snapshot_name=vm_data.get("snapshot_name"),
+                cpu_cores=vm_data.get("cpu_cores"),
+                memory_mb=vm_data.get("memory_mb"),
                 order=vm_data.get("order", idx),
-                config={
-                    "cpu_cores": vm_data.get("cpu_cores", 2),
-                    "memory_mb": vm_data.get("memory_mb", 4096),
-                    "disk_gb": vm_data.get("disk_gb", 50),
-                    "network_config": vm_data.get("network_config", {}),
-                    "startup_delay": vm_data.get("startup_delay", 0),
-                    "description": vm_data.get("description"),
-                }
             )
             db.add(vm)
             created_vms.append(vm)
         
-        # Create Guide Blocks
-        created_blocks = guide_service.create_many(db, lab.id, guide_blocks_list)
+        # Handle Guide
+        if guide_id:
+            lab.guide_id = uuid.UUID(guide_id)
+        elif guide_steps_list:
+            guide_data = LabGuideCreate(
+                title=f"{name} - Guide",
+                description=short_description or description,
+                category=category_enum.value,
+                difficulty=difficulty_enum.value,
+                estimated_duration_minutes=duration_minutes,
+                tags=tags_list,
+                steps=guide_steps_list,
+            )
+            guide = create_guide_service(db, guide_data, current_user["sub"])
+            lab.guide_id = guide.id
         
         # Handle thumbnail upload
         image_url = await file_upload_service.save_lab_thumbnail(
@@ -381,15 +376,11 @@ async def create_full_lab_definition_with_thumbnail(
         
         db.commit()
         
-        # Refresh all
         db.refresh(lab)
         for vm in created_vms:
             db.refresh(vm)
-        for block in created_blocks:
-            db.refresh(block)
         
         lab.vms = created_vms
-        lab.guide_blocks = created_blocks
         
         return lab
         

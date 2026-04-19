@@ -1,129 +1,371 @@
 # app/config/connection/vcenter_client.py
-import atexit
 from pyVim.connect import SmartConnect, Disconnect
 from pyVmomi import vim
 import ssl
 import logging
 from typing import List, Dict, Optional
-from app.config.connection.vault_client import read_credentials
+from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
 
+
 class VCenterClient:
-    def __init__(self):
+    """Client for vCenter Server connection."""
+
+    def __init__(self, host: str, username: str, password: str, port: int = 443):
+        self.host = host
+        self.username = username
+        self.password = password
+        self.port = port
         self._service_instance = None
-        self._connected = False
         self._content = None
-    
-    def connect(self, host: str, username: str, password: str, port: int = 443) -> bool:
+
+    def connect(self) -> bool:
         """Connect to vCenter Server."""
         try:
-            # Disable SSL verification for lab (enable in production)
             context = ssl.create_default_context()
             context.check_hostname = False
             context.verify_mode = ssl.CERT_NONE
-            
+
             self._service_instance = SmartConnect(
-                host=host,
-                user=username,
-                pwd=password,
-                port=port,
+                host=self.host,
+                user=self.username,
+                pwd=self.password,
+                port=self.port,
                 sslContext=context
             )
-            
-            atexit.register(Disconnect, self._service_instance)
+
             self._content = self._service_instance.RetrieveContent()
-            self._connected = True
-            logger.info(f"Connected to vCenter: {host}")
+            logger.info(f"Connected to vCenter: {self.host}")
             return True
-            
+
         except Exception as e:
-            logger.error(f"Failed to connect to vCenter {host}: {e}")
-            self._connected = False
+            logger.error(f"Failed to connect to vCenter {self.host}: {e}")
             return False
-    
+
     def disconnect(self):
         """Disconnect from vCenter."""
         if self._service_instance:
             Disconnect(self._service_instance)
-            self._connected = False
-            logger.info("Disconnected from vCenter")
-    
+            logger.info(f"Disconnected from vCenter: {self.host}")
+
     def health_check(self) -> Dict:
         """Check vCenter connection health."""
-        if not self._connected or not self._service_instance:
-            return {"status": "disconnected", "connected": False}
-        
+        if not self._service_instance:
+            return {"status": "disconnected", "connected": False, "host": self.host}
+
         try:
-            # Try to retrieve content to verify connection
             self._service_instance.CurrentTime()
             return {
                 "status": "connected",
                 "connected": True,
-                "api_version": self._service_instance.content.about.apiVersion,
-                "vcenter_name": self._service_instance.content.about.fullName
+                "host": self.host,
+                "api_version": self._content.about.apiVersion,
+                "vcenter_version": self._content.about.fullName,
+                "instance_uuid": self._content.about.instanceUuid,
             }
         except Exception as e:
-            logger.error(f"Health check failed: {e}")
-            return {"status": "error", "connected": False, "error": str(e)}
-    
-    def get_all_hosts(self) -> List[Dict]:
-        """Get all ESXi hosts managed by vCenter."""
-        if not self._connected:
+            logger.error(f"vCenter health check failed for {self.host}: {e}")
+            return {"status": "error", "connected": False, "host": self.host, "error": str(e)}
+
+    def get_datacenters(self) -> List[Dict]:
+        """Get all datacenters in vCenter."""
+        if not self._service_instance:
             raise RuntimeError("Not connected to vCenter")
-        
+
+        datacenters = []
+        container = self._content.viewManager.CreateContainerView(
+            self._content.rootFolder, [vim.Datacenter], True
+        )
+
+        try:
+            for dc in container.view:
+                try:
+                    datacenters.append({
+                        "name": dc.name,
+                        "vm_folder": dc.vmFolder.name if dc.vmFolder else None,
+                        "host_folder": dc.hostFolder.name if dc.hostFolder else None,
+                        "datastore_folder": dc.datastoreFolder.name if dc.datastoreFolder else None,
+                        "network_folder": dc.networkFolder.name if dc.networkFolder else None,
+                    })
+                except Exception as e:
+                    dc_name = getattr(dc, "name", "unknown")
+                    logger.warning(f"Skipping datacenter '{dc_name}' on {self.host}: {e}")
+                    continue
+        finally:
+            container.Destroy()
+
+        return datacenters
+
+    def get_clusters(self) -> List[Dict]:
+        """Get all clusters in vCenter."""
+        if not self._service_instance:
+            raise RuntimeError("Not connected to vCenter")
+
+        clusters = []
+        container = self._content.viewManager.CreateContainerView(
+            self._content.rootFolder, [vim.ClusterComputeResource], True
+        )
+
+        try:
+            for cluster in container.view:
+                try:
+                    summary = cluster.summary
+                    config = cluster.configuration
+
+                    clusters.append({
+                        "name": cluster.name,
+                        "datacenter": self._get_parent_datacenter_name(cluster),
+                        "total_cpu_mhz": summary.totalCpu if summary else 0,
+                        "total_memory_mb": summary.totalMemory // (1024 * 1024) if summary else 0,
+                        "num_hosts": summary.numHosts if summary else 0,
+                        "num_effective_hosts": summary.numEffectiveHosts if summary else 0,
+                        "overall_status": str(summary.overallStatus) if summary else "gray",
+                        "drs_enabled": config.drsConfig.enabled if config and config.drsConfig else False,
+                        "ha_enabled": config.dasConfig.enabled if config and config.dasConfig else False,
+                    })
+                except Exception as e:
+                    cluster_name = getattr(cluster, "name", "unknown")
+                    logger.warning(f"Skipping cluster '{cluster_name}' on {self.host}: {e}")
+                    continue
+        finally:
+            container.Destroy()
+
+        return clusters
+
+    def get_hosts(self) -> List[Dict]:
+        """Get all ESXi hosts managed by vCenter."""
+        if not self._service_instance:
+            raise RuntimeError("Not connected to vCenter")
+
         hosts = []
         container = self._content.viewManager.CreateContainerView(
             self._content.rootFolder, [vim.HostSystem], True
         )
-        
-        for host in container.view:
-            host_data = {
-                "name": host.name,
-                "connection_state": host.runtime.connectionState,
-                "power_state": host.runtime.powerState,
-                "in_maintenance_mode": host.runtime.inMaintenanceMode,
-                "hardware_model": host.hardware.systemInfo.model if host.hardware else None,
-                "cpu_cores": host.hardware.cpuInfo.numCpuCores if host.hardware else 0,
-                "memory_gb": round(host.hardware.memorySize / (1024**3), 2) if host.hardware else 0,
-                "esxi_version": host.config.product.version if host.config else None,
-                "datastores": [ds.name for ds in host.datastore],
-                "networks": [net.name for net in host.network]
-            }
-            hosts.append(host_data)
-        
-        container.Destroy()
+
+        try:
+            for host in container.view:
+                try:
+                    hardware = host.hardware
+                    config = host.config
+                    runtime = host.runtime
+                    summary = host.summary
+
+                    cpu_model = None
+                    if hardware and hardware.cpuPkg:
+                        cpu_model = hardware.cpuPkg[0].description
+
+                    hosts.append({
+                        "name": host.name,
+                        "datacenter": self._get_parent_datacenter_name(host),
+                        "cluster": self._get_parent_cluster_name(host),
+                        "model": hardware.systemInfo.model if hardware else None,
+                        "vendor": hardware.systemInfo.vendor if hardware else None,
+                        "cpu_model": cpu_model,
+                        "cpu_cores": hardware.cpuInfo.numCpuCores if hardware else 0,
+                        "cpu_threads": hardware.cpuInfo.numCpuThreads if hardware else 0,
+                        "cpu_mhz": round(hardware.cpuInfo.hz / (10 ** 6), 2) if hardware and hardware.cpuInfo else 0,
+                        "memory_gb": round(hardware.memorySize / (1024 ** 3), 2) if hardware else 0,
+                        "esxi_version": config.product.version if config and config.product else None,
+                        "esxi_build": config.product.build if config and config.product else None,
+                        "connection_state": str(runtime.connectionState),
+                        "power_state": str(runtime.powerState),
+                        "in_maintenance_mode": runtime.inMaintenanceMode if runtime else False,
+                        "overall_status": str(summary.overallStatus) if summary else "gray",
+                        "vm_count": len(host.vm) if host.vm else 0,
+                        "boot_time": runtime.bootTime.isoformat() if runtime.bootTime else None,
+                    })
+                except Exception as e:
+                    host_name = getattr(host, "name", "unknown")
+                    logger.warning(f"Skipping host '{host_name}' on {self.host}: {e}")
+                    continue
+        finally:
+            container.Destroy()
+
         return hosts
-    
-    def get_all_templates(self) -> List[Dict]:
-        """Get all VM templates from vCenter."""
-        if not self._connected:
+
+    def get_templates(self) -> List[Dict]:
+        """Get all VM templates across vCenter."""
+        if not self._service_instance:
             raise RuntimeError("Not connected to vCenter")
-        
+
         templates = []
         container = self._content.viewManager.CreateContainerView(
             self._content.rootFolder, [vim.VirtualMachine], True
         )
-        
-        for vm in container.view:
-            if vm.config and vm.config.template:
-                template_data = {
-                    "name": vm.name,
-                    "guest_os": vm.config.guestFullName,
-                    "cpu_count": vm.config.hardware.numCPU,
-                    "memory_mb": vm.config.hardware.memoryMB,
-                    "disk_gb": sum(
-                        device.capacityInKB / (1024**2) 
-                        for device in vm.config.hardware.device 
-                        if isinstance(device, vim.vm.device.VirtualDisk)
-                    ),
-                    "host": vm.runtime.host.name if vm.runtime.host else None,
-                    "path": vm.config.files.vmPathName
-                }
-                templates.append(template_data)
-        
-        container.Destroy()
+
+        try:
+            for vm in container.view:
+                try:
+                    if not vm.config or not vm.config.template:
+                        continue
+
+                    hardware = vm.config.hardware
+                    files = vm.config.files
+
+                    templates.append({
+                        "uuid": vm.config.uuid,
+                        "name": vm.name,
+                        "guest_os": vm.config.guestFullName,
+                        "cpu_count": getattr(hardware, "numCPU", 0) if hardware else 0,
+                        "memory_mb": getattr(hardware, "memoryMB", 0) if hardware else 0,
+                        "path": getattr(files, "vmPathName", None) if files else None,
+                        "datacenter": self._get_parent_datacenter_name(vm),
+                        "cluster": self._get_parent_cluster_name(vm),
+                        "host": self.host,
+                    })
+                except Exception as e:
+                    vm_name = getattr(vm, "name", "unknown")
+                    logger.warning(f"Skipping template '{vm_name}' on {self.host}: {e}")
+                    continue
+        finally:
+            container.Destroy()
+
         return templates
 
-# Global instance (singleton)
-vcenter_client = VCenterClient()
+    def get_vms(self) -> List[Dict]:
+        """Get all non-template VMs with power status across vCenter."""
+        if not self._service_instance:
+            raise RuntimeError("Not connected to vCenter")
+
+        vms = []
+        container = self._content.viewManager.CreateContainerView(
+            self._content.rootFolder, [vim.VirtualMachine], True
+        )
+
+        try:
+            for vm in container.view:
+                try:
+                    summary = vm.summary
+
+                    if summary.config and summary.config.template:
+                        continue
+
+                    guest = summary.guest
+                    runtime = summary.runtime
+                    config = summary.config
+
+                    vms.append({
+                        "uuid": vm.config.uuid if vm.config else None,
+                        "name": vm.name,
+                        "power_state": str(runtime.powerState) if runtime else "unknown",
+                        "guest_os": config.guestFullName if config else None,
+                        "cpu_count": getattr(config, "numCpu", 0) if config else 0,
+                        "memory_mb": getattr(config, "memorySizeMB", 0) if config else 0,
+                        "ip_address": guest.ipAddress if guest else None,
+                        "tools_status": str(guest.toolsStatus) if guest else "toolsNotInstalled",
+                        "is_template": summary.config.template if summary.config else False,
+                        "datacenter": self._get_parent_datacenter_name(vm),
+                        "cluster": self._get_parent_cluster_name(vm),
+                        "host": self.host,
+                    })
+                except Exception as e:
+                    vm_name = getattr(vm, "name", "unknown")
+                    logger.warning(f"Skipping VM '{vm_name}' on {self.host}: {e}")
+                    continue
+        finally:
+            container.Destroy()
+
+        return vms
+
+    def get_datastores(self) -> List[Dict]:
+        """Get all datastores in vCenter."""
+        if not self._service_instance:
+            raise RuntimeError("Not connected to vCenter")
+
+        datastores = []
+        container = self._content.viewManager.CreateContainerView(
+            self._content.rootFolder, [vim.Datastore], True
+        )
+
+        try:
+            for ds in container.view:
+                try:
+                    summary = ds.summary
+                    info = ds.info
+
+                    datastores.append({
+                        "name": ds.name,
+                        "datacenter": self._get_parent_datacenter_name(ds),
+                        "type": summary.type,
+                        "capacity_gb": round(summary.capacity / (1024 ** 3), 2) if summary.capacity else 0,
+                        "free_space_gb": round(summary.freeSpace / (1024 ** 3), 2) if summary.freeSpace else 0,
+                        "accessible": summary.accessible if summary else False,
+                        "maintenance_mode": str(summary.maintenanceMode) if summary else None,
+                        "url": summary.url if summary else None,
+                    })
+                except Exception as e:
+                    ds_name = getattr(ds, "name", "unknown")
+                    logger.warning(f"Skipping datastore '{ds_name}' on {self.host}: {e}")
+                    continue
+        finally:
+            container.Destroy()
+
+        return datastores
+
+    def get_networks(self) -> List[Dict]:
+        """Get all networks in vCenter."""
+        if not self._service_instance:
+            raise RuntimeError("Not connected to vCenter")
+
+        networks = []
+        container = self._content.viewManager.CreateContainerView(
+            self._content.rootFolder, [vim.Network], True
+        )
+
+        try:
+            for net in container.view:
+                try:
+                    networks.append({
+                        "name": net.name,
+                        "datacenter": self._get_parent_datacenter_name(net),
+                        "accessible": True,
+                    })
+                except Exception as e:
+                    net_name = getattr(net, "name", "unknown")
+                    logger.warning(f"Skipping network '{net_name}' on {self.host}: {e}")
+                    continue
+        finally:
+            container.Destroy()
+
+        return networks
+
+    def _get_parent_datacenter_name(self, entity) -> Optional[str]:
+        """Walk up the parent chain to find the datacenter name."""
+        current = entity
+        while current:
+            if isinstance(current, vim.Datacenter):
+                return current.name
+            if hasattr(current, 'parent'):
+                current = current.parent
+            else:
+                break
+        return None
+
+    def _get_parent_cluster_name(self, entity) -> Optional[str]:
+        """Walk up the parent chain to find the cluster name."""
+        current = entity
+        while current:
+            if isinstance(current, vim.ClusterComputeResource):
+                return current.name
+            if isinstance(current, vim.ResourcePool) and current.name != "Resources":
+                # Skip default resource pool names
+                pass
+            if hasattr(current, 'parent'):
+                current = current.parent
+            else:
+                break
+        return None
+
+
+@contextmanager
+def vcenter_connection(host: str, username: str, password: str):
+    """Context manager for vCenter connections."""
+    client = VCenterClient(host, username, password)
+    try:
+        if client.connect():
+            yield client
+        else:
+            yield None
+    finally:
+        client.disconnect()

@@ -48,7 +48,7 @@ def create_or_update_credentials(
     actor: str,
     cas: Optional[int] = None,
 ) -> str:
-    """Create or update moderator credentials in Vault at the specified path.
+    """Create or update credentials in Vault at the specified path.
 
     Args:
         cas: Check-and-set value.
@@ -103,7 +103,7 @@ def create_or_update_credentials(
 
 
 def read_credentials(path: str) -> dict:
-    """Read moderator credentials (including password) from Vault."""
+    """Read credentials (including password) from Vault."""
     try:
         secret = client.secrets.kv.v2.read_secret_version(path=path)
         return secret["data"]["data"]
@@ -128,7 +128,7 @@ def read_secret_metadata(path: str) -> dict:
 
 
 def delete_credentials(path: str, actor: str) -> None:
-    """Permanently delete moderator credentials and metadata from Vault."""
+    """Permanently delete credentials and metadata from Vault."""
     try:
         client.secrets.kv.v2.delete_metadata_and_all_versions(path=path)
         audit_log("credentials_delete", actor, path, True)
@@ -167,3 +167,18 @@ def list_moderator_hosts(user_id: str) -> List[str]:
         return []
     except Exception as e:
         raise RuntimeError(f"Failed to list hosts from Vault: {e}")
+
+
+def list_admin_vcenters(user_id: str) -> List[str]:
+    """Return a list of vCenter host names stored under this admin."""
+    try:
+        result = client.secrets.kv.v2.list_secrets(
+            path=f"credentials/admin/{user_id}"
+        )
+        keys = result["data"]["keys"]
+        # Vault returns folder keys with trailing slashes; strip them.
+        return [k.rstrip("/") for k in keys]
+    except hvac.exceptions.InvalidPath:
+        return []
+    except Exception as e:
+        raise RuntimeError(f"Failed to list vCenters from Vault: {e}")

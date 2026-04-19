@@ -15,7 +15,14 @@ import { ProfilePage } from "@/pages/profile/ProfilePage"
 // Infrastructure
 import InfrastructurePage from "@/pages/infrastructure/InfrastructurePage"
 // Credentials Vault
-import CredentialsPage from "@/pages/credentials/CredentialsPage"
+import ModeratorCredentialsPage from "@/pages/credentials/ModeratorCredentialsPage"
+import AdminCredentialsPage from "@/pages/credentials/AdminCredentialsPage"
+
+// Lab Guide
+import ListGuidePage from "@/pages/LabGuide/ListGuidePage"
+import CreateGuidePage from "@/pages/LabGuide/CreateGuidePage"
+import PreviewGuidePage from "@/pages/LabGuide/PreviewGuidePage"
+
 
 import { Loader2 } from "lucide-react"
 
@@ -143,9 +150,17 @@ function App() {
         <Route path="lab-definitions/create-simple" element={<CreateSimpleLabDefinitionsPage />} />
         <Route path="lab-definitions/create-full" element={<CreateFullLabDefinitionsPage />} />
 
+        {/* Infrastructure */}
         <Route path="infrastructure" element={<InfrastructurePage />} />
 
-        <Route path="credentials" element={<CredentialsPage />} />
+        {/* Credentials */}
+        <Route path="credentials" element={<ModeratorCredentialsPage />} />
+        <Route path="vcenter-credentials" element={<AdminCredentialsPage />} />
+
+        {/* Lab Guide */}
+        <Route path="lab-guides/" element={<ListGuidePage />} />
+        <Route path="lab-guides/create" element={<CreateGuidePage />} />
+        <Route path="lab-guides/:guideId/preview" element={<PreviewGuidePage />} />
       </Route>
 
       {/* Catch all - redirect to home */}

@@ -2,7 +2,7 @@
 import uuid
 
 from sqlalchemy import Column, String, Integer, ForeignKey
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from app.db.base import Base
 
@@ -12,28 +12,34 @@ class LabVM(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
-    # Relationships
-    lab_id = Column(UUID(as_uuid=True), ForeignKey("lab_definitions.id"), nullable=False)
+    lab_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("lab_definitions.id", ondelete="CASCADE"),
+        nullable=False
+    )
 
-    # This references external templates from vCenter/ESXi, not local db records
-    vm_template_id = Column(String(255), nullable=False, index=True)
-    # Examples: "550e8400-e29b-41d4-a716-446655440001" or "esxi-template-01"
+    # The vCenter/ESXi VM to clone FROM (VM ID, inventory name, or UUID)
+    source_vm_id = Column(String(255), nullable=False, index=True)
+    # Examples:
+    # vSphere: "vm-42", "ubuntu-22-template", "resgroup-123/ubuntu-22"
+    # Proxmox: "local:vztmpl/ubuntu-22.04-standard..."
 
-    # Lab-specific config
-    name = Column(String(255), nullable=False)  # e.g. "web-server"
-    order = Column(Integer, default=0)
+    # Display name inside this lab (matches guide step target_vm_name)
+    name = Column(String(255), nullable=False)
+    # e.g., "target-web", "attacker-kali", "ad-dc"
 
-    # Dynamic overrides
-    config = Column(JSONB, default=dict)
-    # Example:
-    # {
-    #   "cpu": 4,
-    #   "ram": 8192,
-    #   "network": "lab-net-1"
-    # }
+    # Optional: clone from a specific snapshot instead of current state
+    snapshot_name = Column(String(255), nullable=True)
+
+    # Minimal resource overrides (nullable = use template defaults)
+    cpu_cores = Column(Integer, nullable=True)
+    memory_mb = Column(Integer, nullable=True)
+
+    # Display order in the lab builder
+    order = Column(Integer, default=0, nullable=False)
 
     # Relationships
     lab = relationship("LabDefinition", back_populates="vms")
 
     def __repr__(self):
-        return f"<LabVM(id={self.id}, name={self.name}, lab_id={self.lab_id})>"
+        return f"<LabVM(id={self.id}, name={self.name}, source={self.source_vm_id})>"

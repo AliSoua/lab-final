@@ -1,164 +1,99 @@
 # app/routers/LabDefinition/LabGuideManagement.py
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from typing import List
 from uuid import UUID
 
 from app.config.connection.postgres_client import get_db
-from app.services.LabDefinition.lab_service import LabService
-from app.services.LabDefinition.lab_guide_service import LabGuideService
-from app.schemas.LabDefinition.LabGuideBlock import (
-    LabGuideBlockCreate, 
-    LabGuideBlockUpdate, 
-    LabGuideBlockResponse
-)
 from app.dependencies.keycloak.keycloak_roles import require_any_role
 from app.services.LabDefinition.permissions import LabPermissions
+from app.services.LabDefinition.lab_service import LabService
+from app.services.LabGuide.guide_service import get_guide_with_steps, assign_guide_to_lab
+from app.schemas.LabDefinition.LabGuide import LabGuideResponse
+from app.models.LabDefinition.core import LabDefinition
+from pydantic import BaseModel
 
 router = APIRouter()
 require_admin_or_moderator = require_any_role(["admin", "moderator"])
 lab_service = LabService()
-guide_service = LabGuideService()
 
 
-@router.post(
-    "/{lab_id}/guide-blocks",
-    response_model=LabGuideBlockResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Add guide block to lab",
-)
-def add_guide_block(
-    lab_id: UUID,
-    data: LabGuideBlockCreate,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(require_admin_or_moderator)
-):
-    """
-    Add a guide block (text or cmd) to an existing lab.
-    
-    - **Admin**: can add to any lab
-    - **Moderator**: can only add to labs they created
-    """
+def _get_lab(db: Session, lab_id: UUID, user: dict) -> LabDefinition:
     lab = lab_service.get_lab(db, lab_id)
     if not lab:
-        raise HTTPException(404, "Lab definition not found")
-    
-    LabPermissions.check_ownership(lab, current_user)
-    
-    # Validate single block
-    guide_service.validate_guide([data])
-    
-    return guide_service.create(db, lab_id, data)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lab definition not found")
+    LabPermissions.check_ownership(lab, user)
+    return lab
 
 
 @router.get(
-    "/{lab_id}/guide-blocks",
-    response_model=List[LabGuideBlockResponse],
-    summary="List guide blocks for lab",
+    "/{lab_id}/guide",
+    response_model=LabGuideResponse,
+    summary="Get assigned guide for lab",
 )
-def list_guide_blocks(
+def get_lab_guide(
     lab_id: UUID,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(require_admin_or_moderator)
+    current_user: dict = Depends(require_admin_or_moderator),
 ):
     """
-    Get all guide blocks for a specific lab in order.
-    
-    - **Admin**: can view any lab's guide
-    - **Moderator**: can only view their own labs' guides
+    Retrieve the standalone guide currently assigned to this lab definition.
     """
-    lab = lab_service.get_lab(db, lab_id)
-    if not lab:
-        raise HTTPException(404, "Lab definition not found")
-    
-    LabPermissions.check_ownership(lab, current_user)
-    
-    return guide_service.get_by_lab(db, lab_id)
+    lab = _get_lab(db, lab_id, current_user)
+    if not lab.guide_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No guide assigned to this lab",
+        )
+
+    guide = get_guide_with_steps(db, lab.guide_id)
+    if not guide:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Assigned guide not found",
+        )
+    return guide
+
+
+class _AssignGuidePayload(BaseModel):
+    guide_id: UUID
 
 
 @router.put(
-    "/{lab_id}/guide-blocks/{block_id}",
-    response_model=LabGuideBlockResponse,
-    summary="Update guide block",
+    "/{lab_id}/guide",
+    summary="Assign a guide to lab",
 )
-def update_guide_block(
+def assign_guide_to_lab_endpoint(
     lab_id: UUID,
-    block_id: UUID,
-    data: LabGuideBlockUpdate,
+    payload: _AssignGuidePayload,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(require_admin_or_moderator)
+    current_user: dict = Depends(require_admin_or_moderator),
 ):
     """
-    Update a specific guide block.
-    
-    - **Admin**: can update any lab's blocks
-    - **Moderator**: can only update their own labs' blocks
+    Link an existing standalone LabGuide to this lab definition.
     """
-    lab = lab_service.get_lab(db, lab_id)
-    if not lab:
-        raise HTTPException(404, "Lab definition not found")
-    
-    LabPermissions.check_ownership(lab, current_user)
-    
-    block = guide_service.get(db, block_id)
-    if not block or str(block.lab_id) != str(lab_id):
-        raise HTTPException(404, "Guide block not found in this lab")
-    
-    return guide_service.update(db, block, data)
+    lab = _get_lab(db, lab_id, current_user)
+    updated_lab = assign_guide_to_lab(db, payload.guide_id, lab.id)
+    return {
+        "message": f"Guide assigned to lab '{updated_lab.name}'",
+        "lab_id": str(updated_lab.id),
+        "guide_id": str(updated_lab.guide_id),
+    }
 
 
 @router.delete(
-    "/{lab_id}/guide-blocks/{block_id}",
+    "/{lab_id}/guide",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete guide block",
+    summary="Unassign guide from lab",
 )
-def delete_guide_block(
+def unassign_lab_guide(
     lab_id: UUID,
-    block_id: UUID,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(require_admin_or_moderator)
+    current_user: dict = Depends(require_admin_or_moderator),
 ):
     """
-    Remove a guide block from a lab.
-    
-    - **Admin**: can delete from any lab
-    - **Moderator**: can only delete from their own labs
+    Remove the guide link from this lab definition (does NOT delete the guide).
     """
-    lab = lab_service.get_lab(db, lab_id)
-    if not lab:
-        raise HTTPException(404, "Lab definition not found")
-    
-    LabPermissions.check_ownership(lab, current_user)
-    
-    block = guide_service.get(db, block_id)
-    if not block or str(block.lab_id) != str(lab_id):
-        raise HTTPException(404, "Guide block not found in this lab")
-    
-    guide_service.delete(db, block)
+    lab = _get_lab(db, lab_id, current_user)
+    lab.guide_id = None
+    db.commit()
     return None
-
-
-@router.post(
-    "/{lab_id}/guide-blocks/reorder",
-    response_model=List[LabGuideBlockResponse],
-    summary="Reorder guide blocks",
-)
-def reorder_guide_blocks(
-    lab_id: UUID,
-    block_orders: List[UUID],  # List of block IDs in new order
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(require_admin_or_moderator)
-):
-    """
-    Reorder guide blocks by providing a list of block IDs in the desired order.
-    
-    Example: `["uuid-3", "uuid-1", "uuid-2"]` sets block 3 first, then 1, then 2.
-    """
-    lab = lab_service.get_lab(db, lab_id)
-    if not lab:
-        raise HTTPException(404, "Lab definition not found")
-    
-    LabPermissions.check_ownership(lab, current_user)
-    
-    return guide_service.reorder_blocks(db, lab_id, block_orders)

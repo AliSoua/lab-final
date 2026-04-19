@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, status
 from typing import List, Dict
 from dotenv import load_dotenv
 
-from app.config.connection.vcenter_client import vcenter_client
+from app.config.connection.vcenter_client import VCenterClient
 
 load_dotenv()
 
@@ -17,14 +17,14 @@ VCENTER_PASSWORD = os.getenv("VCENTER_PASSWORD")
 
 def ensure_vcenter_connected():
     """Ensure vCenter connection is established."""
-    if not vcenter_client._connected:
+    if not VCenterClient._connected:
         if not all([VCENTER_HOST, VCENTER_USER, VCENTER_PASSWORD]):
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="vCenter configuration incomplete. Check VCENTER_HOST, VCENTER_USER, VCENTER_PASSWORD in .env"
             )
         
-        success = vcenter_client.connect(VCENTER_HOST, VCENTER_USER, VCENTER_PASSWORD)
+        success = VCenterClient.connect(VCENTER_HOST, VCENTER_USER, VCENTER_PASSWORD)
         if not success:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -38,7 +38,7 @@ def vcenter_health():
     No authentication required. Uses credentials from .env.
     """
     # Try to connect if not connected
-    if not vcenter_client._connected:
+    if not VCenterClient._connected:
         if not all([VCENTER_HOST, VCENTER_USER, VCENTER_PASSWORD]):
             return {
                 "status": "not_configured",
@@ -48,7 +48,7 @@ def vcenter_health():
                 "password_set": bool(VCENTER_PASSWORD)
             }
         
-        success = vcenter_client.connect(VCENTER_HOST, VCENTER_USER, VCENTER_PASSWORD)
+        success = VCenterClient.connect(VCENTER_HOST, VCENTER_USER, VCENTER_PASSWORD)
         if not success:
             return {
                 "status": "connection_failed",
@@ -57,7 +57,7 @@ def vcenter_health():
                 "user": VCENTER_USER
             }
     
-    health = vcenter_client.health_check()
+    health = VCenterClient.health_check()
     return health
 
 @router.get("/hosts", response_model=List[Dict])
@@ -68,7 +68,7 @@ def get_all_hosts():
     """
     try:
         ensure_vcenter_connected()
-        hosts = vcenter_client.get_all_hosts()
+        hosts = VCenterClient.get_all_hosts()
         return hosts
     except HTTPException:
         raise
@@ -86,7 +86,7 @@ def get_all_templates():
     """
     try:
         ensure_vcenter_connected()
-        templates = vcenter_client.get_all_templates()
+        templates = VCenterClient.get_all_templates()
         return templates
     except HTTPException:
         raise
@@ -106,8 +106,8 @@ def get_all_vms():
         
         from pyVmomi import vim
         vms = []
-        container = vcenter_client._content.viewManager.CreateContainerView(
-            vcenter_client._content.rootFolder, [vim.VirtualMachine], True
+        container = VCenterClient._content.viewManager.CreateContainerView(
+            VCenterClient._content.rootFolder, [vim.VirtualMachine], True
         )
         
         for vm in container.view:
@@ -143,8 +143,8 @@ def get_all_datastores():
         
         from pyVmomi import vim
         datastores = []
-        container = vcenter_client._content.viewManager.CreateContainerView(
-            vcenter_client._content.rootFolder, [vim.Datastore], True
+        container = VCenterClient._content.viewManager.CreateContainerView(
+            VCenterClient._content.rootFolder, [vim.Datastore], True
         )
         
         for ds in container.view:
@@ -178,8 +178,8 @@ def get_vm_details(vm_name: str):
         ensure_vcenter_connected()
         
         from pyVmomi import vim
-        container = vcenter_client._content.viewManager.CreateContainerView(
-            vcenter_client._content.rootFolder, [vim.VirtualMachine], True
+        container = VCenterClient._content.viewManager.CreateContainerView(
+            VCenterClient._content.rootFolder, [vim.VirtualMachine], True
         )
         
         vm_data = None

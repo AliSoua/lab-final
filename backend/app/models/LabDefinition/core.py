@@ -2,7 +2,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Column, String, DateTime, Integer, Text, ARRAY, Boolean
+from sqlalchemy import Column, String, DateTime, Integer, Text, ARRAY, Boolean, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from app.db.base import Base
@@ -41,14 +41,25 @@ class LabDefinition(Base):
 
     thumbnail_url = Column(String(500))
 
-    # New: Learning Content Arrays
+    # Learning Content
     objectives = Column(ARRAY(String), default=list, nullable=False)
     prerequisites = Column(ARRAY(String), default=list, nullable=False)
     tags = Column(ARRAY(String), default=list, nullable=False, index=True)
 
+    # Infrastructure (vsphere | proxmox)
+    infrastructure_provider = Column(String(50), default="vsphere", nullable=False, index=True)
+
     # Featured
     is_featured = Column(Boolean, default=False, index=True)
     featured_priority = Column(Integer, default=0, index=True)
+
+    # Guide (standalone, assignable)
+    guide_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("lab_guides.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True
+    )
 
     # Relationships
     vms = relationship(
@@ -58,12 +69,10 @@ class LabDefinition(Base):
         order_by="LabVM.order"
     )
     
-    guide_blocks = relationship(
-        "LabGuideBlock",
-        back_populates="lab",
-        cascade="all, delete-orphan",
-        order_by="LabGuideBlock.order"
-    )
+    guide = relationship("LabGuide", back_populates="lab_definitions")
+    
+    # Remove old guide_blocks relationship (replaced by standalone LabGuide)
+    # guide_blocks = relationship(...)
 
     instances = relationship(
         "LabInstance",
@@ -72,4 +81,4 @@ class LabDefinition(Base):
     )
 
     def __repr__(self):
-        return f"<LabDefinition(id={self.id}, name={self.name}, status={self.status})>"
+        return f"<LabDefinition(id={self.id}, name={self.name}, provider={self.infrastructure_provider})>"

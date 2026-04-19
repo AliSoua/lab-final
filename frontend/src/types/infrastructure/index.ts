@@ -1,3 +1,4 @@
+// frontend/src/types/infrastructure/index.ts
 // ============================================
 // ESXi Host Types (matches backend /info endpoint)
 // ============================================
