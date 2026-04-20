@@ -1,6 +1,13 @@
 # app/routers/credentials/moderators.py
 from fastapi import APIRouter, HTTPException, Depends, status, Request
-from typing import List
+from typing import List, Dict, Any, Set
+from app.config.connection.vault_client import (
+    list_admin_vcenters,
+    read_credentials,
+)
+import hvac
+from app.config.connection.vault_client import client as vault_client
+from app.config.connection.vcenter_client import VCenterClient
 import logging
 import re
 
@@ -404,3 +411,168 @@ def delete_host(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to delete credentials",
         )
+
+
+@router.get(
+    "/vcenters/templates",
+    response_model=List[Dict[str, Any]],
+    summary="Get VM templates from all registered vCenter servers",
+)
+def get_all_vcenter_templates(
+    request: Request,
+    userinfo=Depends(require_role("moderator")),
+):
+    """
+    Retrieve VM templates from all vCenter servers registered by any admin.
+    
+    - Fetches all admin vCenter credentials from Vault
+    - Connects to each unique vCenter host (deduplicated by host field)
+    - Returns aggregated templates with vCenter attribution
+    """
+    user_id = _get_user_id(userinfo)
+
+    logger.info(
+        "Moderator %s requesting templates from all vCenters (ip=%s)",
+        user_id,
+        request.client.host if request.client else "unknown",
+    )
+
+    # Step 1: Get all admin IDs from Vault
+    try:
+        admin_ids = _list_all_admin_ids()
+    except Exception as e:
+        logger.error("Failed to list admin IDs from Vault: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve admin credentials list",
+        )
+
+    if not admin_ids:
+        return []
+
+    # Step 2: Collect all vCenter credentials, deduplicated by host field
+    all_credentials: List[Dict[str, str]] = []
+    seen_hosts: Set[str] = set()
+
+    for admin_id in admin_ids:
+        try:
+            hosts = list_admin_vcenters(admin_id)
+            for host in hosts:
+                path = f"credentials/admin/{admin_id}/{host}"
+                try:
+                    creds = read_credentials(path)
+                    host_value = creds.get("host", "").strip().lower()
+                    
+                    # Deduplicate by host field - keep first occurrence
+                    if not host_value or host_value in seen_hosts:
+                        if host_value:
+                            logger.debug(
+                                "Skipping duplicate vCenter host: %s (admin=%s)",
+                                host_value,
+                                admin_id,
+                            )
+                        continue
+                    
+                    seen_hosts.add(host_value)
+                    
+                    all_credentials.append({
+                        "admin_id": admin_id,
+                        "host": host_value,
+                        "username": creds.get("username", ""),
+                        "password": creds.get("password", ""),
+                        "path": path,
+                    })
+                except Exception as e:
+                    logger.warning(
+                        "Failed to read credentials at %s: %s", path, e
+                    )
+                    continue
+        except Exception as e:
+            logger.warning(
+                "Failed to list vCenters for admin %s: %s", admin_id, e
+            )
+            continue
+
+    if not all_credentials:
+        return []
+
+    # Step 3: Connect to each vCenter and fetch templates
+    templates_aggregate: List[Dict[str, Any]] = []
+
+    for cred in all_credentials:
+        vcenter_host = cred["host"]
+        username = cred["username"]
+        password = cred["password"]
+        admin_id = cred["admin_id"]
+
+        client = VCenterClient(
+            host=vcenter_host,
+            username=username,
+            password=password,
+        )
+
+        try:
+            if not client.connect():
+                logger.warning(
+                    "Failed to connect to vCenter %s (admin=%s)",
+                    vcenter_host,
+                    admin_id,
+                )
+                templates_aggregate.append({
+                    "vcenter_host": vcenter_host,
+                    "admin_id": admin_id,
+                    "templates": [],
+                    "count": 0,
+                    "error": "Connection failed",
+                })
+                continue
+
+            # Fetch templates from vCenter
+            templates = client.get_templates()
+
+            templates_aggregate.append({
+                "vcenter_host": vcenter_host,
+                "admin_id": admin_id,
+                "templates": templates,
+                "count": len(templates),
+            })
+
+            logger.info(
+                "Retrieved %d templates from vCenter %s (admin=%s)",
+                len(templates),
+                vcenter_host,
+                admin_id,
+            )
+
+        except Exception as e:
+            logger.error(
+                "Failed to fetch templates from vCenter %s (admin=%s): %s",
+                vcenter_host,
+                admin_id,
+                e,
+            )
+            templates_aggregate.append({
+                "vcenter_host": vcenter_host,
+                "admin_id": admin_id,
+                "templates": [],
+                "count": 0,
+                "error": str(e),
+            })
+        finally:
+            client.disconnect()
+
+    return templates_aggregate
+
+
+def _list_all_admin_ids() -> List[str]:
+    """Helper to list all admin user IDs from Vault credentials path."""
+    try:
+        result = vault_client.secrets.kv.v2.list_secrets(path="credentials/admin")
+        keys = result["data"]["keys"]
+        # Vault returns folder keys with trailing slashes; strip them.
+        return [k.rstrip("/") for k in keys]
+    except hvac.exceptions.InvalidPath:
+        return []
+    except Exception as e:
+        logger.error("Failed to list admin IDs from Vault: %s", e)
+        raise

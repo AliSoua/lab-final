@@ -9,31 +9,20 @@ from app.db.base import Base
 
 
 class LabGuide(Base):
-    """Standalone guide that can be created independently and assigned to labs."""
+    """Standalone guide. Knows nothing about running VMs."""
     __tablename__ = "lab_guides"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
     title = Column(String(255), nullable=False)
-    description = Column(Text, nullable=True)
 
-    # Classification
-    category = Column(String(100), nullable=True, index=True)
-    difficulty = Column(String(50), default="beginner")
-    estimated_duration_minutes = Column(Integer, default=30)
-
-    tags = Column(ARRAY(String), default=list, nullable=False)
-
-    # Audit
     created_by = Column(String(255), nullable=False, index=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
     updated_by = Column(String(255), nullable=True)
 
-    # Publishing
     is_published = Column(Boolean, default=False, index=True)
 
-    # Relationships
     steps = relationship(
         "LabGuideStep",
         back_populates="guide",
@@ -48,7 +37,10 @@ class LabGuide(Base):
 
 
 class LabGuideStep(Base):
-    """A single step inside a guide. Contains rich content as structured JSONB."""
+    """
+    Pedagogical container.
+    VM-agnostic. Execution targets live inside commands & validations only.
+    """
     __tablename__ = "lab_guide_steps"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -64,38 +56,29 @@ class LabGuideStep(Base):
     title = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
 
-    # Which VM in the lab this step primarily targets (matches LabVM.name)
-    target_vm_name = Column(String(255), nullable=True)
-
-    # ── Content Blocks (stored as validated JSONB) ───────────────────────────
-
-    # 1. Theory / Explanation (markdown)
+    # ── Pure Content (no VM coupling) ────────────────────────────────────────
     theory_content = Column(Text, nullable=True)
 
-    # 2. Commands (list of executable commands)
+    # ── Execution (runtime-bound) ────────────────────────────────────────────
     commands = Column(JSONB, default=list, nullable=False)
-    # [{ "label": "Scan target", "command": "nmap -sV 192.168.1.10", "timeout": 300, "sudo": false }]
+    # Each command MAY specify target.vm_name. If omitted, runtime resolves it.
 
-    # 3. Tasks / Objectives
-    tasks = Column(JSONB, default=list, nullable=False)
-    # [{ "description": "Find the open ports", "is_required": true }]
-
-    # 4. Hints (progressive, 3 levels)
-    hints = Column(JSONB, default=list, nullable=False)
-    # [{ "level": 1, "content": "Try a port scanner" }, { "level": 2, "content": "nmap is your friend" }]
-
-    # 5. Validation / Auto-checks
-    validations = Column(JSONB, default=list, nullable=False)
-    # [{ "type": "port_open", "target_host": "192.168.1.10", "port": 22, "is_blocking": false }]
-
-    # 6. Quiz (one per step, optional)
+    # ── Assessment ───────────────────────────────────────────────────────────
+    # 1. Cognitive (quiz) — no VM needed
     quiz = Column(JSONB, nullable=True)
-    # { "question": "What port is SSH?", "type": "multiple_choice", "options": ["21","22","80"], "correct_answer": "22" }
 
-    # Scoring
+    # 2. Procedural (checklist) — learner self-reports, no VM needed
+    tasks = Column(JSONB, default=list, nullable=False)
+
+    # 3. Automated (validation) — MAY target a VM, but step itself is agnostic
+    validations = Column(JSONB, default=list, nullable=False)
+
+    # ── Support ──────────────────────────────────────────────────────────────
+    hints = Column(JSONB, default=list, nullable=False)
+
+    # ── Scoring ──────────────────────────────────────────────────────────────
     points = Column(Integer, default=10, nullable=False)
 
-    # Relationships
     guide = relationship("LabGuide", back_populates="steps")
 
     def __repr__(self):

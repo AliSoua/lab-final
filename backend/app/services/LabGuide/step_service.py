@@ -12,6 +12,16 @@ from app.schemas.LabDefinition.LabGuide import LabGuideStepCreate, LabGuideStepU
 logger = logging.getLogger(__name__)
 
 
+def _dump_jsonb_field(value: Optional[list]) -> list:
+    """Safely serialize a list of Pydantic models for JSONB storage."""
+    if not value:
+        return []
+    return [
+        item.model_dump(mode="json") if hasattr(item, "model_dump") else item
+        for item in value
+    ]
+
+
 def create_step(db: Session, guide_id: UUID, data: LabGuideStepCreate) -> LabGuideStep:
     guide = db.query(LabGuide).filter(LabGuide.id == guide_id).first()
     if not guide:
@@ -29,12 +39,11 @@ def create_step(db: Session, guide_id: UUID, data: LabGuideStepCreate) -> LabGui
         order=order,
         title=data.title,
         description=data.description,
-        target_vm_name=data.target_vm_name,
         theory_content=data.theory_content,
-        commands=[cmd.model_dump(mode="json") for cmd in data.commands] if data.commands else [],
-        tasks=[task.model_dump(mode="json") for task in data.tasks] if data.tasks else [],
-        hints=[hint.model_dump(mode="json") for hint in data.hints] if data.hints else [],
-        validations=[val.model_dump(mode="json") for val in data.validations] if data.validations else [],
+        commands=_dump_jsonb_field(data.commands),
+        tasks=_dump_jsonb_field(data.tasks),
+        hints=_dump_jsonb_field(data.hints),
+        validations=_dump_jsonb_field(data.validations),
         quiz=data.quiz.model_dump(mode="json") if data.quiz else None,
         points=data.points,
     )
@@ -55,9 +64,10 @@ def update_step(db: Session, step_id: UUID, data: LabGuideStepUpdate) -> LabGuid
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Step not found")
 
     update_data = data.model_dump(exclude_unset=True)
+
     for field, value in update_data.items():
         if field in ("commands", "tasks", "hints", "validations") and value is not None:
-            value = [v.model_dump(mode="json") if hasattr(v, "model_dump") else v for v in value]
+            value = _dump_jsonb_field(value)
         elif field == "quiz" and value is not None:
             value = value.model_dump(mode="json") if hasattr(value, "model_dump") else value
         setattr(step, field, value)

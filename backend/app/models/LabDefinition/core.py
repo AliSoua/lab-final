@@ -70,9 +70,6 @@ class LabDefinition(Base):
     )
     
     guide = relationship("LabGuide", back_populates="lab_definitions")
-    
-    # Remove old guide_blocks relationship (replaced by standalone LabGuide)
-    # guide_blocks = relationship(...)
 
     instances = relationship(
         "LabInstance",

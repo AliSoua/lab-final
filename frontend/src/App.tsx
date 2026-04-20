@@ -158,7 +158,7 @@ function App() {
         <Route path="vcenter-credentials" element={<AdminCredentialsPage />} />
 
         {/* Lab Guide */}
-        <Route path="lab-guides/" element={<ListGuidePage />} />
+        <Route path="lab-guides" element={<ListGuidePage />} />
         <Route path="lab-guides/create" element={<CreateGuidePage />} />
         <Route path="lab-guides/:guideId/preview" element={<PreviewGuidePage />} />
       </Route>

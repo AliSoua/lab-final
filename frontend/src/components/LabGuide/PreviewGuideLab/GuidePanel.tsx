@@ -197,11 +197,11 @@ export function GuidePanel({ guide, currentStepIndex, onStepChange, onRunCommand
                 {step.description && (
                     <p className="text-xs text-[#727373] mt-1">{step.description}</p>
                 )}
-                {step.target_vm_name && (
+                {step.title && (
                     <div className="flex items-center gap-1.5 mt-2">
                         <Terminal className="h-3 w-3 text-[#c4c4c4]" />
                         <span className="text-[11px] text-[#727373] font-mono">
-                            Target: {step.target_vm_name}
+                            Target: {step.title}
                         </span>
                     </div>
                 )}

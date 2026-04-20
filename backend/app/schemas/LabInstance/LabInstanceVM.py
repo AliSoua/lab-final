@@ -85,7 +85,7 @@ class LabInstanceVMResponse(LabInstanceVMBase):
 
     # Joined fields from LabVM definition (optional)
     name: Optional[str] = Field(None, description="VM name from LabVM definition")
-    vm_template_id: Optional[str] = Field(None, description="Template ID from LabVM")
+    source_vm_id: Optional[str] = Field(None, description="Template ID from LabVM")
 
     class Config:
         from_attributes = True

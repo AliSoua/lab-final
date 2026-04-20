@@ -18,7 +18,7 @@ interface UseCreateFullLabsReturn {
 }
 
 /**
- * Hook to create a full lab definition with VMs and Guide Blocks
+ * Hook to create a full lab definition with VMs and a selected Guide
  * 
  * Uses two separate endpoints:
  * - POST /lab-definitions/full (JSON, no image)
@@ -78,12 +78,15 @@ export function useCreateFullLabs(): UseCreateFullLabsReturn {
                         formData.append("network_profile_id", data.network_profile_id)
                     }
 
+                    if (data.guide_id) {
+                        formData.append("guide_id", data.guide_id)
+                    }
+
                     // Arrays and objects as JSON strings - map StringFieldItem[] to string[]
                     formData.append("objectives", JSON.stringify(data.objectives.map(o => o.value)))
                     formData.append("prerequisites", JSON.stringify(data.prerequisites.map(p => p.value)))
                     formData.append("tags", JSON.stringify(data.tags.map(t => t.value)))
                     formData.append("vms", JSON.stringify(data.vms || []))
-                    formData.append("guide_blocks", JSON.stringify(data.guide_blocks || []))
 
                     // Add the file (required for this endpoint)
                     if (data.thumbnail_file instanceof File) {
@@ -121,7 +124,7 @@ export function useCreateFullLabs(): UseCreateFullLabsReturn {
                         tags: jsonData.tags.map(t => t.value),
                         network_profile_id: jsonData.network_profile_id || undefined,
                         vms: jsonData.vms,
-                        guide_blocks: jsonData.guide_blocks,
+                        guide_id: jsonData.guide_id || undefined,
                         // featured fields use defaults from backend (is_featured=false, featured_priority=0)
                     }
 

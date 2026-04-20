@@ -50,22 +50,13 @@ export interface StringFieldItem {
 export interface LabVMItemCreate {
     name: string
     description?: string
-    vm_template_id: string // UUID as string
+    source_vm_id: string // UUID as string
     cpu_cores: number
     memory_mb: number
     disk_gb: number
     network_config?: Record<string, any>
     startup_delay: number
     order: number
-}
-
-// Guide Block for creation
-export interface LabGuideBlockCreate {
-    block_type: GuideBlockType
-    content: string
-    title?: string
-    order: number
-    block_metadata?: Record<string, any>
 }
 
 // Text Block specific metadata
@@ -104,7 +95,7 @@ export interface CreateFullLabDefinitionRequest {
     tags: string[]
     network_profile_id?: string // UUID as string
     vms: LabVMItemCreate[]
-    guide_blocks: LabGuideBlockCreate[]
+    guide_id?: string
 }
 
 // Full Lab Form Data (for wizard/forms) - includes thumbnail_file for uploads
@@ -137,7 +128,7 @@ export interface CreateFullLabDefinitionFormData {
     vms: LabVMItemCreate[]
 
     // Guide
-    guide_blocks: LabGuideBlockCreate[]
+    guide_id?: string
 
     // Network
     network_profile_id: string
@@ -146,21 +137,13 @@ export interface CreateFullLabDefinitionFormData {
 export const DEFAULT_LAB_VM_ITEM: LabVMItemCreate = {
     name: "",
     description: "",
-    vm_template_id: "",
+    source_vm_id: "",
     cpu_cores: 2,
     memory_mb: 4096,
     disk_gb: 50,
     network_config: {},
     startup_delay: 0,
     order: 0
-}
-
-export const DEFAULT_GUIDE_BLOCK: LabGuideBlockCreate = {
-    block_type: GuideBlockType.TEXT,
-    content: "",
-    title: "",
-    order: 0,
-    block_metadata: {}
 }
 
 export const DEFAULT_CREATE_FULL_LAB_FORM_DATA: CreateFullLabDefinitionFormData = {
@@ -190,7 +173,7 @@ export const DEFAULT_CREATE_FULL_LAB_FORM_DATA: CreateFullLabDefinitionFormData 
 
     // VMs & Guide
     vms: [],
-    guide_blocks: [],
+    guide_id: "",
 
     // Network
     network_profile_id: ""
@@ -233,10 +216,7 @@ export function toFullCreateRequest(
             ...vm,
             order: vm.order ?? index
         })),
-        guide_blocks: formData.guide_blocks.map((block, index) => ({
-            ...block,
-            order: block.order ?? index
-        }))
+        guide_id: formData.guide_id || undefined
     }
 }
 
@@ -251,7 +231,7 @@ export function isValidFullLabForm(data: CreateFullLabDefinitionFormData): boole
     )
 
     const vmsValid = data.vms.length > 0 && data.vms.every(vm =>
-        vm.name && vm.vm_template_id
+        vm.name && vm.source_vm_id
     )
 
     return basicValid && vmsValid

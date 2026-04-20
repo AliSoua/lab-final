@@ -7,6 +7,7 @@ interface ReviewStepProps {
     data: LabGuideCreateRequest
 }
 
+
 export function ReviewStep({ data }: ReviewStepProps) {
     return (
         <div className="space-y-6">
@@ -21,42 +22,7 @@ export function ReviewStep({ data }: ReviewStepProps) {
                             <p className="text-[10px] font-medium text-[#c4c4c4] uppercase tracking-wider">Title</p>
                             <p className="text-sm font-medium text-[#3a3a3a] mt-0.5">{data.title}</p>
                         </div>
-                        <div>
-                            <p className="text-[10px] font-medium text-[#c4c4c4] uppercase tracking-wider">Category</p>
-                            <p className="text-sm text-[#3a3a3a] mt-0.5">{data.category || "—"}</p>
-                        </div>
-                        <div>
-                            <p className="text-[10px] font-medium text-[#c4c4c4] uppercase tracking-wider">Difficulty</p>
-                            <div className="flex items-center gap-1.5 mt-0.5">
-                                <BarChart3 className="h-3.5 w-3.5 text-[#1ca9b1]" />
-                                <span className="text-sm text-[#3a3a3a] capitalize">{data.difficulty}</span>
-                            </div>
-                        </div>
-                        <div>
-                            <p className="text-[10px] font-medium text-[#c4c4c4] uppercase tracking-wider">Duration</p>
-                            <div className="flex items-center gap-1.5 mt-0.5">
-                                <Clock className="h-3.5 w-3.5 text-[#1ca9b1]" />
-                                <span className="text-sm text-[#3a3a3a]">{data.estimated_duration_minutes} min</span>
-                            </div>
-                        </div>
                     </div>
-
-                    {data.description && (
-                        <div>
-                            <p className="text-[10px] font-medium text-[#c4c4c4] uppercase tracking-wider">Description</p>
-                            <p className="text-sm text-[#727373] mt-0.5">{data.description}</p>
-                        </div>
-                    )}
-
-                    {data.tags.length > 0 && (
-                        <div className="flex flex-wrap gap-1.5">
-                            {data.tags.map((t) => (
-                                <span key={t} className="px-2 py-0.5 rounded bg-[#e6f7f8] text-[#1ca9b1] text-[11px] font-medium">
-                                    {t}
-                                </span>
-                            ))}
-                        </div>
-                    )}
                 </div>
             </div>
 

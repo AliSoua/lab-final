@@ -26,12 +26,19 @@ def update_step_endpoint(
     step_id: UUID,
     data: LabGuideStepUpdate,
     db: Session = Depends(get_db),
-    userinfo=Depends(require_any_role(["moderator", "admin"])),
+    userinfo: dict = Depends(require_any_role(["moderator", "admin"])),
 ):
     """Update a single step (partial update)."""
     guide = get_guide_with_steps(db, guide_id)
     if not guide:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Guide not found")
+
+    # Ensure the step belongs to this guide
+    if not any(str(s.id) == str(step_id) for s in guide.steps):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Step not found in this guide",
+        )
 
     return update_step(db, step_id, data)
 
@@ -44,12 +51,19 @@ def delete_step_endpoint(
     guide_id: UUID,
     step_id: UUID,
     db: Session = Depends(get_db),
-    userinfo=Depends(require_any_role(["moderator", "admin"])),
+    userinfo: dict = Depends(require_any_role(["moderator", "admin"])),
 ):
     """Delete a single step from a guide."""
     guide = get_guide_with_steps(db, guide_id)
     if not guide:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Guide not found")
+
+    # Ensure the step belongs to this guide
+    if not any(str(s.id) == str(step_id) for s in guide.steps):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Step not found in this guide",
+        )
 
     delete_step(db, step_id)
     return None
@@ -68,12 +82,21 @@ def reorder_steps_endpoint(
     guide_id: UUID,
     items: List[_ReorderItem],
     db: Session = Depends(get_db),
-    userinfo=Depends(require_any_role(["moderator", "admin"])),
+    userinfo: dict = Depends(require_any_role(["moderator", "admin"])),
 ):
     """Bulk reorder steps within a guide."""
     guide = get_guide_with_steps(db, guide_id)
     if not guide:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Guide not found")
+
+    # Optional: validate all step_ids belong to this guide
+    guide_step_ids = {str(s.id) for s in guide.steps}
+    for item in items:
+        if str(item.step_id) not in guide_step_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Step {item.step_id} does not belong to this guide",
+            )
 
     payload = [{"step_id": str(item.step_id), "order": item.order} for item in items]
     return reorder_steps(db, guide_id, payload)

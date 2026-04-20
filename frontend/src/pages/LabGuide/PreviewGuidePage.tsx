@@ -71,7 +71,7 @@ export default function PreviewGuidePage() {
     }
 
     const currentStep = guide.steps[currentStepIndex]
-    const targetVm = currentStep?.target_vm_name || "lab-vm"
+    const targetVm = currentStep?.title || "lab-vm"
 
     return (
         <div className="flex flex-col h-full bg-[#f9f9f9]">
@@ -83,7 +83,7 @@ export default function PreviewGuidePage() {
                             {guide.title}
                         </h1>
                         <p className="text-xs text-[#727373] mt-0.5">
-                            Preview Mode • {guide.steps.length} steps • {guide.estimated_duration_minutes} min
+                            Preview Mode • {guide.steps.length} steps • 60 mins
                         </p>
                     </div>
                     <div className="flex items-center gap-2">

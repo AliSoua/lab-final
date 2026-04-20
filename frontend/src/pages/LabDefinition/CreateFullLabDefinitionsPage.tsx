@@ -3,9 +3,7 @@ import { CreateFullLabWizard } from "@/components/LabDefinition/CreateFullLabDef
 
 export default function CreateFullLabDefinitionsPage() {
     return (
-        // h-screen ensures the page takes exactly the viewport height
-        // overflow-hidden prevents double scrollbars
-        <div className="h-screen flex flex-col bg-[#fafafa] overflow-hidden">
+        <div className="flex flex-col bg-[#f9f9f9] min-h-[calc(100vh-4rem)]">
             <CreateFullLabWizard />
         </div>
     )

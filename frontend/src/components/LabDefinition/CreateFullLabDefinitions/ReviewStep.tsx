@@ -2,12 +2,15 @@
 import { cn } from "@/lib/utils"
 import { useFormContext } from "react-hook-form"
 import type { CreateFullLabDefinitionFormData } from "@/types/LabDefinition/CreateFullLabDefinition"
-import { FileText, Server, BookOpen, Clock, Tag, GraduationCap, Check, Sparkles } from "lucide-react"
+import { FileText, Server, BookOpen, Clock, Tag, GraduationCap, Check, Layers, AlertCircle } from "lucide-react"
+import { useLabGuides } from "@/hooks/LabGuide/useLabGuides"
 
 export function ReviewStep() {
     const { watch } = useFormContext<CreateFullLabDefinitionFormData>()
+    const { guides } = useLabGuides()
 
     const data = watch()
+    const selectedGuide = guides.find(g => g.id === data.guide_id)
 
     return (
         <div className="space-y-6">
@@ -57,16 +60,16 @@ export function ReviewStep() {
                 </div>
             </div>
 
-            {/* NEW: Content Summary (Objectives, Prerequisites, Tags) */}
+            {/* Content Summary */}
             <div className="bg-white rounded-xl border border-[#e8e8e8] p-6 shadow-sm">
                 <h3 className="text-[13px] font-semibold text-[#3a3a3a] mb-4 flex items-center gap-2">
-                    <Sparkles className="h-4 w-4 text-[#1ca9b1]" />
+                    <GraduationCap className="h-4 w-4 text-[#1ca9b1]" />
                     Lab Content
                 </h3>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <div>
                         <span className="text-[#727373] block text-[11px] uppercase tracking-wider mb-2 flex items-center gap-1">
-                            <GraduationCap className="h-3 w-3" />
+                            <Check className="h-3 w-3" />
                             Objectives ({data.objectives?.length || 0})
                         </span>
                         <div className="flex flex-wrap gap-1">
@@ -141,30 +144,55 @@ export function ReviewStep() {
                 </div>
             </div>
 
-            {/* Guide Summary */}
+            {/* Guide Summary — Shows selected guide instead of blocks */}
             <div className="bg-white rounded-xl border border-[#e8e8e8] p-6 shadow-sm">
                 <h3 className="text-[13px] font-semibold text-[#3a3a3a] mb-4 flex items-center gap-2">
                     <BookOpen className="h-4 w-4 text-[#1ca9b1]" />
-                    Guide Blocks ({data.guide_blocks?.length || 0})
+                    Lab Guide
                 </h3>
-                <div className="space-y-2">
-                    {data.guide_blocks?.map((block, index) => (
-                        <div key={index} className="flex items-center gap-3 py-2 border-b border-[#f0f0f0] last:border-0">
-                            <span className={cn(
-                                "px-2 py-1 rounded text-[10px] font-medium uppercase",
-                                block.block_type === "text" ? "bg-blue-50 text-blue-600" : "bg-purple-50 text-purple-600"
-                            )}>
-                                {block.block_type}
-                            </span>
-                            <span className="text-[13px] text-[#3a3a3a] truncate">
-                                {block.title || block.content || "Empty block"}
-                            </span>
+
+                {selectedGuide ? (
+                    <div className="flex items-center gap-3 bg-[#e6f7f8] rounded-xl p-4 border border-[#1ca9b1]/20">
+                        <div className="w-10 h-10 rounded-lg bg-[#1ca9b1]/10 flex items-center justify-center text-[#1ca9b1] shrink-0">
+                            <BookOpen className="h-5 w-5" />
                         </div>
-                    ))}
-                    {(!data.guide_blocks || data.guide_blocks.length === 0) && (
-                        <p className="text-[13px] text-[#c4c4c4] italic">No guide blocks added</p>
-                    )}
-                </div>
+                        <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                                <p className="text-sm font-medium text-[#3a3a3a] truncate">
+                                    {selectedGuide.title}
+                                </p>
+                                {selectedGuide.is_published ? (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-50 text-green-600 font-medium shrink-0">
+                                        Published
+                                    </span>
+                                ) : (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#f5f5f5] text-[#727373] font-medium shrink-0">
+                                        Draft
+                                    </span>
+                                )}
+                            </div>
+                            <div className="flex items-center gap-3 mt-1">
+                                <span className="flex items-center gap-1 text-[11px] text-[#727373]">
+                                    <Layers className="h-3 w-3" />
+                                    {selectedGuide.step_count} steps
+                                </span>
+                            </div>
+                        </div>
+                        <div className="w-6 h-6 rounded-full bg-[#1ca9b1] flex items-center justify-center text-white shrink-0">
+                            <Check className="h-4 w-4" />
+                        </div>
+                    </div>
+                ) : (
+                    <div className="flex items-center gap-3 py-4 border border-dashed border-[#d4d4d4] rounded-xl bg-[#f9f9f9]">
+                        <div className="w-10 h-10 rounded-lg bg-[#f5f5f5] flex items-center justify-center text-[#c4c4c4] ml-4">
+                            <AlertCircle className="h-5 w-5" />
+                        </div>
+                        <div>
+                            <p className="text-[13px] text-[#727373] font-medium">No guide selected</p>
+                            <p className="text-[11px] text-[#c4c4c4]">Go back to the Guide step to select a guide</p>
+                        </div>
+                    </div>
+                )}
             </div>
         </div>
     )

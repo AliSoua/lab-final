@@ -188,7 +188,7 @@ def create_lab_payload() -> Dict:
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     
     # VM Template IDs (you should replace these with actual IDs from your DB)
-    # Using placeholder UUIDs - replace with real vm_template_ids
+    # Using placeholder UUIDs - replace with real source_vm_ids
     vm_template_ubuntu = "11111111-1111-1111-1111-111111111111"
     
     return {
@@ -219,7 +219,7 @@ def create_lab_payload() -> Dict:
             {
                 "name": "nginx-main",
                 "description": "Primary NGINX web server",
-                "vm_template_id": vm_template_ubuntu,
+                "source_vm_id": vm_template_ubuntu,
                 "cpu_cores": 2,
                 "memory_mb": 2048,
                 "disk_gb": 20,
@@ -234,7 +234,7 @@ def create_lab_payload() -> Dict:
             {
                 "name": "nginx-backend-01",
                 "description": "Backend application server for reverse proxy demo",
-                "vm_template_id": vm_template_ubuntu,
+                "source_vm_id": vm_template_ubuntu,
                 "cpu_cores": 1,
                 "memory_mb": 1024,
                 "disk_gb": 15,

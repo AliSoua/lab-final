@@ -1,331 +1,234 @@
 // src/components/LabDefinition/CreateFullLabDefinitions/VMsStep.tsx
 import { cn } from "@/lib/utils"
-import { useFormContext, useFieldArray } from "react-hook-form"
+import { useFormContext } from "react-hook-form"
 import type { CreateFullLabDefinitionFormData } from "@/types/LabDefinition/CreateFullLabDefinition"
-import { Server, Plus, Trash2, Cpu, HardDrive, MemoryStick, Network } from "lucide-react"
-import { useEffect } from "react"
-
-// Mock VM Templates with VALID UUIDs (not "template-1")
-const MOCK_VM_TEMPLATES = [
-    {
-        id: "esxi-1",
-        name: "ESXi 8.0 Host",
-        type: "esxi",
-        cpu: 4,
-        ram: 8192,
-        disk: 100
-    },
-    {
-        id: "vcenter-1",
-        name: "vCenter Server 8",
-        type: "vcenter",
-        cpu: 4,
-        ram: 16384,
-        disk: 200
-    },
-    {
-        id: "ubuntu-1",
-        name: "Ubuntu 22.04 LTS",
-        type: "linux",
-        cpu: 2,
-        ram: 4096,
-        disk: 50
-    },
-    {
-        id: "windows-1",
-        name: "Windows Server 2022",
-        type: "windows",
-        cpu: 4,
-        ram: 8192,
-        disk: 80
-    },
-    {
-        id: "kali-1",
-        name: "Kali Linux",
-        type: "security",
-        cpu: 2,
-        ram: 4096,
-        disk: 60
-    },
-]
+import { useVMTemplates, type VMTemplate } from "@/hooks/LabDefinition/useVMTemplates"
+import { Server, Check, Cpu, MemoryStick, HardDrive, Search, X, AlertCircle } from "lucide-react"
+import { useState, useEffect } from "react"
 
 export function VMsStep() {
-    const { control, register, watch, setValue } = useFormContext<CreateFullLabDefinitionFormData>()
+    const { setValue, watch, formState: { errors } } = useFormContext<CreateFullLabDefinitionFormData>()
+    const { templates, vcenters, isLoading, error, fetchTemplates } = useVMTemplates()
+    const [searchTerm, setSearchTerm] = useState("")
+    const [hasFetched, setHasFetched] = useState(false)
 
-    const { fields, append, remove } = useFieldArray({
-        control,
-        name: "vms",
-    })
+    const selectedTemplateId = watch("vms.0.source_vm_id")
+    const selectedTemplate = templates.find(t => t.uuid === selectedTemplateId)
 
-    // Load demo data with VALID UUIDs
+    // Fetch templates on mount
     useEffect(() => {
-        if (fields.length === 0) {
-            append([
-                {
-                    name: "ESXi Host 01",
-                    description: "Primary ESXi host for virtualization lab",
-                    vm_template_id: "550e8400-e29b-41d4-a716-446655440001",
-                    cpu_cores: 4,
-                    memory_mb: 8192,
-                    disk_gb: 100,
-                    network_config: { vlan: "100", type: "management" },
-                    startup_delay: 0,
-                    order: 0
-                },
-                {
-                    name: "vCenter Server",
-                    description: "vCenter Server Appliance for managing ESXi hosts",
-                    vm_template_id: "550e8400-e29b-41d4-a716-446655440002",
-                    cpu_cores: 4,
-                    memory_mb: 16384,
-                    disk_gb: 200,
-                    network_config: { vlan: "100", type: "management" },
-                    startup_delay: 30,
-                    order: 1
-                },
-                {
-                    name: "Ubuntu Workstation",
-                    description: "Student workstation for lab exercises",
-                    vm_template_id: "550e8400-e29b-41d4-a716-446655440003",
-                    cpu_cores: 2,
-                    memory_mb: 4096,
-                    disk_gb: 50,
-                    network_config: { vlan: "200", type: "workstation" },
-                    startup_delay: 60,
-                    order: 2
-                }
-            ])
+        if (!hasFetched) {
+            fetchTemplates().catch(() => {
+                // Error handled by hook
+            })
+            setHasFetched(true)
         }
-    }, [append, fields.length])
+    }, [fetchTemplates, hasFetched])
 
-    const handleTemplateChange = (index: number, templateId: string) => {
-        const template = MOCK_VM_TEMPLATES.find(t => t.id === templateId)
-        if (template) {
-            setValue(`vms.${index}.vm_template_id`, templateId)
-            setValue(`vms.${index}.cpu_cores`, template.cpu)
-            setValue(`vms.${index}.memory_mb`, template.ram)
-            setValue(`vms.${index}.disk_gb`, template.disk)
-        }
+    const filteredTemplates = searchTerm
+        ? templates.filter(t =>
+            t.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            t.guest_os.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            t.datacenter.toLowerCase().includes(searchTerm.toLowerCase())
+        )
+        : templates
+
+    const handleSelect = (template: VMTemplate) => {
+        setValue("vms", [{
+            name: template.name,
+            description: `Template from ${template.datacenter}`,
+            source_vm_id: template.uuid,
+            cpu_cores: template.cpu_count,
+            memory_mb: template.memory_mb,
+            disk_gb: 50, // Default disk, not provided by template API
+            network_config: {},
+            startup_delay: 0,
+            order: 0
+        }], { shouldValidate: true })
+    }
+
+    const handleClear = () => {
+        setValue("vms", [], { shouldValidate: true })
     }
 
     return (
         <div className="space-y-6">
+            {/* Header */}
             <div className="flex items-center justify-between pb-2 border-b border-[#e8e8e8]">
                 <div className="flex items-center gap-2">
                     <Server className="h-4 w-4 text-[#1ca9b1]" />
                     <h2 className="text-[14px] font-semibold text-[#3a3a3a] uppercase tracking-wider">
-                        Virtual Machines
+                        Select VM Template
                     </h2>
                 </div>
-                <button
-                    type="button"
-                    onClick={() => append({
-                        name: "",
-                        description: "",
-                        vm_template_id: "",
-                        cpu_cores: 2,
-                        memory_mb: 4096,
-                        disk_gb: 50,
-                        network_config: {},
-                        startup_delay: 0,
-                        order: fields.length
-                    })}
-                    className={cn(
-                        "flex items-center gap-2 px-4 py-2 rounded-lg",
-                        "bg-[#1ca9b1] text-white text-[12px] font-medium",
-                        "hover:bg-[#17959c] transition-colors duration-200"
-                    )}
-                >
-                    <Plus className="h-4 w-4" />
-                    Add VM
-                </button>
-            </div>
-
-            <div className="space-y-4">
-                {fields.map((field, index) => {
-                    const templateId = watch(`vms.${index}.vm_template_id`)
-                    const selectedTemplate = MOCK_VM_TEMPLATES.find(t => t.id === templateId)
-
-                    return (
-                        <div key={field.id} className="bg-white rounded-xl border border-[#e8e8e8] p-6 shadow-sm">
-                            <div className="flex items-start justify-between mb-4">
-                                <div className="flex items-center gap-3">
-                                    <div className="w-10 h-10 rounded-lg bg-[#f5f5f5] flex items-center justify-center text-[#1ca9b1]">
-                                        <Server className="h-5 w-5" />
-                                    </div>
-                                    <div>
-                                        <h3 className="text-[13.5px] font-semibold text-[#3a3a3a]">
-                                            VM #{index + 1}
-                                        </h3>
-                                        <p className="text-[11px] text-[#727373]">
-                                            {selectedTemplate?.name || "Select a template"}
-                                        </p>
-                                    </div>
-                                </div>
-                                <button
-                                    type="button"
-                                    onClick={() => remove(index)}
-                                    className="p-2 text-[#c4c4c4] hover:text-red-500 transition-colors"
-                                >
-                                    <Trash2 className="h-4 w-4" />
-                                </button>
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-4">
-                                <div className="col-span-2 space-y-2">
-                                    <label className="text-[11px] font-medium text-[#727373] uppercase tracking-wider">
-                                        VM Name *
-                                    </label>
-                                    <input
-                                        type="text"
-                                        {...register(`vms.${index}.name` as const, { required: true })}
-                                        placeholder="e.g., Web Server 01"
-                                        className={cn(
-                                            "w-full bg-transparent px-3 py-2 text-[13px] text-[#3a3a3a]",
-                                            "border border-[#d4d4d4] rounded-lg outline-none",
-                                            "placeholder:text-[#c8c8c8]",
-                                            "focus:border-[#1ca9b1] transition-colors duration-200"
-                                        )}
-                                    />
-                                </div>
-
-                                <div className="col-span-2 space-y-2">
-                                    <label className="text-[11px] font-medium text-[#727373] uppercase tracking-wider">
-                                        Description
-                                    </label>
-                                    <input
-                                        type="text"
-                                        {...register(`vms.${index}.description` as const)}
-                                        placeholder="Purpose of this VM in the lab..."
-                                        className={cn(
-                                            "w-full bg-transparent px-3 py-2 text-[13px] text-[#3a3a3a]",
-                                            "border border-[#d4d4d4] rounded-lg outline-none",
-                                            "placeholder:text-[#c8c8c8]",
-                                            "focus:border-[#1ca9b1] transition-colors duration-200"
-                                        )}
-                                    />
-                                </div>
-
-                                <div className="col-span-2 space-y-2">
-                                    <label className="text-[11px] font-medium text-[#727373] uppercase tracking-wider">
-                                        VM Template *
-                                    </label>
-                                    <select
-                                        value={templateId}
-                                        onChange={(e) => handleTemplateChange(index, e.target.value)}
-                                        className={cn(
-                                            "w-full bg-transparent px-3 py-2 text-[13px] text-[#3a3a3a]",
-                                            "border border-[#d4d4d4] rounded-lg outline-none",
-                                            "focus:border-[#1ca9b1] transition-colors duration-200"
-                                        )}
-                                    >
-                                        <option value="">Select template...</option>
-                                        {MOCK_VM_TEMPLATES.map(template => (
-                                            <option key={template.id} value={template.id}>
-                                                {template.name} ({template.cpu} vCPU, {template.ram / 1024}GB RAM)
-                                            </option>
-                                        ))}
-                                    </select>
-                                </div>
-
-                                <div className="col-span-2 sm:col-span-1 space-y-2">
-                                    <label className="text-[11px] font-medium text-[#727373] uppercase tracking-wider flex items-center gap-1">
-                                        <Cpu className="h-3 w-3" />
-                                        CPU Cores
-                                    </label>
-                                    <input
-                                        type="number"
-                                        {...register(`vms.${index}.cpu_cores` as const, { valueAsNumber: true })}
-                                        min={1}
-                                        max={16}
-                                        className={cn(
-                                            "w-full bg-transparent px-3 py-2 text-[13px] text-[#3a3a3a]",
-                                            "border border-[#d4d4d4] rounded-lg outline-none",
-                                            "focus:border-[#1ca9b1] transition-colors duration-200"
-                                        )}
-                                    />
-                                </div>
-
-                                <div className="col-span-2 sm:col-span-1 space-y-2">
-                                    <label className="text-[11px] font-medium text-[#727373] uppercase tracking-wider flex items-center gap-1">
-                                        <MemoryStick className="h-3 w-3" />
-                                        Memory (MB)
-                                    </label>
-                                    <input
-                                        type="number"
-                                        {...register(`vms.${index}.memory_mb` as const, { valueAsNumber: true })}
-                                        step={512}
-                                        min={512}
-                                        className={cn(
-                                            "w-full bg-transparent px-3 py-2 text-[13px] text-[#3a3a3a]",
-                                            "border border-[#d4d4d4] rounded-lg outline-none",
-                                            "focus:border-[#1ca9b1] transition-colors duration-200"
-                                        )}
-                                    />
-                                </div>
-
-                                <div className="col-span-2 sm:col-span-1 space-y-2">
-                                    <label className="text-[11px] font-medium text-[#727373] uppercase tracking-wider flex items-center gap-1">
-                                        <HardDrive className="h-3 w-3" />
-                                        Disk (GB)
-                                    </label>
-                                    <input
-                                        type="number"
-                                        {...register(`vms.${index}.disk_gb` as const, { valueAsNumber: true })}
-                                        min={10}
-                                        className={cn(
-                                            "w-full bg-transparent px-3 py-2 text-[13px] text-[#3a3a3a]",
-                                            "border border-[#d4d4d4] rounded-lg outline-none",
-                                            "focus:border-[#1ca9b1] transition-colors duration-200"
-                                        )}
-                                    />
-                                </div>
-
-                                <div className="col-span-2 sm:col-span-1 space-y-2">
-                                    <label className="text-[11px] font-medium text-[#727373] uppercase tracking-wider flex items-center gap-1">
-                                        <Network className="h-3 w-3" />
-                                        Startup Delay (s)
-                                    </label>
-                                    <input
-                                        type="number"
-                                        {...register(`vms.${index}.startup_delay` as const, { valueAsNumber: true })}
-                                        min={0}
-                                        className={cn(
-                                            "w-full bg-transparent px-3 py-2 text-[13px] text-[#3a3a3a]",
-                                            "border border-[#d4d4d4] rounded-lg outline-none",
-                                            "focus:border-[#1ca9b1] transition-colors duration-200"
-                                        )}
-                                    />
-                                </div>
-                            </div>
-                        </div>
-                    )
-                })}
-
-                {fields.length === 0 && (
-                    <div className="text-center py-12 bg-[#f9f9f9] rounded-xl border border-dashed border-[#d4d4d4]">
-                        <Server className="h-12 w-12 text-[#c4c4c4] mx-auto mb-4" />
-                        <p className="text-[13px] text-[#727373] mb-4">No VMs configured yet</p>
-                        <button
-                            type="button"
-                            onClick={() => append({
-                                name: "",
-                                description: "",
-                                vm_template_id: "",
-                                cpu_cores: 2,
-                                memory_mb: 4096,
-                                disk_gb: 50,
-                                network_config: {},
-                                startup_delay: 0,
-                                order: 0
-                            })}
-                            className="text-[13px] text-[#1ca9b1] font-medium hover:text-[#17959c]"
-                        >
-                            Add your first VM
-                        </button>
-                    </div>
+                {selectedTemplate && (
+                    <button
+                        type="button"
+                        onClick={handleClear}
+                        className="flex items-center gap-1.5 text-[12px] text-[#727373] hover:text-red-500 transition-colors"
+                    >
+                        <X className="h-3.5 w-3.5" />
+                        Clear selection
+                    </button>
                 )}
             </div>
+
+            {/* Selected Template Banner */}
+            {selectedTemplate && (
+                <div className="bg-[#e6f7f8] border border-[#1ca9b1]/20 rounded-xl p-4 flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-lg bg-[#1ca9b1]/10 flex items-center justify-center text-[#1ca9b1]">
+                        <Check className="h-5 w-5" />
+                    </div>
+                    <div className="flex-1">
+                        <p className="text-sm font-medium text-[#3a3a3a]">{selectedTemplate.name}</p>
+                        <p className="text-[11px] text-[#727373] mt-0.5">
+                            {selectedTemplate.guest_os} • {selectedTemplate.cpu_count} vCPU • {selectedTemplate.memory_mb}MB RAM
+                        </p>
+                    </div>
+                    <span className="text-[10px] px-2 py-1 rounded bg-[#1ca9b1] text-white font-medium">
+                        Selected
+                    </span>
+                </div>
+            )}
+
+            {/* Search */}
+            <div className="relative">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#c4c4c4]" />
+                <input
+                    type="text"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    placeholder="Search templates by name, OS, or datacenter..."
+                    disabled={isLoading}
+                    className={cn(
+                        "w-full rounded-lg border border-[#d4d4d4] bg-white pl-10 pr-3 py-2.5",
+                        "text-[13px] text-[#3a3a3a] placeholder:text-[#c4c4c4]",
+                        "outline-none focus:border-[#1ca9b1] focus:ring-1 focus:ring-[#1ca9b1]/20 transition-all",
+                        isLoading && "opacity-50 cursor-not-allowed"
+                    )}
+                />
+                {searchTerm && (
+                    <button
+                        type="button"
+                        onClick={() => setSearchTerm("")}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-[#c4c4c4] hover:text-[#727373]"
+                    >
+                        <X className="h-4 w-4" />
+                    </button>
+                )}
+            </div>
+
+            {/* Templates List */}
+            <div className="space-y-2">
+                {isLoading ? (
+                    <div className="space-y-3">
+                        {[1, 2, 3].map(i => (
+                            <div key={i} className="bg-white rounded-xl border border-[#e8e8e8] p-4 animate-pulse">
+                                <div className="flex items-center gap-3">
+                                    <div className="h-10 w-10 rounded-lg bg-[#f0f0f0]" />
+                                    <div className="space-y-2 flex-1">
+                                        <div className="h-4 w-48 bg-[#f0f0f0] rounded" />
+                                        <div className="h-3 w-32 bg-[#f0f0f0] rounded" />
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                ) : error ? (
+                    <div className="text-center py-12 bg-white rounded-xl border border-dashed border-[#d4d4d4]">
+                        <AlertCircle className="h-12 w-12 text-red-400 mx-auto mb-4" />
+                        <p className="text-[13px] text-[#727373] mb-2">{error}</p>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setHasFetched(false)
+                                fetchTemplates()
+                            }}
+                            className="text-[13px] text-[#1ca9b1] font-medium hover:text-[#17959c]"
+                        >
+                            Retry
+                        </button>
+                    </div>
+                ) : filteredTemplates.length === 0 ? (
+                    <div className="text-center py-12 bg-white rounded-xl border border-dashed border-[#d4d4d4]">
+                        <Server className="h-12 w-12 text-[#c4c4c4] mx-auto mb-4" />
+                        <p className="text-[13px] text-[#727373]">
+                            {searchTerm ? "No templates match your search" : "No VM templates available"}
+                        </p>
+                    </div>
+                ) : (
+                    filteredTemplates.map((template) => {
+                        const isSelected = template.uuid === selectedTemplateId
+
+                        return (
+                            <button
+                                key={template.uuid}
+                                type="button"
+                                onClick={() => handleSelect(template)}
+                                className={cn(
+                                    "w-full text-left bg-white rounded-xl border p-4 transition-all duration-200",
+                                    "hover:shadow-sm",
+                                    isSelected
+                                        ? "border-[#1ca9b1] ring-1 ring-[#1ca9b1]/20"
+                                        : "border-[#e8e8e8] hover:border-[#1ca9b1]/50"
+                                )}
+                            >
+                                <div className="flex items-center gap-3">
+                                    <div className={cn(
+                                        "w-10 h-10 rounded-lg flex items-center justify-center shrink-0",
+                                        isSelected ? "bg-[#e6f7f8] text-[#1ca9b1]" : "bg-[#f5f5f5] text-[#c4c4c4]"
+                                    )}>
+                                        {isSelected ? (
+                                            <Check className="h-5 w-5" />
+                                        ) : (
+                                            <Server className="h-5 w-5" />
+                                        )}
+                                    </div>
+
+                                    <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2">
+                                            <p className="text-sm font-medium text-[#3a3a3a] truncate">
+                                                {template.name}
+                                            </p>
+                                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#f5f5f5] text-[#727373] font-medium shrink-0">
+                                                {template.datacenter}
+                                            </span>
+                                        </div>
+                                        <div className="flex items-center gap-3 mt-1">
+                                            <span className="flex items-center gap-1 text-[11px] text-[#727373]">
+                                                <Cpu className="h-3 w-3" />
+                                                {template.cpu_count} vCPU
+                                            </span>
+                                            <span className="flex items-center gap-1 text-[11px] text-[#727373]">
+                                                <MemoryStick className="h-3 w-3" />
+                                                {template.memory_mb}MB
+                                            </span>
+                                            <span className="flex items-center gap-1 text-[11px] text-[#727373]">
+                                                <HardDrive className="h-3 w-3" />
+                                                {template.guest_os}
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    {isSelected && (
+                                        <div className="w-6 h-6 rounded-full bg-[#1ca9b1] flex items-center justify-center text-white shrink-0">
+                                            <Check className="h-4 w-4" />
+                                        </div>
+                                    )}
+                                </div>
+                            </button>
+                        )
+                    })
+                )}
+            </div>
+
+            {/* Validation Error */}
+            {errors.vms && (
+                <p className="text-[12px] text-red-500 flex items-center gap-1">
+                    <X className="h-3 w-3" />
+                    {errors.vms.message || "Please select a VM template"}
+                </p>
+            )}
         </div>
     )
 }

@@ -1,4 +1,4 @@
-// app/hooks/LabGuide/useLabGuideSteps.ts
+// src/hooks/LabGuide/useLabGuideSteps.ts
 import { useState, useCallback } from "react"
 import { toast } from "sonner"
 import type {
@@ -27,6 +27,7 @@ export function useLabGuideSteps(): UseLabGuideStepsReturn {
 
     const createStep = useCallback(async (guideId: string, data: LabGuideStepCreateRequest) => {
         setIsSubmitting(true)
+        setError(null)
         const loadingToast = toast.loading("Adding step...")
 
         try {
@@ -49,21 +50,16 @@ export function useLabGuideSteps(): UseLabGuideStepsReturn {
 
             if (!response.ok) {
                 if (response.status === 401) {
-                    toast.error("Unauthorized")
                     throw new Error("Unauthorized")
                 }
                 if (response.status === 403) {
-                    toast.error("Forbidden")
                     throw new Error("Forbidden")
                 }
                 if (response.status === 404) {
-                    toast.error("Guide not found")
                     throw new Error("Guide not found")
                 }
                 const errorText = await response.text()
-                const msg = `Failed to add step: ${errorText}`
-                toast.error(msg)
-                throw new Error(msg)
+                throw new Error(`Failed to add step: ${errorText}`)
             }
 
             const result: LabGuideStep = await response.json()
@@ -71,7 +67,7 @@ export function useLabGuideSteps(): UseLabGuideStepsReturn {
             return result
         } catch (err) {
             const message = err instanceof Error ? err.message : "Failed to add step"
-            toast.dismiss(loadingToast)
+            setError(message)
             toast.error(message)
             throw new Error(message)
         } finally {
@@ -81,6 +77,7 @@ export function useLabGuideSteps(): UseLabGuideStepsReturn {
 
     const updateStep = useCallback(async (guideId: string, stepId: string, data: LabGuideStepUpdateRequest) => {
         setIsSubmitting(true)
+        setError(null)
         const loadingToast = toast.loading("Updating step...")
 
         try {
@@ -106,21 +103,16 @@ export function useLabGuideSteps(): UseLabGuideStepsReturn {
 
             if (!response.ok) {
                 if (response.status === 401) {
-                    toast.error("Unauthorized")
                     throw new Error("Unauthorized")
                 }
                 if (response.status === 403) {
-                    toast.error("Forbidden")
                     throw new Error("Forbidden")
                 }
                 if (response.status === 404) {
-                    toast.error("Step not found")
                     throw new Error("Step not found")
                 }
                 const errorText = await response.text()
-                const msg = `Failed to update step: ${errorText}`
-                toast.error(msg)
-                throw new Error(msg)
+                throw new Error(`Failed to update step: ${errorText}`)
             }
 
             const result: LabGuideStep = await response.json()
@@ -128,7 +120,7 @@ export function useLabGuideSteps(): UseLabGuideStepsReturn {
             return result
         } catch (err) {
             const message = err instanceof Error ? err.message : "Failed to update step"
-            toast.dismiss(loadingToast)
+            setError(message)
             toast.error(message)
             throw new Error(message)
         } finally {
@@ -137,6 +129,7 @@ export function useLabGuideSteps(): UseLabGuideStepsReturn {
     }, [])
 
     const deleteStep = useCallback(async (guideId: string, stepId: string) => {
+        setError(null)
         const loadingToast = toast.loading("Removing step...")
 
         try {
@@ -159,15 +152,12 @@ export function useLabGuideSteps(): UseLabGuideStepsReturn {
 
             if (!response.ok) {
                 if (response.status === 401) {
-                    toast.error("Unauthorized")
                     throw new Error("Unauthorized")
                 }
                 if (response.status === 403) {
-                    toast.error("Forbidden")
                     throw new Error("Forbidden")
                 }
                 if (response.status === 404) {
-                    toast.error("Step not found")
                     throw new Error("Step not found")
                 }
                 const errorText = await response.text()
@@ -177,6 +167,7 @@ export function useLabGuideSteps(): UseLabGuideStepsReturn {
             toast.success("Step removed")
         } catch (err) {
             const message = err instanceof Error ? err.message : "Failed to delete step"
+            setError(message)
             toast.error(message)
             throw new Error(message)
         }
@@ -184,6 +175,7 @@ export function useLabGuideSteps(): UseLabGuideStepsReturn {
 
     const reorderSteps = useCallback(async (guideId: string, items: ReorderStepItem[]) => {
         setIsSubmitting(true)
+        setError(null)
         const loadingToast = toast.loading("Reordering steps...")
 
         try {
@@ -209,15 +201,12 @@ export function useLabGuideSteps(): UseLabGuideStepsReturn {
 
             if (!response.ok) {
                 if (response.status === 401) {
-                    toast.error("Unauthorized")
                     throw new Error("Unauthorized")
                 }
                 if (response.status === 403) {
-                    toast.error("Forbidden")
                     throw new Error("Forbidden")
                 }
                 if (response.status === 404) {
-                    toast.error("Guide not found")
                     throw new Error("Guide not found")
                 }
                 const errorText = await response.text()
@@ -229,7 +218,7 @@ export function useLabGuideSteps(): UseLabGuideStepsReturn {
             return result
         } catch (err) {
             const message = err instanceof Error ? err.message : "Failed to reorder steps"
-            toast.dismiss(loadingToast)
+            setError(message)
             toast.error(message)
             throw new Error(message)
         } finally {

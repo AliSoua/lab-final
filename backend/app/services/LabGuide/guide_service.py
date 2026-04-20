@@ -18,11 +18,13 @@ logger = logging.getLogger(__name__)
 
 
 def _serialize_step_data(step_data: LabGuideStepCreate) -> dict:
-    """Convert Pydantic step data into DB-compatible dicts for JSONB columns."""
+    """
+    Convert Pydantic step data into DB-compatible dicts for JSONB columns.
+    Commands and validations now carry their own optional ExecutionTarget.
+    """
     return {
         "title": step_data.title,
         "description": step_data.description,
-        "target_vm_name": step_data.target_vm_name,
         "theory_content": step_data.theory_content,
         "commands": [cmd.model_dump(mode="json") for cmd in step_data.commands] if step_data.commands else [],
         "tasks": [task.model_dump(mode="json") for task in step_data.tasks] if step_data.tasks else [],
@@ -36,11 +38,6 @@ def _serialize_step_data(step_data: LabGuideStepCreate) -> dict:
 def create_guide(db: Session, data: LabGuideCreate, user_id: str) -> LabGuide:
     guide = LabGuide(
         title=data.title,
-        description=data.description,
-        category=data.category,
-        difficulty=data.difficulty,
-        estimated_duration_minutes=data.estimated_duration_minutes,
-        tags=data.tags or [],
         is_published=data.is_published,
         created_by=user_id,
     )
@@ -77,21 +74,16 @@ def list_guides(
     db: Session,
     skip: int = 0,
     limit: int = 100,
-    category: Optional[str] = None,
     is_published: Optional[bool] = None,
     search: Optional[str] = None,
 ) -> Tuple[List[LabGuide], int]:
     query = db.query(LabGuide)
 
-    if category:
-        query = query.filter(LabGuide.category == category)
     if is_published is not None:
         query = query.filter(LabGuide.is_published == is_published)
     if search:
         pattern = f"%{search}%"
-        query = query.filter(
-            LabGuide.title.ilike(pattern) | LabGuide.description.ilike(pattern)
-        )
+        query = query.filter(LabGuide.title.ilike(pattern))
 
     total = query.count()
     guides = query.order_by(asc(LabGuide.created_at)).offset(skip).limit(limit).all()

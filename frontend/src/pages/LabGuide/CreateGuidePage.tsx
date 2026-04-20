@@ -2,7 +2,7 @@
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { cn } from "@/lib/utils"
-import { BookOpen, ChevronLeft, ChevronRight, Save } from "lucide-react"
+import { BookOpen, ChevronLeft, ChevronRight, Save, Layers } from "lucide-react"
 import { useLabGuides } from "@/hooks/LabGuide/useLabGuides"
 import { StepIndicator } from "@/components/LabGuide/CreateGuideLab/StepIndicator"
 import { BasicInfoStep } from "@/components/LabGuide/CreateGuideLab/BasicInfoStep"
@@ -20,11 +20,6 @@ export default function CreateGuidePage() {
 
     const [formData, setFormData] = useState<LabGuideCreateRequest>({
         title: "",
-        description: "",
-        category: "",
-        difficulty: "beginner",
-        estimated_duration_minutes: 30,
-        tags: [],
         is_published: false,
         steps: [],
     })
@@ -54,11 +49,9 @@ export default function CreateGuidePage() {
 
     const handleSubmit = async () => {
         try {
-            const guideId = await createGuide(formData)
+            await createGuide(formData)
             toast.success("Guide created successfully")
-            if (guideId) {
-                navigate(`/admin/lab-guides/${guideId}`)
-            }
+            navigate(`/admin/lab-guides`)
         } catch {
             // Error handled by hook
         }
@@ -75,8 +68,8 @@ export default function CreateGuidePage() {
     return (
         <div className="flex flex-col h-full bg-[#f9f9f9]">
             {/* Header */}
-            <div className="bg-white border-b border-[#e8e8e8] px-6 py-5 shrink-0">
-                <div className="flex items-center justify-between w-full px-4">
+            <div className="bg-white border-b border-[#e8e8e8] px-8 py-5 shrink-0">
+                <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                         <div className="w-10 h-10 rounded-lg bg-[#e6f7f8] flex items-center justify-center text-[#1ca9b1]">
                             <BookOpen className="h-5 w-5" />
@@ -91,13 +84,23 @@ export default function CreateGuidePage() {
                         </div>
                     </div>
 
-                    <StepIndicator steps={STEPS} current={currentStep} />
+                    <div className="flex items-center gap-4">
+                        {formData.steps.length > 0 && (
+                            <div className="hidden md:flex items-center gap-1.5 text-xs text-[#727373] bg-[#f5f5f5] px-3 py-1.5 rounded-lg">
+                                <Layers className="h-3.5 w-3.5" />
+                                <span>{formData.steps.length} steps</span>
+                                <span className="text-[#c4c4c4]">•</span>
+                                <span>{formData.steps.reduce((s, x) => s + (x.points || 0), 0)} pts</span>
+                            </div>
+                        )}
+                        <StepIndicator steps={STEPS} current={currentStep} />
+                    </div>
                 </div>
             </div>
 
-            {/* Content */}
-            <div className="flex-1 overflow-y-auto p-6">
-                <div className="w-full max-w-4xl mx-auto px-4 space-y-6">
+            {/* Content — FULL WIDTH */}
+            <div className="flex-1 overflow-y-auto p-8">
+                <div className="w-full space-y-6">
                     {currentStep === 0 && (
                         <BasicInfoStep data={formData} onChange={updateForm} />
                     )}
@@ -113,8 +116,8 @@ export default function CreateGuidePage() {
             </div>
 
             {/* Footer Actions */}
-            <div className="bg-white border-t border-[#e8e8e8] px-6 py-4 shrink-0">
-                <div className="w-full max-w-4xl mx-auto px-4 flex items-center justify-between">
+            <div className="bg-white border-t border-[#e8e8e8] px-8 py-4 shrink-0">
+                <div className="w-full flex items-center justify-between">
                     <button
                         onClick={handleBack}
                         disabled={currentStep === 0}

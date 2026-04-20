@@ -8,7 +8,7 @@ import {
     TableHeader,
     TableRow,
 } from "@/components/ui/table"
-import { BookOpen, Clock, BarChart3, Shield, Layers } from "lucide-react"
+import { BookOpen, Layers } from "lucide-react"
 import type { LabGuideListItem } from "@/types/LabGuide"
 import { GuideActions } from "./GuideActions"
 
@@ -32,10 +32,7 @@ function SkeletonRow() {
                     </div>
                 </div>
             </TableCell>
-            <TableCell><div className="h-4 w-20 bg-[#f0f0f0] rounded" /></TableCell>
-            <TableCell><div className="h-4 w-16 bg-[#f0f0f0] rounded" /></TableCell>
             <TableCell><div className="h-4 w-12 bg-[#f0f0f0] rounded" /></TableCell>
-            <TableCell><div className="h-4 w-16 bg-[#f0f0f0] rounded" /></TableCell>
             <TableCell><div className="h-8 w-8 bg-[#f0f0f0] rounded" /></TableCell>
         </TableRow>
     )
@@ -74,16 +71,7 @@ export function GuidesTable({
                                 Guide
                             </TableHead>
                             <TableHead className="text-xs font-semibold text-[#727373] uppercase tracking-wider">
-                                Category
-                            </TableHead>
-                            <TableHead className="text-xs font-semibold text-[#727373] uppercase tracking-wider">
-                                Difficulty
-                            </TableHead>
-                            <TableHead className="text-xs font-semibold text-[#727373] uppercase tracking-wider">
                                 Steps
-                            </TableHead>
-                            <TableHead className="text-xs font-semibold text-[#727373] uppercase tracking-wider">
-                                Duration
                             </TableHead>
                             <TableHead className="w-[60px] text-xs font-semibold text-[#727373] uppercase tracking-wider text-right">
                                 Actions
@@ -116,11 +104,6 @@ export function GuidesTable({
                                                 <p className="font-medium text-[#3a3a3a] text-sm truncate">
                                                     {guide.title}
                                                 </p>
-                                                {guide.description && (
-                                                    <p className="text-[11px] text-[#727373] line-clamp-1">
-                                                        {guide.description}
-                                                    </p>
-                                                )}
                                                 <div className="flex items-center gap-1.5 mt-1">
                                                     {guide.is_published ? (
                                                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-50 text-green-600 font-medium">
@@ -131,31 +114,8 @@ export function GuidesTable({
                                                             Draft
                                                         </span>
                                                     )}
-                                                    {guide.tags.slice(0, 2).map((tag) => (
-                                                        <span
-                                                            key={tag}
-                                                            className="text-[10px] px-1.5 py-0.5 rounded bg-[#e6f7f8] text-[#1ca9b1] font-medium"
-                                                        >
-                                                            {tag}
-                                                        </span>
-                                                    ))}
                                                 </div>
                                             </div>
-                                        </div>
-                                    </TableCell>
-
-                                    <TableCell>
-                                        <span className="text-sm text-[#3a3a3a]">
-                                            {guide.category || "—"}
-                                        </span>
-                                    </TableCell>
-
-                                    <TableCell>
-                                        <div className="flex items-center gap-1.5">
-                                            <BarChart3 className="h-3.5 w-3.5 text-[#c4c4c4]" />
-                                            <span className="text-sm text-[#3a3a3a] capitalize">
-                                                {guide.difficulty || "beginner"}
-                                            </span>
                                         </div>
                                     </TableCell>
 
@@ -164,15 +124,6 @@ export function GuidesTable({
                                             <Layers className="h-3.5 w-3.5 text-[#c4c4c4]" />
                                             <span className="text-sm text-[#3a3a3a]">
                                                 {guide.step_count}
-                                            </span>
-                                        </div>
-                                    </TableCell>
-
-                                    <TableCell>
-                                        <div className="flex items-center gap-1.5">
-                                            <Clock className="h-3.5 w-3.5 text-[#c4c4c4]" />
-                                            <span className="text-sm text-[#3a3a3a]">
-                                                {guide.estimated_duration_minutes} min
                                             </span>
                                         </div>
                                     </TableCell>

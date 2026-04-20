@@ -1,3 +1,4 @@
+# app/routers/LabGuide/guides.py
 from typing import List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -13,6 +14,7 @@ from app.schemas.LabDefinition.LabGuide import (
     LabGuideListItem,
     LabGuideStepCreate,
     LabGuideStepResponse,
+    LabGuideAssignRequest,
 )
 from app.services.LabGuide.guide_service import (
     create_guide,
@@ -23,14 +25,13 @@ from app.services.LabGuide.guide_service import (
     assign_guide_to_lab,
 )
 from app.services.LabGuide.step_service import create_step
-from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/lab-guides", tags=["lab-guides"])
 
 
-def _get_user_id(userinfo) -> str:
+def _get_user_id(userinfo: dict) -> str:
     uid = userinfo.get("sub")
     if not uid:
         raise HTTPException(
@@ -40,7 +41,7 @@ def _get_user_id(userinfo) -> str:
     return uid
 
 
-def _is_trainee_only(userinfo) -> bool:
+def _is_trainee_only(userinfo: dict) -> bool:
     roles = userinfo.get("realm_access", {}).get("roles", [])
     return "trainee" in roles and "moderator" not in roles and "admin" not in roles
 
@@ -55,7 +56,7 @@ def _is_trainee_only(userinfo) -> bool:
 def create_new_guide(
     data: LabGuideCreate,
     db: Session = Depends(get_db),
-    userinfo=Depends(require_any_role(["moderator", "admin"])),
+    userinfo: dict = Depends(require_any_role(["moderator", "admin"])),
 ):
     """Create a new standalone guide with steps."""
     user_id = _get_user_id(userinfo)
@@ -70,29 +71,24 @@ def create_new_guide(
 def list_guides_endpoint(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
-    category: Optional[str] = None,
     is_published: Optional[bool] = None,
     search: Optional[str] = None,
     db: Session = Depends(get_db),
-    userinfo=Depends(require_any_role(["trainee", "moderator", "admin"])),
+    userinfo: dict = Depends(require_any_role(["trainee", "moderator", "admin"])),
 ):
     """List guides. Trainees only see published guides."""
     if _is_trainee_only(userinfo):
         is_published = True
 
-    guides, total = list_guides(db, skip, limit, category, is_published, search)
+    guides, total = list_guides(db, skip, limit, is_published, search)
 
+    # Manual construction needed because step_count is computed, not an ORM column
     result = []
     for guide in guides:
         result.append(
             LabGuideListItem(
                 id=guide.id,
                 title=guide.title,
-                description=guide.description,
-                category=guide.category,
-                difficulty=guide.difficulty,
-                estimated_duration_minutes=guide.estimated_duration_minutes,
-                tags=guide.tags or [],
                 is_published=guide.is_published,
                 created_at=guide.created_at,
                 step_count=len(guide.steps),
@@ -108,7 +104,7 @@ def list_guides_endpoint(
 def get_guide_endpoint(
     guide_id: UUID,
     db: Session = Depends(get_db),
-    userinfo=Depends(require_any_role(["trainee", "moderator", "admin"])),
+    userinfo: dict = Depends(require_any_role(["trainee", "moderator", "admin"])),
 ):
     """Get a single guide with all steps."""
     guide = get_guide_with_steps(db, guide_id)
@@ -132,7 +128,7 @@ def update_guide_endpoint(
     guide_id: UUID,
     data: LabGuideUpdate,
     db: Session = Depends(get_db),
-    userinfo=Depends(require_any_role(["moderator", "admin"])),
+    userinfo: dict = Depends(require_any_role(["moderator", "admin"])),
 ):
     """Full update of a guide, including replacement of all steps."""
     user_id = _get_user_id(userinfo)
@@ -147,7 +143,7 @@ def update_guide_endpoint(
 def delete_guide_endpoint(
     guide_id: UUID,
     db: Session = Depends(get_db),
-    userinfo=Depends(require_any_role(["moderator", "admin"])),
+    userinfo: dict = Depends(require_any_role(["moderator", "admin"])),
 ):
     """Delete a guide. Fails if assigned to any lab."""
     delete_guide(db, guide_id)
@@ -165,7 +161,7 @@ def add_step_to_guide(
     guide_id: UUID,
     data: LabGuideStepCreate,
     db: Session = Depends(get_db),
-    userinfo=Depends(require_any_role(["moderator", "admin"])),
+    userinfo: dict = Depends(require_any_role(["moderator", "admin"])),
 ):
     """Append a new step to an existing guide."""
     return create_step(db, guide_id, data)
@@ -173,19 +169,15 @@ def add_step_to_guide(
 
 # ── Assignment to Lab Definition ──────────────────────────────────────────────
 
-class _AssignGuideRequest(BaseModel):
-    lab_definition_id: UUID
-
-
 @router.post(
     "/{guide_id}/assign",
     status_code=status.HTTP_200_OK,
 )
 def assign_guide_to_lab_endpoint(
     guide_id: UUID,
-    body: _AssignGuideRequest,
+    body: LabGuideAssignRequest,
     db: Session = Depends(get_db),
-    userinfo=Depends(require_any_role(["moderator", "admin"])),
+    userinfo: dict = Depends(require_any_role(["moderator", "admin"])),
 ):
     """Assign this guide to a lab definition."""
     lab = assign_guide_to_lab(db, guide_id, body.lab_definition_id)

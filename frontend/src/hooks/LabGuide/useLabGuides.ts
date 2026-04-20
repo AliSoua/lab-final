@@ -44,7 +44,7 @@ export function useLabGuides(): UseLabGuidesReturn {
                 throw new Error("Authentication required")
             }
 
-            const response = await fetch(`${API_BASE_URL}/lab-guides`, {
+            const response = await fetch(`${API_BASE_URL}/lab-guides/`, {
                 headers: {
                     Authorization: `Bearer ${token}`,
                     Accept: "application/json",
@@ -127,7 +127,7 @@ export function useLabGuides(): UseLabGuidesReturn {
                 throw new Error("Authentication required")
             }
 
-            const response = await fetch(`${API_BASE_URL}/lab-guides`, {
+            const response = await fetch(`${API_BASE_URL}/lab-guides/`, {
                 method: "POST",
                 headers: {
                     Authorization: `Bearer ${token}`,

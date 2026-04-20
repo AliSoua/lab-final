@@ -7,7 +7,39 @@ from datetime import datetime
 from pydantic import BaseModel, Field, ConfigDict
 
 
-# ── Nested Content Block Schemas ─────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+#  EXECUTION TARGET  (Decouples content from infrastructure)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class ExecutionTarget(BaseModel):
+    """
+    Runtime-resolvable target.
+    If omitted, the runtime context (LabSession) provides a default VM mapping.
+    """
+    vm_name: Optional[str] = Field(
+        None,
+        description="References LabVM.name in the LabDefinition. Runtime maps this to an actual instance."
+    )
+    # Future: agent_id, container_id, host_override, etc.
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  CONTENT BLOCKS  (Pure pedagogy — zero VM awareness)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class GuideTask(BaseModel):
+    description: str = Field(..., description="What the learner must do")
+    is_required: bool = True
+
+
+class GuideHint(BaseModel):
+    level: int = Field(..., ge=1, le=3, description="1=vague, 2=specific, 3=almost solution")
+    content: str = Field(..., description="Hint text / markdown")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  EXECUTION BLOCKS  (Runtime-bound — optionally target a VM)
+# ═══════════════════════════════════════════════════════════════════════════════
 
 class GuideCommand(BaseModel):
     label: str = Field(..., max_length=255, description="Display name: 'Scan ports'")
@@ -16,16 +48,32 @@ class GuideCommand(BaseModel):
     timeout: int = Field(300, ge=1, le=3600)
     sudo: bool = False
     working_directory: Optional[str] = "/home/user"
+    target: Optional[ExecutionTarget] = Field(
+        None,
+        description="VM target. If None, runtime resolves from session context."
+    )
 
 
-class GuideTask(BaseModel):
-    description: str = Field(..., description="e.g., 'Find the open ports'")
-    is_required: bool = True  # Must complete to finish step
+# ═══════════════════════════════════════════════════════════════════════════════
+#  ASSESSMENT BLOCKS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class QuizType(str, Enum):
+    MULTIPLE_CHOICE = "multiple_choice"
+    SHORT_ANSWER = "short_answer"
+    FLAG = "flag"
 
 
-class GuideHint(BaseModel):
-    level: int = Field(..., ge=1, le=3, description="1=vague, 2=specific, 3=almost solution")
-    content: str = Field(..., description="Hint text/markdown")
+class GuideQuiz(BaseModel):
+    """Cognitive assessment — knowledge check, no VM required."""
+    question: str
+    type: QuizType
+    description: Optional[str] = None
+    options: Optional[List[str]] = Field(None, description="For multiple_choice")
+    correct_answer: str = Field(..., description="Correct value or option text")
+    case_sensitive: bool = False
+    flag_format_hint: Optional[str] = Field(None, description="e.g., 'FLAG{...}'")
+    points: int = Field(10, ge=0)
 
 
 class ValidationCheckType(str, Enum):
@@ -42,60 +90,47 @@ class ValidationCheckType(str, Enum):
 
 
 class ValidationCheck(BaseModel):
+    """
+    Automated validation — the grading engine.
+    May target a VM (via ExecutionTarget) or run infrastructure-side.
+    """
     type: ValidationCheckType
     description: str = Field(..., description="Human-readable: 'Check SSH is open'")
-    target_vm_name: Optional[str] = Field(None, description="Defaults to step's target_vm_name")
+    target: Optional[ExecutionTarget] = Field(
+        None,
+        description="VM to run check against. If None, check runs from the grading controller."
+    )
 
     # Type-specific args
-    target_host: Optional[str] = None      # IP/hostname for port/ping checks
+    target_host: Optional[str] = None      # IP/hostname for port/ping (independent of VM)
     port: Optional[int] = Field(None, ge=1, le=65535)
     file_path: Optional[str] = None
-    expected_content: Optional[str] = None  # Substring or regex for file/command output
-    command: Optional[str] = None           # Command to run for command_output/custom_script
-    expected_output_pattern: Optional[str] = None  # Regex pattern
-    user: Optional[str] = None              # For user_has_root
+    expected_content: Optional[str] = None
+    command: Optional[str] = None
+    expected_output_pattern: Optional[str] = None
+    user: Optional[str] = None
     timeout: int = Field(30, ge=1, le=300)
 
-    is_blocking: bool = False  # Must pass before advancing to next step
-    points: int = Field(0, ge=0, description="Points awarded for passing")
+    is_blocking: bool = False  # Must pass before advancing
+    points: int = Field(0, ge=0)
 
 
-class QuizType(str, Enum):
-    MULTIPLE_CHOICE = "multiple_choice"
-    SHORT_ANSWER = "short_answer"
-    FLAG = "flag"
-
-
-class GuideQuiz(BaseModel):
-    question: str
-    type: QuizType
-    description: Optional[str] = None
-
-    # For multiple choice
-    options: Optional[List[str]] = Field(None, description="['21', '22', '80', '443']")
-    correct_answer: str = Field(..., description="Correct value or option text")
-
-    case_sensitive: bool = False
-    flag_format_hint: Optional[str] = Field(None, description="e.g., 'FLAG{...}'")
-    points: int = Field(10, ge=0)
-
-
-# ── Step Schemas ─────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+#  STEP SCHEMAS  (VM-agnostic structural container)
+# ═══════════════════════════════════════════════════════════════════════════════
 
 class LabGuideStepBase(BaseModel):
     title: str = Field(..., max_length=255)
     description: Optional[str] = None
-    target_vm_name: Optional[str] = Field(
-        None,
-        description="Which LabVM.name this step targets for commands/validations"
-    )
 
     theory_content: Optional[str] = Field(None, description="Markdown/HTML explanation")
+
     commands: List[GuideCommand] = Field(default_factory=list)
     tasks: List[GuideTask] = Field(default_factory=list)
     hints: List[GuideHint] = Field(default_factory=list)
     validations: List[ValidationCheck] = Field(default_factory=list)
     quiz: Optional[GuideQuiz] = None
+
     points: int = Field(10, ge=0, description="Points for completing this step")
     order: int = Field(0, ge=0, description="Display order within the guide")
 
@@ -107,7 +142,6 @@ class LabGuideStepCreate(LabGuideStepBase):
 class LabGuideStepUpdate(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
-    target_vm_name: Optional[str] = None
     theory_content: Optional[str] = None
     commands: Optional[List[GuideCommand]] = None
     tasks: Optional[List[GuideTask]] = None
@@ -124,15 +158,12 @@ class LabGuideStepResponse(LabGuideStepBase):
     model_config = ConfigDict(from_attributes=True)
 
 
-# ── Guide Schemas ────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+#  GUIDE SCHEMAS
+# ═══════════════════════════════════════════════════════════════════════════════
 
 class LabGuideBase(BaseModel):
     title: str = Field(..., max_length=255)
-    description: Optional[str] = None
-    category: Optional[str] = None
-    difficulty: Optional[str] = "beginner"
-    estimated_duration_minutes: int = Field(30, ge=1)
-    tags: List[str] = Field(default_factory=list)
     is_published: bool = False
 
 
@@ -143,11 +174,6 @@ class LabGuideCreate(LabGuideBase):
 
 class LabGuideUpdate(BaseModel):
     title: Optional[str] = None
-    description: Optional[str] = None
-    category: Optional[str] = None
-    difficulty: Optional[str] = None
-    estimated_duration_minutes: Optional[int] = None
-    tags: Optional[List[str]] = None
     is_published: Optional[bool] = None
     steps: Optional[List[LabGuideStepCreate]] = None
     updated_by: Optional[str] = Field(None, description="Injected from JWT")
@@ -165,14 +191,8 @@ class LabGuideResponse(LabGuideBase):
 
 
 class LabGuideListItem(BaseModel):
-    """Lightweight response for catalog listings"""
     id: UUID
     title: str
-    description: Optional[str] = None
-    category: Optional[str] = None
-    difficulty: Optional[str] = None
-    estimated_duration_minutes: int
-    tags: List[str] = Field(default_factory=list)
     is_published: bool
     created_at: datetime
     step_count: int = Field(0, description="Number of steps")
@@ -181,5 +201,4 @@ class LabGuideListItem(BaseModel):
 
 
 class LabGuideAssignRequest(BaseModel):
-    """Request body to assign a guide to a lab definition"""
     guide_id: UUID
