@@ -8,7 +8,7 @@ import {
     TableHeader,
     TableRow,
 } from "@/components/ui/table"
-import { BookOpen, Layers } from "lucide-react"
+import { BookOpen, Layers, GitBranch, AlertCircle } from "lucide-react"
 import type { LabGuideListItem } from "@/types/LabGuide"
 import { GuideActions } from "./GuideActions"
 
@@ -18,6 +18,8 @@ interface GuidesTableProps {
     onPreview: (guide: LabGuideListItem) => void
     onEdit: (guide: LabGuideListItem) => void
     onDelete: (guide: LabGuideListItem) => void
+    onViewVersions: (guide: LabGuideListItem) => void
+    onCreateVersion: (guide: LabGuideListItem) => void
 }
 
 function SkeletonRow() {
@@ -32,7 +34,8 @@ function SkeletonRow() {
                     </div>
                 </div>
             </TableCell>
-            <TableCell><div className="h-4 w-12 bg-[#f0f0f0] rounded" /></TableCell>
+            <TableCell><div className="h-4 w-16 bg-[#f0f0f0] rounded" /></TableCell>
+            <TableCell><div className="h-4 w-20 bg-[#f0f0f0] rounded" /></TableCell>
             <TableCell><div className="h-8 w-8 bg-[#f0f0f0] rounded" /></TableCell>
         </TableRow>
     )
@@ -44,6 +47,8 @@ export function GuidesTable({
     onPreview,
     onEdit,
     onDelete,
+    onViewVersions,
+    onCreateVersion,
 }: GuidesTableProps) {
     if (!isLoading && guides.length === 0) {
         return (
@@ -71,6 +76,9 @@ export function GuidesTable({
                                 Guide
                             </TableHead>
                             <TableHead className="text-xs font-semibold text-[#727373] uppercase tracking-wider">
+                                Current Version
+                            </TableHead>
+                            <TableHead className="text-xs font-semibold text-[#727373] uppercase tracking-wider">
                                 Steps
                             </TableHead>
                             <TableHead className="w-[60px] text-xs font-semibold text-[#727373] uppercase tracking-wider text-right">
@@ -86,58 +94,94 @@ export function GuidesTable({
                                 <SkeletonRow />
                             </>
                         ) : (
-                            guides.map((guide, index) => (
-                                <TableRow
-                                    key={guide.id}
-                                    className={cn(
-                                        "transition-colors",
-                                        index % 2 === 0 ? "bg-white" : "bg-[#f9f9f9]/50",
-                                        "hover:bg-[#f5f5f5]"
-                                    )}
-                                >
-                                    <TableCell className="py-4">
-                                        <div className="flex items-center gap-3">
-                                            <div className="w-8 h-8 rounded-lg bg-[#e6f7f8] flex items-center justify-center text-[#1ca9b1] shrink-0">
-                                                <BookOpen className="h-4 w-4" />
-                                            </div>
-                                            <div className="min-w-0">
-                                                <p className="font-medium text-[#3a3a3a] text-sm truncate">
-                                                    {guide.title}
-                                                </p>
-                                                <div className="flex items-center gap-1.5 mt-1">
-                                                    {guide.is_published ? (
-                                                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-50 text-green-600 font-medium">
-                                                            Published
-                                                        </span>
-                                                    ) : (
-                                                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#f5f5f5] text-[#727373] font-medium">
-                                                            Draft
-                                                        </span>
-                                                    )}
+                            guides.map((guide, index) => {
+                                const hasVersion = guide.current_version_id !== null
+                                const isPublished = guide.current_version_published === true
+
+                                return (
+                                    <TableRow
+                                        key={guide.id}
+                                        className={cn(
+                                            "transition-colors",
+                                            index % 2 === 0 ? "bg-white" : "bg-[#f9f9f9]/50",
+                                            "hover:bg-[#f5f5f5]"
+                                        )}
+                                    >
+                                        <TableCell className="py-4">
+                                            <div className="flex items-center gap-3">
+                                                <div className={cn(
+                                                    "w-8 h-8 rounded-lg flex items-center justify-center shrink-0",
+                                                    hasVersion
+                                                        ? "bg-[#e6f7f8] text-[#1ca9b1]"
+                                                        : "bg-[#f5f5f5] text-[#c4c4c4]"
+                                                )}>
+                                                    <BookOpen className="h-4 w-4" />
+                                                </div>
+                                                <div className="min-w-0">
+                                                    <p className="font-medium text-[#3a3a3a] text-sm truncate">
+                                                        {guide.title}
+                                                    </p>
+                                                    <div className="flex items-center gap-1.5 mt-1">
+                                                        {!hasVersion ? (
+                                                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-600 font-medium flex items-center gap-1">
+                                                                <AlertCircle className="h-3 w-3" />
+                                                                No Version
+                                                            </span>
+                                                        ) : isPublished ? (
+                                                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-50 text-green-600 font-medium flex items-center gap-1">
+                                                                <GitBranch className="h-3 w-3" />
+                                                                v{guide.current_version_number} Published
+                                                            </span>
+                                                        ) : (
+                                                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#f5f5f5] text-[#727373] font-medium flex items-center gap-1">
+                                                                <GitBranch className="h-3 w-3" />
+                                                                v{guide.current_version_number} Draft
+                                                            </span>
+                                                        )}
+                                                    </div>
                                                 </div>
                                             </div>
-                                        </div>
-                                    </TableCell>
+                                        </TableCell>
 
-                                    <TableCell>
-                                        <div className="flex items-center gap-1.5">
-                                            <Layers className="h-3.5 w-3.5 text-[#c4c4c4]" />
-                                            <span className="text-sm text-[#3a3a3a]">
-                                                {guide.step_count}
-                                            </span>
-                                        </div>
-                                    </TableCell>
+                                        <TableCell>
+                                            {hasVersion ? (
+                                                <div className="flex items-center gap-1.5">
+                                                    <GitBranch className="h-3.5 w-3.5 text-[#1ca9b1]" />
+                                                    <span className="text-sm font-medium text-[#3a3a3a]">
+                                                        v{guide.current_version_number}
+                                                    </span>
+                                                </div>
+                                            ) : (
+                                                <span className="text-sm text-[#c4c4c4]">—</span>
+                                            )}
+                                        </TableCell>
 
-                                    <TableCell className="text-right">
-                                        <GuideActions
-                                            guide={guide}
-                                            onPreview={onPreview}
-                                            onEdit={onEdit}
-                                            onDelete={onDelete}
-                                        />
-                                    </TableCell>
-                                </TableRow>
-                            ))
+                                        <TableCell>
+                                            {hasVersion ? (
+                                                <div className="flex items-center gap-1.5">
+                                                    <Layers className="h-3.5 w-3.5 text-[#c4c4c4]" />
+                                                    <span className="text-sm text-[#3a3a3a]">
+                                                        {guide.step_count}
+                                                    </span>
+                                                </div>
+                                            ) : (
+                                                <span className="text-sm text-[#c4c4c4]">—</span>
+                                            )}
+                                        </TableCell>
+
+                                        <TableCell className="text-right">
+                                            <GuideActions
+                                                guide={guide}
+                                                onPreview={onPreview}
+                                                onEdit={onEdit}
+                                                onDelete={onDelete}
+                                                onViewVersions={onViewVersions}
+                                                onCreateVersion={onCreateVersion}
+                                            />
+                                        </TableCell>
+                                    </TableRow>
+                                )
+                            })
                         )}
                     </TableBody>
                 </Table>

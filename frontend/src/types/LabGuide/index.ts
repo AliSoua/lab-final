@@ -72,7 +72,7 @@ export interface GuideQuiz {
     points?: number
 }
 
-// ── Step Types (VM-Agnostic) ─────────────────────────────────────────────────
+// ── Step Types (Input for building versions — still needed for creation) ─────
 
 export interface LabGuideStep {
     id: string
@@ -115,12 +115,41 @@ export interface LabGuideStepUpdateRequest {
     order?: number
 }
 
-// ── Guide Types ──────────────────────────────────────────────────────────────
+// ── Guide Version Types ──────────────────────────────────────────────────────
+
+export interface GuideVersion {
+    id: string
+    guide_id: string
+    version_number: number
+    created_by: string
+    created_at: string
+    is_published: boolean
+    published_at?: string
+    steps: LabGuideStep[]
+    step_count: number
+}
+
+export interface GuideVersionListItem {
+    id: string
+    version_number: number
+    is_published: boolean
+    created_at: string
+    step_count: number
+}
+
+export interface GuideVersionCreateRequest {
+    steps: LabGuideStepCreateRequest[]
+    is_published?: boolean
+}
+
+// ── Guide (Logical) Types ────────────────────────────────────────────────────
 
 export interface LabGuideListItem {
     id: string
     title: string
-    is_published: boolean
+    current_version_id: string | null
+    current_version_number: number | null
+    current_version_published: boolean | null
     created_at: string
     step_count: number
 }
@@ -128,36 +157,30 @@ export interface LabGuideListItem {
 export interface LabGuide {
     id: string
     title: string
-    is_published: boolean
     created_by: string
     created_at: string
     updated_at: string
     updated_by?: string
-    steps: LabGuideStep[]
+    current_version_id: string | null
+    current_version: GuideVersion | null
+    total_versions: number
 }
 
 export interface LabGuideCreateRequest {
     title: string
+    initial_steps?: LabGuideStepCreateRequest[]
     is_published?: boolean
-    steps: LabGuideStepCreateRequest[]
 }
 
 export interface LabGuideUpdateRequest {
     title?: string
-    is_published?: boolean
-    steps?: LabGuideStepCreateRequest[]
 }
 
-export interface AssignGuideRequest {
+export interface AssignGuideVersionRequest {
     lab_definition_id: string
 }
 
-export interface ReorderStepItem {
-    step_id: string
-    order: number
-}
-
-// ── Runtime / Session Types (NEW) ────────────────────────────────────────────
+// ── Runtime / Session Types ──────────────────────────────────────────────────
 
 export interface VMInstanceMapping {
     vm_name: string
@@ -170,7 +193,7 @@ export interface VMInstanceMapping {
 export interface LabGuideRuntimeContext {
     session_id: string
     lab_definition_id: string
-    guide_id: string
+    guide_version_id: string
     user_id: string
     vm_mappings: VMInstanceMapping[]
     default_vm?: string

@@ -50,7 +50,7 @@ export function CreateFullLabWizard({ onSuccess }: CreateFullLabWizardProps) {
             basic: ["name", "slug", "description", "category", "difficulty", "duration_minutes"],
             details: [],
             vms: ["vms"],
-            guide: ["guide_id"],
+            guide: ["guide_version_id"],
             review: []
         }
 

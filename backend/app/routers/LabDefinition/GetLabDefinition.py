@@ -1,5 +1,4 @@
 # app/routers/LabDefinition/GetLabDefinition.py
-# app/routers/LabDefinition/GetLabDefinition.py
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from uuid import UUID
@@ -7,7 +6,7 @@ from uuid import UUID
 from app.config.connection.postgres_client import get_db
 from app.services.LabDefinition.lab_service import LabService
 from app.services.LabDefinition.lab_vm_service import LabVMService
-from app.services.LabGuide.guide_service import get_guide_with_steps
+from app.services.LabGuide.guide_service import get_version
 from app.dependencies.keycloak.keycloak_roles import require_any_role
 from app.services.LabDefinition.permissions import LabPermissions
 from app.schemas.LabDefinition.full_lab import FullLabDefinitionResponse
@@ -21,7 +20,7 @@ vm_service = LabVMService()
 @router.get(
     "/{lab_id}",
     response_model=FullLabDefinitionResponse,
-    summary="Get lab definition with VMs and Guide"
+    summary="Get lab definition with VMs and Guide Version"
 )
 def get_lab_definition(
     lab_id: UUID,
@@ -29,7 +28,7 @@ def get_lab_definition(
     current_user: dict = Depends(require_admin_or_moderator)
 ):
     """
-    Get complete lab definition including all VM configurations and linked Guide.
+    Get complete lab definition including all VM configurations and linked Guide Version.
     
     - **Admin**: can access any lab
     - **Moderator**: can only access labs they created
@@ -43,9 +42,9 @@ def get_lab_definition(
     # Load VMs
     lab.vms = vm_service.get_by_lab(db, lab_id)
     
-    # Load standalone guide with steps if assigned
-    if lab.guide_id:
-        lab.guide = get_guide_with_steps(db, lab.guide_id)
+    # Load immutable guide version if assigned
+    if lab.guide_version_id:
+        lab.guide_version = get_version(db, lab.guide_version_id)
     
     return lab
 
@@ -74,8 +73,8 @@ def get_lab_by_slug(
     
     lab.vms = vm_service.get_by_lab(db, lab.id)
     
-    # Load standalone guide with steps if assigned
-    if lab.guide_id:
-        lab.guide = get_guide_with_steps(db, lab.guide_id)
+    # Load immutable guide version if assigned
+    if lab.guide_version_id:
+        lab.guide_version = get_version(db, lab.guide_version_id)
     
     return lab

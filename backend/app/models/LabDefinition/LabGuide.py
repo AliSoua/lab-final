@@ -2,14 +2,14 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Column, String, DateTime, Integer, Text, ARRAY, Boolean, ForeignKey
+from sqlalchemy import Column, String, DateTime, Integer, Text, Boolean, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from app.db.base import Base
 
 
 class LabGuide(Base):
-    """Standalone guide. Knows nothing about running VMs."""
+    """Logical guide entity. Mutable metadata, immutable versions."""
     __tablename__ = "lab_guides"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -21,27 +21,35 @@ class LabGuide(Base):
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
     updated_by = Column(String(255), nullable=True)
 
-    is_published = Column(Boolean, default=False, index=True)
-
-    steps = relationship(
-        "LabGuideStep",
-        back_populates="guide",
-        cascade="all, delete-orphan",
-        order_by="LabGuideStep.order"
+    # Points to the current published/draft version
+    current_version_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("guide_versions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
     )
 
-    lab_definitions = relationship("LabDefinition", back_populates="guide")
+    # Relationships
+    versions = relationship(
+        "GuideVersion",
+        back_populates="guide",
+        cascade="all, delete-orphan",
+        foreign_keys="GuideVersion.guide_id",
+        order_by="GuideVersion.version_number.desc()",
+    )
+    current_version = relationship(
+        "GuideVersion",
+        foreign_keys=[current_version_id],
+        post_update=True,
+    )
 
     def __repr__(self):
-        return f"<LabGuide(id={self.id}, title={self.title}, steps={len(self.steps)})>"
+        return f"<LabGuide(id={self.id}, title={self.title})>"
 
 
-class LabGuideStep(Base):
-    """
-    Pedagogical container.
-    VM-agnostic. Execution targets live inside commands & validations only.
-    """
-    __tablename__ = "lab_guide_steps"
+class GuideVersion(Base):
+    """Immutable snapshot of guide content. Never modified after creation."""
+    __tablename__ = "guide_versions"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
@@ -49,37 +57,26 @@ class LabGuideStep(Base):
         UUID(as_uuid=True),
         ForeignKey("lab_guides.id", ondelete="CASCADE"),
         nullable=False,
-        index=True
+        index=True,
     )
 
-    order = Column(Integer, default=0, nullable=False, index=True)
-    title = Column(String(255), nullable=False)
-    description = Column(Text, nullable=True)
+    version_number = Column(Integer, nullable=False, default=1)
+    created_by = Column(String(255), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
-    # ── Pure Content (no VM coupling) ────────────────────────────────────────
-    theory_content = Column(Text, nullable=True)
+    is_published = Column(Boolean, default=False, nullable=False, index=True)
+    published_at = Column(DateTime(timezone=True), nullable=True)
 
-    # ── Execution (runtime-bound) ────────────────────────────────────────────
-    commands = Column(JSONB, default=list, nullable=False)
-    # Each command MAY specify target.vm_name. If omitted, runtime resolves it.
+    # All steps stored as immutable JSONB array
+    steps = Column(JSONB, default=list, nullable=False)
 
-    # ── Assessment ───────────────────────────────────────────────────────────
-    # 1. Cognitive (quiz) — no VM needed
-    quiz = Column(JSONB, nullable=True)
+    # Relationships
+    guide = relationship("LabGuide", back_populates="versions", foreign_keys=[guide_id])
+    assigned_labs = relationship("LabDefinition", back_populates="guide_version")
 
-    # 2. Procedural (checklist) — learner self-reports, no VM needed
-    tasks = Column(JSONB, default=list, nullable=False)
-
-    # 3. Automated (validation) — MAY target a VM, but step itself is agnostic
-    validations = Column(JSONB, default=list, nullable=False)
-
-    # ── Support ──────────────────────────────────────────────────────────────
-    hints = Column(JSONB, default=list, nullable=False)
-
-    # ── Scoring ──────────────────────────────────────────────────────────────
-    points = Column(Integer, default=10, nullable=False)
-
-    guide = relationship("LabGuide", back_populates="steps")
+    __table_args__ = (
+        UniqueConstraint("guide_id", "version_number", name="uq_guide_version_number"),
+    )
 
     def __repr__(self):
-        return f"<LabGuideStep(id={self.id}, order={self.order}, title={self.title})>"
+        return f"<GuideVersion(id={self.id}, guide_id={self.guide_id}, v={self.version_number})>"

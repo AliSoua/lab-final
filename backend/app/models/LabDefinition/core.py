@@ -53,10 +53,10 @@ class LabDefinition(Base):
     is_featured = Column(Boolean, default=False, index=True)
     featured_priority = Column(Integer, default=0, index=True)
 
-    # Guide (standalone, assignable)
-    guide_id = Column(
+    # Guide Version (immutable, assignable)
+    guide_version_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("lab_guides.id", ondelete="SET NULL"),
+        ForeignKey("guide_versions.id", ondelete="SET NULL"),
         nullable=True,
         index=True
     )
@@ -69,7 +69,7 @@ class LabDefinition(Base):
         order_by="LabVM.order"
     )
     
-    guide = relationship("LabGuide", back_populates="lab_definitions")
+    guide_version = relationship("GuideVersion", back_populates="assigned_labs")
 
     instances = relationship(
         "LabInstance",

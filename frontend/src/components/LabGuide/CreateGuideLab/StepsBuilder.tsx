@@ -1,7 +1,7 @@
 // src/components/LabGuide/CreateGuideLab/StepsBuilder.tsx
 import { useState } from "react"
 import { cn } from "@/lib/utils"
-import { Plus, ListOrdered, Pencil, Trash2, ArrowUp, ArrowDown, Server } from "lucide-react"
+import { Plus, ListOrdered, Pencil, Trash2, ArrowUp, ArrowDown, Server, GitBranch } from "lucide-react"
 import { StepEditorModal } from "./StepEditor/StepEditorModal"
 import type { LabGuideStepCreateRequest } from "@/types/LabGuide"
 
@@ -74,7 +74,12 @@ export function StepsBuilder({ steps, onChange }: StepsBuilderProps) {
                 <div className="px-6 py-4 border-b border-[#e8e8e8] flex items-center justify-between">
                     <div className="flex items-center gap-4">
                         <div>
-                            <h2 className="text-[15px] font-semibold text-[#3a3a3a]">Guide Steps</h2>
+                            <div className="flex items-center gap-2">
+                                <h2 className="text-[15px] font-semibold text-[#3a3a3a]">Build Version 1</h2>
+                                <span className="text-[10px] px-2 py-0.5 rounded bg-[#e6f7f8] text-[#1ca9b1] font-semibold">
+                                    IMMUTABLE
+                                </span>
+                            </div>
                             <p className="text-xs text-[#727373] mt-0.5">
                                 {steps.length} step{steps.length !== 1 ? "s" : ""} • {totalPoints} total points
                             </p>
@@ -92,6 +97,18 @@ export function StepsBuilder({ steps, onChange }: StepsBuilderProps) {
                         <Plus className="h-4 w-4" />
                         <span>Add Step</span>
                     </button>
+                </div>
+            </div>
+
+            {/* Version Notice */}
+            <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                <GitBranch className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                    <p className="text-sm font-medium text-amber-800">Immutable Version</p>
+                    <p className="text-xs text-amber-700 mt-0.5">
+                        These steps will be saved as <strong>Version 1</strong>. Once created, this version cannot be modified.
+                        To make changes later, you'll create a new version (v2, v3, etc.).
+                    </p>
                 </div>
             </div>
 

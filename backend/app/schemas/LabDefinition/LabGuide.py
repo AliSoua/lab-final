@@ -8,23 +8,18 @@ from pydantic import BaseModel, Field, ConfigDict
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  EXECUTION TARGET  (Decouples content from infrastructure)
+#  EXECUTION TARGET
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class ExecutionTarget(BaseModel):
-    """
-    Runtime-resolvable target.
-    If omitted, the runtime context (LabSession) provides a default VM mapping.
-    """
     vm_name: Optional[str] = Field(
         None,
         description="References LabVM.name in the LabDefinition. Runtime maps this to an actual instance."
     )
-    # Future: agent_id, container_id, host_override, etc.
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  CONTENT BLOCKS  (Pure pedagogy — zero VM awareness)
+#  CONTENT BLOCKS
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class GuideTask(BaseModel):
@@ -38,7 +33,7 @@ class GuideHint(BaseModel):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  EXECUTION BLOCKS  (Runtime-bound — optionally target a VM)
+#  EXECUTION BLOCKS
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class GuideCommand(BaseModel):
@@ -65,7 +60,6 @@ class QuizType(str, Enum):
 
 
 class GuideQuiz(BaseModel):
-    """Cognitive assessment — knowledge check, no VM required."""
     question: str
     type: QuizType
     description: Optional[str] = None
@@ -90,19 +84,13 @@ class ValidationCheckType(str, Enum):
 
 
 class ValidationCheck(BaseModel):
-    """
-    Automated validation — the grading engine.
-    May target a VM (via ExecutionTarget) or run infrastructure-side.
-    """
     type: ValidationCheckType
     description: str = Field(..., description="Human-readable: 'Check SSH is open'")
     target: Optional[ExecutionTarget] = Field(
         None,
         description="VM to run check against. If None, check runs from the grading controller."
     )
-
-    # Type-specific args
-    target_host: Optional[str] = None      # IP/hostname for port/ping (independent of VM)
+    target_host: Optional[str] = None
     port: Optional[int] = Field(None, ge=1, le=65535)
     file_path: Optional[str] = None
     expected_content: Optional[str] = None
@@ -110,27 +98,23 @@ class ValidationCheck(BaseModel):
     expected_output_pattern: Optional[str] = None
     user: Optional[str] = None
     timeout: int = Field(30, ge=1, le=300)
-
-    is_blocking: bool = False  # Must pass before advancing
+    is_blocking: bool = False
     points: int = Field(0, ge=0)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  STEP SCHEMAS  (VM-agnostic structural container)
+#  STEP SCHEMAS (Input for building versions)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class LabGuideStepBase(BaseModel):
     title: str = Field(..., max_length=255)
     description: Optional[str] = None
-
     theory_content: Optional[str] = Field(None, description="Markdown/HTML explanation")
-
     commands: List[GuideCommand] = Field(default_factory=list)
     tasks: List[GuideTask] = Field(default_factory=list)
     hints: List[GuideHint] = Field(default_factory=list)
     validations: List[ValidationCheck] = Field(default_factory=list)
     quiz: Optional[GuideQuiz] = None
-
     points: int = Field(10, ge=0, description="Points for completing this step")
     order: int = Field(0, ge=0, description="Display order within the guide")
 
@@ -159,24 +143,61 @@ class LabGuideStepResponse(LabGuideStepBase):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  GUIDE SCHEMAS
+#  GUIDE VERSION SCHEMAS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class GuideVersionBase(BaseModel):
+    is_published: bool = False
+
+
+class GuideVersionCreate(BaseModel):
+    steps: List[LabGuideStepCreate] = Field(default_factory=list)
+    is_published: bool = False
+
+
+class GuideVersionResponse(BaseModel):
+    id: UUID
+    guide_id: UUID
+    version_number: int
+    created_by: str
+    created_at: datetime
+    is_published: bool
+    published_at: Optional[datetime] = None
+    steps: List[Dict[str, Any]] = Field(default_factory=list)
+    step_count: int = Field(0, description="Number of steps in this version")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GuideVersionListItem(BaseModel):
+    id: UUID
+    version_number: int
+    is_published: bool
+    created_at: datetime
+    step_count: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  GUIDE (LOGICAL) SCHEMAS
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class LabGuideBase(BaseModel):
     title: str = Field(..., max_length=255)
-    is_published: bool = False
 
 
 class LabGuideCreate(LabGuideBase):
-    steps: List[LabGuideStepCreate] = Field(default_factory=list)
-    created_by: Optional[str] = Field(None, description="Injected from JWT")
+    """Create a new logical guide. Optionally create first version inline."""
+    initial_steps: Optional[List[LabGuideStepCreate]] = Field(
+        default=None,
+        description="If provided, creates version 1 immediately"
+    )
+    is_published: bool = False
 
 
 class LabGuideUpdate(BaseModel):
     title: Optional[str] = None
-    is_published: Optional[bool] = None
-    steps: Optional[List[LabGuideStepCreate]] = None
-    updated_by: Optional[str] = Field(None, description="Injected from JWT")
 
 
 class LabGuideResponse(LabGuideBase):
@@ -185,7 +206,9 @@ class LabGuideResponse(LabGuideBase):
     created_at: datetime
     updated_at: datetime
     updated_by: Optional[str] = None
-    steps: List[LabGuideStepResponse] = Field(default_factory=list)
+    current_version: Optional[GuideVersionResponse] = None
+    current_version_id: Optional[UUID] = None
+    total_versions: int = Field(0, description="Total number of versions")
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -193,12 +216,14 @@ class LabGuideResponse(LabGuideBase):
 class LabGuideListItem(BaseModel):
     id: UUID
     title: str
-    is_published: bool
+    current_version_id: Optional[UUID] = None
+    current_version_number: Optional[int] = None
+    current_version_published: Optional[bool] = None
     created_at: datetime
-    step_count: int = Field(0, description="Number of steps")
+    step_count: int = Field(0, description="Steps in current version")
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class LabGuideAssignRequest(BaseModel):
-    guide_id: UUID
+    guide_version_id: UUID = Field(..., description="Specific version to assign to lab")

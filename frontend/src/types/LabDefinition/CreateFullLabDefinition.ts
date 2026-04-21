@@ -95,7 +95,7 @@ export interface CreateFullLabDefinitionRequest {
     tags: string[]
     network_profile_id?: string // UUID as string
     vms: LabVMItemCreate[]
-    guide_id?: string
+    guide_version_id?: string
 }
 
 // Full Lab Form Data (for wizard/forms) - includes thumbnail_file for uploads
@@ -128,7 +128,7 @@ export interface CreateFullLabDefinitionFormData {
     vms: LabVMItemCreate[]
 
     // Guide
-    guide_id?: string
+    guide_version_id?: string
 
     // Network
     network_profile_id: string
@@ -173,7 +173,7 @@ export const DEFAULT_CREATE_FULL_LAB_FORM_DATA: CreateFullLabDefinitionFormData 
 
     // VMs & Guide
     vms: [],
-    guide_id: "",
+    guide_version_id: "",
 
     // Network
     network_profile_id: ""
@@ -216,7 +216,7 @@ export function toFullCreateRequest(
             ...vm,
             order: vm.order ?? index
         })),
-        guide_id: formData.guide_id || undefined
+        guide_version_id: formData.guide_version_id || undefined
     }
 }
 

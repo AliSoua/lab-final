@@ -8,7 +8,16 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { MoreHorizontal, Eye, Pencil, Trash2 } from "lucide-react"
+import {
+    MoreHorizontal,
+    Eye,
+    Pencil,
+    Trash2,
+    GitBranch,
+    History,
+    Play,
+    CheckCircle2,
+} from "lucide-react"
 import type { LabGuideListItem } from "@/types/LabGuide"
 
 interface GuideActionsProps {
@@ -16,10 +25,22 @@ interface GuideActionsProps {
     onPreview: (guide: LabGuideListItem) => void
     onEdit: (guide: LabGuideListItem) => void
     onDelete: (guide: LabGuideListItem) => void
+    onViewVersions: (guide: LabGuideListItem) => void
+    onCreateVersion: (guide: LabGuideListItem) => void
 }
 
-export function GuideActions({ guide, onPreview, onEdit, onDelete }: GuideActionsProps) {
+export function GuideActions({
+    guide,
+    onPreview,
+    onEdit,
+    onDelete,
+    onViewVersions,
+    onCreateVersion,
+}: GuideActionsProps) {
     const [open, setOpen] = useState(false)
+
+    const hasPublishedVersion = guide.current_version_published === true
+    const hasAnyVersion = guide.current_version_id !== null
 
     return (
         <DropdownMenu open={open} onOpenChange={setOpen}>
@@ -34,16 +55,18 @@ export function GuideActions({ guide, onPreview, onEdit, onDelete }: GuideAction
                     <MoreHorizontal className="h-4 w-4" />
                 </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-48">
+            <DropdownMenuContent align="end" className="w-52">
+                {/* Preview — only if there's a current version */}
                 <DropdownMenuItem
                     onClick={() => {
                         onPreview(guide)
                         setOpen(false)
                     }}
                     className="text-[13px] cursor-pointer"
+                    disabled={!hasAnyVersion}
                 >
                     <Eye className="h-4 w-4 mr-2 text-[#727373]" />
-                    Preview
+                    Preview Current Version
                 </DropdownMenuItem>
 
                 <DropdownMenuItem
@@ -54,7 +77,38 @@ export function GuideActions({ guide, onPreview, onEdit, onDelete }: GuideAction
                     className="text-[13px] cursor-pointer"
                 >
                     <Pencil className="h-4 w-4 mr-2 text-[#727373]" />
-                    Edit
+                    Edit Guide
+                </DropdownMenuItem>
+
+                <DropdownMenuSeparator />
+
+                {/* Version Management */}
+                <div className="px-2 py-1.5">
+                    <p className="text-[10px] font-semibold text-[#c4c4c4] uppercase tracking-wider">
+                        Versions
+                    </p>
+                </div>
+
+                <DropdownMenuItem
+                    onClick={() => {
+                        onViewVersions(guide)
+                        setOpen(false)
+                    }}
+                    className="text-[13px] cursor-pointer"
+                >
+                    <History className="h-4 w-4 mr-2 text-[#727373]" />
+                    View All Versions
+                </DropdownMenuItem>
+
+                <DropdownMenuItem
+                    onClick={() => {
+                        onCreateVersion(guide)
+                        setOpen(false)
+                    }}
+                    className="text-[13px] cursor-pointer"
+                >
+                    <GitBranch className="h-4 w-4 mr-2 text-[#1ca9b1]" />
+                    <span className="text-[#1ca9b1]">Create New Version</span>
                 </DropdownMenuItem>
 
                 <DropdownMenuSeparator />
@@ -67,7 +121,7 @@ export function GuideActions({ guide, onPreview, onEdit, onDelete }: GuideAction
                     className="text-[13px] cursor-pointer text-red-600 focus:text-red-600"
                 >
                     <Trash2 className="h-4 w-4 mr-2" />
-                    Delete
+                    Delete Guide
                 </DropdownMenuItem>
             </DropdownMenuContent>
         </DropdownMenu>

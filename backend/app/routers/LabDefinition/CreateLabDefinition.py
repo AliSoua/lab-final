@@ -42,7 +42,7 @@ def create_full_lab_definition(
     """
     Atomic creation of LabDefinition + LabVMs with an existing Guide.
     
-    The guide must be created separately beforehand and linked by **guide_id**.
+    The guide must be created separately beforehand and linked by **guide_version_id**.
     """
     try:
         # Create Lab Definition
@@ -66,7 +66,7 @@ def create_full_lab_definition(
             is_featured=data.is_featured or False,
             featured_priority=data.featured_priority or 0,
             infrastructure_provider=data.infrastructure_provider.value if data.infrastructure_provider else "vsphere",
-            guide_id=data.guide_id,
+            guide_version_id=data.guide_version_id,
         )
         
         db.add(lab)
@@ -129,7 +129,7 @@ async def create_full_lab_definition_with_thumbnail(
     prerequisites: Optional[str] = Form("[]"),
     tags: Optional[str] = Form("[]"),
     vms: str = Form(...),
-    guide_id: str = Form(...),
+    guide_version_id: str = Form(...),
     thumbnail: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_admin_or_moderator)
@@ -145,7 +145,7 @@ async def create_full_lab_definition_with_thumbnail(
         prerequisites_list = json.loads(prerequisites) if prerequisites else []
         tags_list = json.loads(tags) if tags else []
         vms_list = json.loads(vms) if vms else []
-        guide_id_uuid = uuid.UUID(guide_id)
+        guide_version_id_uuid = uuid.UUID(guide_version_id)
         
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}")
@@ -190,7 +190,7 @@ async def create_full_lab_definition_with_thumbnail(
             is_featured=False,
             featured_priority=0,
             infrastructure_provider="vsphere",
-            guide_id=guide_id_uuid,
+            guide_version_id=guide_version_id_uuid,
         )
         
         db.add(lab)

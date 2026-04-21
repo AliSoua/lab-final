@@ -1,8 +1,8 @@
-// app/pages/LabGuide/CreateGuidePage.tsx
+// src/pages/LabGuide/CreateGuidePage.tsx
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { cn } from "@/lib/utils"
-import { BookOpen, ChevronLeft, ChevronRight, Save, Layers } from "lucide-react"
+import { BookOpen, ChevronLeft, ChevronRight, Save, Layers, GitBranch, Lock } from "lucide-react"
 import { useLabGuides } from "@/hooks/LabGuide/useLabGuides"
 import { StepIndicator } from "@/components/LabGuide/CreateGuideLab/StepIndicator"
 import { BasicInfoStep } from "@/components/LabGuide/CreateGuideLab/BasicInfoStep"
@@ -11,7 +11,7 @@ import { ReviewStep } from "@/components/LabGuide/CreateGuideLab/ReviewStep"
 import type { LabGuideCreateRequest, LabGuideStepCreateRequest } from "@/types/LabGuide"
 import { toast } from "sonner"
 
-const STEPS = ["Basic Info", "Build Steps", "Review"]
+const STEPS = ["Basic Info", "Build Version 1", "Review"]
 
 export default function CreateGuidePage() {
     const navigate = useNavigate()
@@ -20,8 +20,8 @@ export default function CreateGuidePage() {
 
     const [formData, setFormData] = useState<LabGuideCreateRequest>({
         title: "",
+        initial_steps: [],
         is_published: false,
-        steps: [],
     })
 
     const canProceed = () => {
@@ -29,7 +29,8 @@ export default function CreateGuidePage() {
             return formData.title.trim().length > 0
         }
         if (currentStep === 1) {
-            return formData.steps.length > 0
+            // Steps are optional — guide can be created without initial version
+            return true
         }
         return true
     }
@@ -37,7 +38,6 @@ export default function CreateGuidePage() {
     const handleNext = () => {
         if (!canProceed()) {
             if (currentStep === 0) toast.error("Title is required")
-            if (currentStep === 1) toast.error("Add at least one step")
             return
         }
         setCurrentStep((s) => Math.min(s + 1, STEPS.length - 1))
@@ -62,8 +62,11 @@ export default function CreateGuidePage() {
     }
 
     const updateSteps = (steps: LabGuideStepCreateRequest[]) => {
-        setFormData((prev) => ({ ...prev, steps }))
+        setFormData((prev) => ({ ...prev, initial_steps: steps }))
     }
+
+    const stepCount = formData.initial_steps?.length || 0
+    const totalPoints = (formData.initial_steps || []).reduce((s, x) => s + (x.points || 0), 0)
 
     return (
         <div className="flex flex-col h-full bg-[#f9f9f9]">
@@ -79,18 +82,24 @@ export default function CreateGuidePage() {
                                 Create Lab Guide
                             </h1>
                             <p className="text-sm text-[#727373] mt-0.5">
-                                Build an interactive step-by-step guide
+                                Create a logical guide with its first immutable version
                             </p>
                         </div>
                     </div>
 
                     <div className="flex items-center gap-4">
-                        {formData.steps.length > 0 && (
+                        {/* Version Badge */}
+                        <div className="hidden md:flex items-center gap-2 text-xs bg-amber-50 text-amber-700 px-3 py-1.5 rounded-lg border border-amber-200">
+                            <Lock className="h-3.5 w-3.5" />
+                            <span>Versioning Enabled</span>
+                        </div>
+
+                        {stepCount > 0 && (
                             <div className="hidden md:flex items-center gap-1.5 text-xs text-[#727373] bg-[#f5f5f5] px-3 py-1.5 rounded-lg">
                                 <Layers className="h-3.5 w-3.5" />
-                                <span>{formData.steps.length} steps</span>
+                                <span>{stepCount} steps</span>
                                 <span className="text-[#c4c4c4]">•</span>
-                                <span>{formData.steps.reduce((s, x) => s + (x.points || 0), 0)} pts</span>
+                                <span>{totalPoints} pts</span>
                             </div>
                         )}
                         <StepIndicator steps={STEPS} current={currentStep} />
@@ -98,7 +107,7 @@ export default function CreateGuidePage() {
                 </div>
             </div>
 
-            {/* Content — FULL WIDTH */}
+            {/* Content */}
             <div className="flex-1 overflow-y-auto p-8">
                 <div className="w-full space-y-6">
                     {currentStep === 0 && (
@@ -106,7 +115,7 @@ export default function CreateGuidePage() {
                     )}
 
                     {currentStep === 1 && (
-                        <StepsBuilder steps={formData.steps} onChange={updateSteps} />
+                        <StepsBuilder steps={formData.initial_steps || []} onChange={updateSteps} />
                     )}
 
                     {currentStep === 2 && (

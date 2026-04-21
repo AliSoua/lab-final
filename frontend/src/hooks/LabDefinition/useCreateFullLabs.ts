@@ -78,8 +78,8 @@ export function useCreateFullLabs(): UseCreateFullLabsReturn {
                         formData.append("network_profile_id", data.network_profile_id)
                     }
 
-                    if (data.guide_id) {
-                        formData.append("guide_id", data.guide_id)
+                    if (data.guide_version_id) {
+                        formData.append("guide_version_id", data.guide_version_id)
                     }
 
                     // Arrays and objects as JSON strings - map StringFieldItem[] to string[]
@@ -124,7 +124,7 @@ export function useCreateFullLabs(): UseCreateFullLabsReturn {
                         tags: jsonData.tags.map(t => t.value),
                         network_profile_id: jsonData.network_profile_id || undefined,
                         vms: jsonData.vms,
-                        guide_id: jsonData.guide_id || undefined,
+                        guide_version_id: jsonData.guide_version_id || undefined,
                         // featured fields use defaults from backend (is_featured=false, featured_priority=0)
                     }
 

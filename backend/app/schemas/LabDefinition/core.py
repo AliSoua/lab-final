@@ -63,7 +63,10 @@ class LabDefinitionBase(BaseModel):
 
 
 class LabDefinitionCreate(LabDefinitionBase):
-    guide_id: Optional[UUID] = Field(None, description="Assign an existing standalone guide")
+    guide_version_id: Optional[UUID] = Field(
+        None,
+        description="Assign an existing published guide version"
+    )
     created_by: Optional[str] = Field(
         default=None,
         description="Keycloak user ID (sub claim) - injected by API"
@@ -92,12 +95,16 @@ class LabDefinitionUpdate(BaseModel):
     tags: Optional[List[str]] = None
 
     infrastructure_provider: Optional[InfrastructureProvider] = None
-    guide_id: Optional[UUID] = Field(None, description="Change or remove assigned guide")
+    guide_version_id: Optional[UUID] = Field(
+        None,
+        description="Change or remove assigned guide version"
+    )
 
     updated_by: Optional[str] = Field(
         default=None,
         description="Keycloak user ID (sub claim) - injected by API"
     )
+
 
 class FeatureLabDefinition(BaseModel):
     is_featured: bool
@@ -106,6 +113,7 @@ class FeatureLabDefinition(BaseModel):
         default=None,
         description="Keycloak user ID (sub claim) - injected by API"
     )
+
 
 class LabDefinitionResponse(LabDefinitionBase):
     id: UUID
@@ -116,7 +124,7 @@ class LabDefinitionResponse(LabDefinitionBase):
     updated_by: Optional[str] = None
     updated_at: datetime
     published_at: Optional[datetime] = None
-    guide_id: Optional[UUID] = None
+    guide_version_id: Optional[UUID] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -138,7 +146,7 @@ class PublicLabDefinitionResponse(BaseModel):
     prerequisites: List[str] = Field(default_factory=list)
     tags: List[str] = Field(default_factory=list)
     infrastructure_provider: InfrastructureProvider = InfrastructureProvider.vsphere
-    guide_id: Optional[UUID] = None
+    guide_version_id: Optional[UUID] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -150,6 +158,9 @@ class LabDefinitionFilter(BaseModel):
     track: Optional[str] = None
     created_by: Optional[str] = None
     infrastructure_provider: Optional[InfrastructureProvider] = None
-    has_guide: Optional[bool] = Field(None, description="Filter labs that have a guide assigned")
+    has_guide_version: Optional[bool] = Field(
+        None,
+        description="Filter labs that have a guide version assigned"
+    )
     search: Optional[str] = Field(None, description="Search in name, description, or slug")
     tag: Optional[str] = Field(None, description="Filter by specific tag")

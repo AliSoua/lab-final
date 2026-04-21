@@ -6,7 +6,7 @@ import type {
     LabGuideListItem,
     LabGuideCreateRequest,
     LabGuideUpdateRequest,
-    AssignGuideRequest,
+    AssignGuideVersionRequest,
 } from "@/types/LabGuide"
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000"
@@ -22,7 +22,7 @@ interface UseLabGuidesReturn {
     createGuide: (data: LabGuideCreateRequest) => Promise<string | undefined>
     updateGuide: (guideId: string, data: LabGuideUpdateRequest) => Promise<void>
     deleteGuide: (guideId: string) => Promise<void>
-    assignGuide: (guideId: string, data: AssignGuideRequest) => Promise<void>
+    assignGuideVersion: (guideVersionId: string, data: AssignGuideVersionRequest) => Promise<void>
 }
 
 export function useLabGuides(): UseLabGuidesReturn {
@@ -276,9 +276,9 @@ export function useLabGuides(): UseLabGuidesReturn {
         }
     }, [fetchGuides, guide])
 
-    const assignGuide = useCallback(async (guideId: string, data: AssignGuideRequest) => {
+    const assignGuideVersion = useCallback(async (guideVersionId: string, data: AssignGuideVersionRequest) => {
         setIsSubmitting(true)
-        const loadingToast = toast.loading("Assigning guide...")
+        const loadingToast = toast.loading("Assigning guide version...")
 
         try {
             const token = getToken()
@@ -286,7 +286,7 @@ export function useLabGuides(): UseLabGuidesReturn {
                 throw new Error("Authentication required")
             }
 
-            const response = await fetch(`${API_BASE_URL}/lab-guides/${guideId}/assign`, {
+            const response = await fetch(`${API_BASE_URL}/lab-guides/versions/${guideVersionId}/assign`, {
                 method: "POST",
                 headers: {
                     Authorization: `Bearer ${token}`,
@@ -308,17 +308,23 @@ export function useLabGuides(): UseLabGuidesReturn {
                     throw new Error("Forbidden")
                 }
                 if (response.status === 404) {
-                    toast.error("Guide or lab not found")
-                    throw new Error("Guide or lab not found")
+                    toast.error("Guide version or lab not found")
+                    throw new Error("Guide version or lab not found")
+                }
+                if (response.status === 400) {
+                    const errorData = await response.json().catch(() => ({}))
+                    const msg = errorData.detail || "Cannot assign unpublished version"
+                    toast.error(msg)
+                    throw new Error(msg)
                 }
                 const errorText = await response.text()
-                throw new Error(`Failed to assign guide: ${errorText}`)
+                throw new Error(`Failed to assign guide version: ${errorText}`)
             }
 
             const result = await response.json()
-            toast.success(result.message || "Guide assigned successfully")
+            toast.success(result.message || "Guide version assigned successfully")
         } catch (err) {
-            const message = err instanceof Error ? err.message : "Failed to assign guide"
+            const message = err instanceof Error ? err.message : "Failed to assign guide version"
             toast.dismiss(loadingToast)
             toast.error(message)
             throw new Error(message)
@@ -342,6 +348,6 @@ export function useLabGuides(): UseLabGuidesReturn {
         createGuide,
         updateGuide,
         deleteGuide,
-        assignGuide,
+        assignGuideVersion,
     }
 }
