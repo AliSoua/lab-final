@@ -11,9 +11,6 @@ from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 load_dotenv()
 
-# Check test mode
-TEST_MODE = os.getenv("TEST_MODE", "false").lower() == "true"
-
 from app.routers.credentials import moderator_credentials_router, admin_credentials_router
 from app.routers.users import admin
 from app.routers.auth import router as auth_router
@@ -97,20 +94,6 @@ app.include_router(lab_instance_router)
 app.include_router(guides_router)
 app.include_router(steps_router)
 app.include_router(db_admin_router)
-
-# Conditionally include test routers
-if TEST_MODE:
-    from app.routers.vsphere.esxi_test import router as esxi_test_router
-    from app.routers.vsphere.vcenter_test import router as vcenter_test_router
-    
-    app.include_router(esxi_test_router)
-    app.include_router(vcenter_test_router)
-    
-    print(f"⚠️  TEST MODE ENABLED:")
-    print(f"   - ESXi test routes: /vsphere/esxi-test/")
-    print(f"   - vCenter test routes: /vsphere/vcenter-test/")
-    print(f"   Using ESXi host: {os.getenv('ESXI_TEST_HOST', 'Not set')}")
-    print(f"   Using vCenter host: {os.getenv('VCENTER_HOST', 'Not set')}")
 
 @app.get("/")
 def root():

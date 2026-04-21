@@ -8,10 +8,8 @@ import uuid
 from app.config.connection.postgres_client import get_db
 from app.services.LabDefinition.lab_service import LabService
 from app.services.LabDefinition.lab_vm_service import LabVMService
-from app.services.LabGuide.guide_service import create_guide as create_guide_service
 from app.services.file_upload_service import file_upload_service
 from app.schemas.LabDefinition.core import LabDefinitionCreate, LabDefinitionResponse, LabDifficulty, LabCategory
-from app.schemas.LabDefinition.LabGuide import LabGuideCreate, LabGuideStepCreate
 from app.models.LabDefinition.core import LabDefinition
 from app.models.LabDefinition.LabVM import LabVM
 from app.dependencies.keycloak.keycloak_roles import require_any_role
@@ -27,130 +25,14 @@ vm_service = LabVMService()
 
 
 # ==============================================================================
-# BASIC LAB DEFINITION ENDPOINTS (No VMs, guide assigned by ID only)
-# ==============================================================================
-
-@router.post(
-    "/",
-    response_model=LabDefinitionResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Create basic lab definition (JSON only)",
-)
-def create_lab_definition(
-    data: LabDefinitionCreate,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(require_admin_or_moderator),
-):
-    """
-    Create a basic lab definition without VMs.
-    Optionally assign an existing guide via guide_id.
-    """
-    creation_data = data.model_dump()
-    creation_data["created_by"] = current_user["sub"]
-    
-    # Ensure arrays are never None
-    creation_data["objectives"] = creation_data.get("objectives") or []
-    creation_data["prerequisites"] = creation_data.get("prerequisites") or []
-    creation_data["tags"] = creation_data.get("tags") or []
-    
-    lab = lab_service.create_lab(db, creation_data)
-    return lab
-
-
-@router.post(
-    "/thumbnail",
-    response_model=LabDefinitionResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Create lab definition with thumbnail upload",
-)
-async def create_lab_definition_with_thumbnail(
-    name: str = Form(..., max_length=255),
-    slug: str = Form(..., max_length=255),
-    description: str = Form(...),
-    short_description: Optional[str] = Form(None, max_length=500),
-    duration_minutes: int = Form(60),
-    max_concurrent_users: int = Form(1),
-    cooldown_minutes: int = Form(0),
-    difficulty: str = Form("beginner"),
-    category: str = Form("other"),
-    track: Optional[str] = Form(None, max_length=100),
-    objectives: Optional[str] = Form("[]"),
-    prerequisites: Optional[str] = Form("[]"),
-    tags: Optional[str] = Form("[]"),
-    guide_id: Optional[str] = Form(None),  # Optional: assign existing guide
-    thumbnail: UploadFile = File(...),
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(require_admin_or_moderator),
-):
-    """
-    Create a lab definition with thumbnail image upload.
-    
-    - **guide_id**: Optional existing guide UUID to assign
-    """
-    try:
-        objectives_list = json.loads(objectives) if objectives else []
-        prerequisites_list = json.loads(prerequisites) if prerequisites else []
-        tags_list = json.loads(tags) if tags else []
-    except json.JSONDecodeError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid JSON in array fields: {str(e)}")
-
-    try:
-        difficulty_enum = LabDifficulty(difficulty)
-    except ValueError:
-        raise HTTPException(status_code=400, detail=f"Invalid difficulty: {difficulty}")
-    
-    try:
-        category_enum = LabCategory(category)
-    except ValueError:
-        raise HTTPException(status_code=400, detail=f"Invalid category: {category}")
-
-    creation_data = {
-        "slug": slug,
-        "name": name,
-        "description": description,
-        "short_description": short_description,
-        "status": "draft",
-        "duration_minutes": duration_minutes,
-        "max_concurrent_users": max_concurrent_users,
-        "cooldown_minutes": cooldown_minutes,
-        "difficulty": difficulty_enum,
-        "category": category_enum,
-        "track": track,
-        "thumbnail_url": None,
-        "objectives": objectives_list,
-        "prerequisites": prerequisites_list,
-        "tags": tags_list,
-        "created_by": current_user["sub"],
-        "guide_id": uuid.UUID(guide_id) if guide_id else None,
-    }
-
-    lab = lab_service.create_lab(db, creation_data)
-    
-    try:
-        image_url = await file_upload_service.save_lab_thumbnail(
-            file=thumbnail,
-            lab_id=lab.id
-        )
-        lab.thumbnail_url = image_url
-        db.commit()
-        db.refresh(lab)
-    except HTTPException:
-        db.delete(lab)
-        db.commit()
-        raise
-    
-    return lab
-
-
-# ==============================================================================
-# FULL LAB DEFINITION ENDPOINTS (With VMs + Guide assignment or inline creation)
+# FULL LAB DEFINITION ENDPOINTS (With VMs + Guide assignment only)
 # ==============================================================================
 
 @router.post(
     "/full",
     response_model=FullLabDefinitionResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Create complete lab with VMs and Guide (JSON only)",
+    summary="Create complete lab with VMs and existing Guide",
 )
 def create_full_lab_definition(
     data: FullLabDefinitionCreate,
@@ -158,11 +40,9 @@ def create_full_lab_definition(
     current_user: dict = Depends(require_admin_or_moderator)
 ):
     """
-    Atomic creation of LabDefinition + LabVMs + optional Guide.
+    Atomic creation of LabDefinition + LabVMs with an existing Guide.
     
-    Guide options (mutually exclusive):
-    - **guide_id**: Assign an existing standalone guide
-    - **guide_steps**: Create a new guide inline from steps
+    The guide must be created separately beforehand and linked by **guide_id**.
     """
     try:
         # Create Lab Definition
@@ -186,6 +66,7 @@ def create_full_lab_definition(
             is_featured=data.is_featured or False,
             featured_priority=data.featured_priority or 0,
             infrastructure_provider=data.infrastructure_provider.value if data.infrastructure_provider else "vsphere",
+            guide_id=data.guide_id,
         )
         
         db.add(lab)
@@ -205,22 +86,6 @@ def create_full_lab_definition(
             )
             db.add(vm)
             created_vms.append(vm)
-        
-        # Handle Guide (assign existing OR create inline)
-        if data.guide_id:
-            lab.guide_id = data.guide_id
-        elif data.guide_steps:
-            guide_data = LabGuideCreate(
-                title=f"{data.name} - Guide",
-                description=data.short_description or data.description,
-                category=data.category.value if data.category else None,
-                difficulty=data.difficulty.value if data.difficulty else None,
-                estimated_duration_minutes=data.duration_minutes or 30,
-                tags=data.tags or [],
-                steps=data.guide_steps,
-            )
-            guide = create_guide_service(db, guide_data, current_user["sub"])
-            lab.guide_id = guide.id
         
         db.commit()
         
@@ -247,7 +112,7 @@ def create_full_lab_definition(
     "/full/thumbnail",
     response_model=FullLabDefinitionResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Create complete lab with VMs, Guide, and thumbnail upload",
+    summary="Create complete lab with VMs, existing Guide, and thumbnail upload",
 )
 async def create_full_lab_definition_with_thumbnail(
     name: str = Form(..., max_length=255),
@@ -264,31 +129,27 @@ async def create_full_lab_definition_with_thumbnail(
     prerequisites: Optional[str] = Form("[]"),
     tags: Optional[str] = Form("[]"),
     vms: str = Form(...),
-    guide_id: Optional[str] = Form(None),
-    guide_steps: Optional[str] = Form(None),
+    guide_id: str = Form(...),
     thumbnail: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_admin_or_moderator)
 ):
     """
-    Atomic creation of LabDefinition + LabVMs + Guide with thumbnail upload.
+    Atomic creation of LabDefinition + LabVMs + existing Guide with thumbnail upload.
     
     - **vms**: JSON array of VM clone configs
-    - **guide_id**: Optional existing guide UUID
-    - **guide_steps**: Optional JSON array of guide steps (creates new guide)
+    - **guide_id**: Required existing guide UUID (must be created separately)
     """
     try:
         objectives_list = json.loads(objectives) if objectives else []
         prerequisites_list = json.loads(prerequisites) if prerequisites else []
         tags_list = json.loads(tags) if tags else []
         vms_list = json.loads(vms) if vms else []
-        
-        guide_steps_raw = json.loads(guide_steps) if guide_steps else []
-        guide_steps_list = [LabGuideStepCreate(**step) for step in guide_steps_raw]
+        guide_id_uuid = uuid.UUID(guide_id)
         
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}")
-    except (TypeError, ValueError) as e:
+    except ValueError as e:
         raise HTTPException(status_code=400, detail=f"Invalid data format: {str(e)}")
 
     try:
@@ -329,6 +190,7 @@ async def create_full_lab_definition_with_thumbnail(
             is_featured=False,
             featured_priority=0,
             infrastructure_provider="vsphere",
+            guide_id=guide_id_uuid,
         )
         
         db.add(lab)
@@ -348,22 +210,6 @@ async def create_full_lab_definition_with_thumbnail(
             )
             db.add(vm)
             created_vms.append(vm)
-        
-        # Handle Guide
-        if guide_id:
-            lab.guide_id = uuid.UUID(guide_id)
-        elif guide_steps_list:
-            guide_data = LabGuideCreate(
-                title=f"{name} - Guide",
-                description=short_description or description,
-                category=category_enum.value,
-                difficulty=difficulty_enum.value,
-                estimated_duration_minutes=duration_minutes,
-                tags=tags_list,
-                steps=guide_steps_list,
-            )
-            guide = create_guide_service(db, guide_data, current_user["sub"])
-            lab.guide_id = guide.id
         
         # Handle thumbnail upload
         image_url = await file_upload_service.save_lab_thumbnail(

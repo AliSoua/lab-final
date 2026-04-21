@@ -5,14 +5,14 @@ from uuid import UUID
 from datetime import datetime
 
 from app.schemas.LabDefinition.LabVM import LabVMResponse, LabVMCreate
-from app.schemas.LabDefinition.LabGuide import LabGuideStepCreate, LabGuideResponse
+from app.schemas.LabDefinition.LabGuide import LabGuideResponse
 from app.schemas.LabDefinition.core import (
     LabCategory, LabDifficulty, LabStatus, InfrastructureProvider
 )
 
 
 class FullLabDefinitionCreate(BaseModel):
-    """Create a complete lab with VMs and optionally a guide."""
+    """Create a complete lab with VMs. Guide must be created separately and linked by ID."""
     name: str
     slug: str
     short_description: Optional[str] = None
@@ -38,14 +38,8 @@ class FullLabDefinitionCreate(BaseModel):
     # VMs to clone
     vms: List[LabVMCreate] = Field(default_factory=list)
 
-    # Guide options:
-    # 1. Link an existing guide by ID
-    guide_id: Optional[UUID] = Field(None, description="Assign existing guide")
-    # 2. Or create a new guide inline (ignored if guide_id provided)
-    guide_steps: Optional[List[LabGuideStepCreate]] = Field(
-        default=None,
-        description="Create a new guide inline with these steps"
-    )
+    # Guide must be created separately and linked by ID
+    guide_id: UUID = Field(description="ID of an existing guide to assign to this lab")
 
 
 class FullLabDefinitionResponse(BaseModel):
