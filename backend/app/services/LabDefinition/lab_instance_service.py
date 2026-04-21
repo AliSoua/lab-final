@@ -84,8 +84,8 @@ class LabInstanceService:
 
         try:
             new_vm_name = (
-                f"{lab.slug}-{trainee_id[:8]}-{uuid.uuid4().hex[:8]}"
-            )
+                f"{lab.slug}-{str(trainee_id)[:8]}-{uuid.uuid4().hex[:8]}"
+            )   
 
             logger.info(
                 "Cloning template %s → %s on vCenter %s for trainee %s",
