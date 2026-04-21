@@ -357,6 +357,152 @@ class VCenterClient:
                 break
         return None
 
+    # ------------------------------------------------------------------
+    # VM Lifecycle (add inside VCenterClient class)
+    # ------------------------------------------------------------------
+
+    def find_vm_by_uuid(self, uuid: str):
+        """Find a VM or template by its config.uuid."""
+        if not self._service_instance:
+            raise RuntimeError("Not connected to vCenter")
+
+        container = self._content.viewManager.CreateContainerView(
+            self._content.rootFolder, [vim.VirtualMachine], True
+        )
+        try:
+            for vm in container.view:
+                if vm.config and vm.config.uuid == uuid:
+                    return vm
+            return None
+        finally:
+            container.Destroy()
+
+    def _wait_for_task(self, task, timeout: int = 300):
+        """Block until a vCenter task completes or fails."""
+        import time
+
+        start = time.time()
+        while task.info.state not in [
+            vim.TaskInfo.State.success,
+            vim.TaskInfo.State.error,
+        ]:
+            if time.time() - start > timeout:
+                raise TimeoutError(f"vCenter task timed out after {timeout}s")
+            time.sleep(1)
+
+        if task.info.state == vim.TaskInfo.State.error:
+            raise RuntimeError(f"vCenter task failed: {task.info.error}")
+        return task.info.result
+
+    def clone_vm(
+        self,
+        template_uuid: str,
+        new_vm_name: str,
+        datacenter_name: Optional[str] = None,
+        cluster_name: Optional[str] = None,
+    ) -> dict:
+        """Clone a VM/template into the target datacenter/cluster."""
+        template = self.find_vm_by_uuid(template_uuid)
+        if not template:
+            raise ValueError(
+                f"Template with UUID {template_uuid} not found on {self.host}"
+            )
+
+        # Resolve datacenter
+        datacenter = None
+        if datacenter_name:
+            container = self._content.viewManager.CreateContainerView(
+                self._content.rootFolder, [vim.Datacenter], True
+            )
+            try:
+                for dc in container.view:
+                    if dc.name == datacenter_name:
+                        datacenter = dc
+                        break
+            finally:
+                container.Destroy()
+        else:
+            datacenter = self._get_parent_datacenter_obj(template)
+
+        if not datacenter:
+            raise ValueError("Could not determine target datacenter")
+
+        # Resolve resource pool
+        resource_pool = None
+        if cluster_name:
+            container = self._content.viewManager.CreateContainerView(
+                self._content.rootFolder, [vim.ClusterComputeResource], True
+            )
+            try:
+                for cluster in container.view:
+                    if cluster.name == cluster_name:
+                        resource_pool = cluster.resourcePool
+                        break
+            finally:
+                container.Destroy()
+        else:
+            for child in datacenter.hostFolder.childEntity:
+                if isinstance(child, vim.ClusterComputeResource):
+                    resource_pool = child.resourcePool
+                    break
+                elif isinstance(child, vim.Folder):
+                    for sub in child.childEntity:
+                        if isinstance(sub, vim.ClusterComputeResource):
+                            resource_pool = sub.resourcePool
+                            break
+
+        if not resource_pool:
+            resource_pool = template.resourcePool
+
+        relocate_spec = vim.vm.RelocateSpec(pool=resource_pool)
+        clone_spec = vim.vm.CloneSpec(location=relocate_spec, powerOn=False)
+
+        folder = datacenter.vmFolder
+        task = template.CloneVM_Task(
+            folder=folder, name=new_vm_name, spec=clone_spec
+        )
+        new_vm = self._wait_for_task(task)
+
+        return {
+            "uuid": new_vm.config.uuid,
+            "name": new_vm.name,
+            "datacenter": datacenter.name,
+        }
+
+    def power_on_vm(self, vm_uuid: str) -> str:
+        """Power on a VM by UUID. Returns the VM name."""
+        vm = self.find_vm_by_uuid(vm_uuid)
+        if not vm:
+            raise ValueError(f"VM with UUID {vm_uuid} not found")
+        task = vm.PowerOnVM_Task()
+        self._wait_for_task(task)
+        return vm.name
+
+    def get_vm_power_state(self, vm_uuid: str) -> str:
+        """Return current power state string."""
+        vm = self.find_vm_by_uuid(vm_uuid)
+        if not vm or not vm.runtime:
+            return "unknown"
+        return str(vm.runtime.powerState)
+
+    def get_vm_ip(self, vm_uuid: str) -> Optional[str]:
+        """Return guest IP if available."""
+        vm = self.find_vm_by_uuid(vm_uuid)
+        if not vm or not vm.guest:
+            return None
+        return vm.guest.ipAddress
+
+    def _get_parent_datacenter_obj(self, entity):
+        """Walk up parents and return the datacenter object."""
+        current = entity
+        while current:
+            if isinstance(current, vim.Datacenter):
+                return current
+            if hasattr(current, "parent"):
+                current = current.parent
+            else:
+                break
+        return None
 
 @contextmanager
 def vcenter_connection(host: str, username: str, password: str):

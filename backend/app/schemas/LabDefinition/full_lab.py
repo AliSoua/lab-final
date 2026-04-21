@@ -38,14 +38,8 @@ class FullLabDefinitionCreate(BaseModel):
     # VMs to clone
     vms: List[LabVMCreate] = Field(default_factory=list)
 
-    # Guide options:
-    # 1. Link an existing guide by ID
-    guide_id: Optional[UUID] = Field(None, description="Assign existing guide")
-    # 2. Or create a new guide inline (ignored if guide_id provided)
-    guide_steps: Optional[List[LabGuideStepCreate]] = Field(
-        default=None,
-        description="Create a new guide inline with these steps"
-    )
+    # Guide version 
+    guide_version_id: Optional[UUID] = Field(None, description="Assign existing guide version")
 
 
 class FullLabDefinitionResponse(BaseModel):
@@ -73,7 +67,7 @@ class FullLabDefinitionResponse(BaseModel):
     featured_priority: int = 0
 
     vms: List[LabVMResponse] = Field(default_factory=list)
-    guide: Optional[LabGuideResponse] = None  # Populated if assigned
+    guide_version_id: Optional[UUID] = None  # Populated if assigned
 
     created_at: datetime
     created_by: Optional[str] = None

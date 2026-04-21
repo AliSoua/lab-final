@@ -12,6 +12,9 @@ from app.routers.LabDefinition.LabVMManagement import router as vm_router
 from app.routers.LabDefinition.LabGuideManagement import router as guide_router
 from app.routers.LabDefinition.FeatureLabDefinition import router as feature_router
 
+# Import lab instances router
+from app.routers.LabDefinition.lab_instances import router as lab_instances_router
+
 # Main router with prefix and tags
 router = APIRouter(
     prefix="/lab-definitions",
@@ -29,4 +32,7 @@ router.include_router(get_router)            # GET /{lab_id}, GET /slug/{slug}
 router.include_router(update_router)         # PUT /{lab_id}
 router.include_router(delete_router)         # DELETE /{lab_id}
 router.include_router(guide_router)          # /{lab_id}/guide-blocks/*
-router.include_router(feature_router)        # /{lab_id}/feature, /{lab_id}/unfeature, /{lab_id}/priority   
+router.include_router(feature_router)        # /{lab_id}/feature, /{lab_id}/unfeature, /{lab_id}/priority 
+
+
+router.include_router(lab_instances_router)  # /{lab_id}/instances/*

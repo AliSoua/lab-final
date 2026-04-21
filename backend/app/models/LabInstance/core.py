@@ -16,7 +16,7 @@ class LabInstance(Base):
 
     Tracks provisioning state, resource allocation, user progress, and lifecycle.
     """
-    __tablename__ = "lab_instances"
+    __tablename__ = "lab_instancess"
 
     # Primary Key
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -114,9 +114,9 @@ class LabInstance(Base):
 
     # Indexes for common queries
     __table_args__ = (
-        Index('ix_lab_instances_status_user', 'status', 'user_id'),
-        Index('ix_lab_instances_status_expires', 'status', 'expires_at'),
-        Index('ix_lab_instances_lab_def_status', 'lab_definition_id', 'status'),
+        Index('ix_lab_instancess_status_user', 'status', 'user_id'),
+        Index('ix_lab_instancess_status_expires', 'status', 'expires_at'),
+        Index('ix_lab_instancess_lab_def_status', 'lab_definition_id', 'status'),
     )
 
     @property

@@ -20,7 +20,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - pgdata_lab_platform:/var/lib/postgresql/data
+      - pgdata_lab_platform_test:/var/lib/postgresql/data
 
   keycloak:
     image: quay.io/keycloak/keycloak:24.0.3
@@ -87,5 +87,5 @@ services:
       - "80:80"                     # nginx port instead of 5173
 
 volumes:
-  pgdata_lab_platform:
+  pgdata_lab_platform_test:
   keycloak_data:  # Add this volume

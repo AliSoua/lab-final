@@ -66,9 +66,7 @@ def _import_all_models():
     import app.models.LabDefinition.core
     import app.models.LabDefinition.LabVM
     import app.models.LabDefinition.LabGuide
-    import app.models.LabInstance.core
-    import app.models.LabInstance.LabInstanceVM
-    import app.models.LabInstance.LabInstanceEvent
+    import app.models.LabDefinition.LabInstance
     import app.models.user
 
     return Base

@@ -17,7 +17,6 @@ from app.routers.auth import router as auth_router
 from app.routers.vsphere import vcenter_router, esxi_router
 from app.routers.LabDefinition import lab_definition_router
 from app.routers.profile import routes as profile_router
-from app.routers.LabInstance import router as lab_instance_router
 from app.routers.LabGuide import guides_router
 
 from app.config.connection.postgres_client import init_db  # Changed from create_db_tables/drop_db_tables
@@ -90,7 +89,6 @@ app.include_router(vcenter_router)
 app.include_router(esxi_router)
 app.include_router(lab_definition_router)
 app.include_router(profile_router.router)
-app.include_router(lab_instance_router) 
 app.include_router(guides_router)
 app.include_router(db_admin_router)
 

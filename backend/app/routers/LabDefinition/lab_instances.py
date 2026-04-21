@@ -1,0 +1,198 @@
+# app/routers/LabDefinition/lab_instances.py
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+import uuid
+
+from app.config.connection.postgres_client import get_db
+from app.services.LabDefinition.lab_instance_service import LabInstanceService
+from app.schemas.LabDefinition.lab_instance import (
+    LabInstanceCreate,
+    LabInstanceResponse,
+    LabInstanceListResponse,
+    LabInstanceStatusResponse,
+)
+from app.dependencies.keycloak.keycloak_roles import require_any_role
+
+require_all = require_any_role(["trainee", "moderator", "admin"])
+
+router = APIRouter()
+lab_instance_service = LabInstanceService()
+
+
+def _get_trainee_id(userinfo: dict) -> str:
+    uid = userinfo.get("sub")
+    if not uid:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token: missing user identifier",
+        )
+    return uid
+
+
+@router.post(
+    "/",
+    response_model=LabInstanceResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Launch a lab instance",
+)
+def launch_lab_instance(
+    data: LabInstanceCreate,
+    db: Session = Depends(get_db),
+    userinfo: dict = Depends(require_all),
+):
+    """
+    Clone the lab's router VM template and power it on for this trainee.
+    """
+    trainee_id = _get_trainee_id(userinfo)
+
+    try:
+        instance = lab_instance_service.launch_instance(
+            db=db,
+            lab_definition_id=data.lab_definition_id,
+            trainee_id=trainee_id,
+        )
+        return instance
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)
+        )
+    except RuntimeError as e:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to launch lab instance: {str(e)}",
+        )
+
+
+@router.get(
+    "/",
+    response_model=LabInstanceListResponse,
+    summary="List my lab instances",
+)
+def list_my_instances(
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    userinfo: dict = Depends(require_all),
+):
+    trainee_id = _get_trainee_id(userinfo)
+    items, total = lab_instance_service.list_instances(
+        db, trainee_id, skip, limit
+    )
+    return LabInstanceListResponse(items=items, total=total)
+
+
+@router.get(
+    "/{instance_id}",
+    response_model=LabInstanceResponse,
+    summary="Get lab instance details",
+)
+def get_instance(
+    instance_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    userinfo: dict = Depends(require_all),
+):
+    trainee_id = _get_trainee_id(userinfo)
+    instance = lab_instance_service.get_instance(
+        db, instance_id, trainee_id
+    )
+    if not instance:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Instance not found",
+        )
+    return instance
+
+
+@router.post(
+    "/{instance_id}/refresh",
+    response_model=LabInstanceStatusResponse,
+    summary="Refresh instance status from vCenter",
+)
+def refresh_instance_status(
+    instance_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    userinfo: dict = Depends(require_all),
+):
+    """Poll vCenter for current power state and IP."""
+    trainee_id = _get_trainee_id(userinfo)
+    try:
+        instance = lab_instance_service.refresh_instance_status(
+            db, instance_id, trainee_id
+        )
+        if not instance:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Instance not found",
+            )
+        return LabInstanceStatusResponse(
+            id=instance.id,
+            status=instance.status,
+            power_state=instance.power_state,
+            ip_address=instance.ip_address,
+            vm_name=instance.vm_name,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to refresh status: {str(e)}",
+        )
+
+
+@router.post(
+    "/{instance_id}/stop",
+    response_model=LabInstanceResponse,
+    summary="Stop a running lab instance",
+)
+def stop_instance(
+    instance_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    userinfo: dict = Depends(require_all),
+):
+    """Power off the VM."""
+    trainee_id = _get_trainee_id(userinfo)
+    try:
+        return lab_instance_service.stop_instance(
+            db, instance_id, trainee_id
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to stop instance: {str(e)}",
+        )
+
+
+@router.delete(
+    "/{instance_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Terminate and delete a lab instance",
+)
+def terminate_instance(
+    instance_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    userinfo: dict = Depends(require_all),
+):
+    """Permanently destroy the VM and clean up the record."""
+    trainee_id = _get_trainee_id(userinfo)
+    try:
+        lab_instance_service.terminate_instance(
+            db, instance_id, trainee_id
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to terminate instance: {str(e)}",
+        )

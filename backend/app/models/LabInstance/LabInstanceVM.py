@@ -21,7 +21,7 @@ class LabInstanceVM(Base):
     # Relationships
     lab_instance_id = Column(
         UUID(as_uuid=True), 
-        ForeignKey("lab_instances.id", ondelete="CASCADE"), 
+        ForeignKey("lab_instancess.id", ondelete="CASCADE"), 
         nullable=False,
         index=True
     )

@@ -1,8 +1,9 @@
 // src/pages/LabDefinition/detail/index.tsx
 import { useParams, useNavigate } from "react-router-dom"
-import { AlertCircle, RefreshCw, Play, ArrowRight } from "lucide-react"
+import { AlertCircle, RefreshCw, Play, ArrowRight, Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useLabDetail } from "@/hooks/LabDefinition/useLabDetail"
+import { useLabInstance } from "@/hooks/LabInstance/useLabInstance"
 import { LabDetailHeader } from "@/components/LabDefinition/detail/LabDetailHeader"
 import { LabObjectives } from "@/components/LabDefinition/detail/LabObjectives"
 import { LabPrerequisites } from "@/components/LabDefinition/detail/LabPrerequisites"
@@ -15,15 +16,22 @@ export default function LabDetailPage() {
     const { slug } = useParams<{ slug: string }>()
     const navigate = useNavigate()
 
-    const { lab, isLoading, error, refetch } = useLabDetail(slug)
+    const { lab, isLoading: isLabLoading, error, refetch } = useLabDetail(slug)
+    const { launchLabInstance, isLoading: isLaunching } = useLabInstance()
 
-    const handleStartLab = (labId: string) => {
-        // TODO: Implement lab session initiation
-        console.log("Starting lab:", labId)
-        // navigate(`/labs/${slug}/session`)
+    const handleStartLab = async (labId: string) => {
+        try {
+            const instance = await launchLabInstance({
+                lab_definition_id: labId,
+            })
+            // Navigate to the running lab instance page
+            navigate(`/lab-instances/${instance.id}`)
+        } catch {
+            // Error is already toasted by the hook; no-op here
+        }
     }
 
-    if (isLoading) {
+    if (isLabLoading) {
         return <LabDetailSkeleton />
     }
 
@@ -127,15 +135,27 @@ export default function LabDetailPage() {
                         <div className="rounded-xl border border-[#e8e8e8] bg-white p-6">
                             <button
                                 onClick={() => handleStartLab(lab.id)}
+                                disabled={isLaunching}
                                 className={cn(
-                                    "group mb-4 flex w-full items-center justify-center gap-2 rounded-lg bg-[#1ca9b1] px-6 py-3",
+                                    "group mb-4 flex w-full items-center justify-center gap-2 rounded-lg px-6 py-3",
                                     "text-[14px] font-semibold tracking-wide text-white",
                                     "shadow-lg shadow-[#1ca9b1]/30 transition-all duration-200",
-                                    "hover:bg-[#17959c] hover:shadow-xl hover:shadow-[#1ca9b1]/40"
+                                    isLaunching
+                                        ? "cursor-not-allowed bg-[#1ca9b1]/70"
+                                        : "bg-[#1ca9b1] hover:bg-[#17959c] hover:shadow-xl hover:shadow-[#1ca9b1]/40"
                                 )}
                             >
-                                <Play className="h-4 w-4 fill-current" />
-                                Start Lab Now
+                                {isLaunching ? (
+                                    <>
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                        Launching...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Play className="h-4 w-4 fill-current" />
+                                        Start Lab Now
+                                    </>
+                                )}
                             </button>
 
                             <p className="text-center text-[12px] text-[#727373]">
