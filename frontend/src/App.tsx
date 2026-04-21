@@ -23,6 +23,9 @@ import ListGuidePage from "@/pages/LabGuide/ListGuidePage"
 import CreateGuidePage from "@/pages/LabGuide/CreateGuidePage"
 import PreviewGuidePage from "@/pages/LabGuide/PreviewGuidePage"
 
+// Lab Instances
+import LabInstanceDetailPage from "@/pages/LabInstance/detail/index"
+
 
 import { Loader2 } from "lucide-react"
 
@@ -115,6 +118,18 @@ function App() {
         <Route index element={<RoleBasedRedirect />} />
         {/* Public catalog is accessible to all */}
         <Route path="catalog" element={<CatalogPage />} />
+
+        {/* Lab Instances */}
+        <Route
+          path="lab-instances/:instanceId"
+          element={
+            <AuthenticatedRouteGuard>
+              <LabInstanceDetailPage />
+            </AuthenticatedRouteGuard>
+          }
+        />
+
+        {/* Lab Details */}
         <Route
           path="labs/:slug"
           element={
@@ -161,6 +176,9 @@ function App() {
         <Route path="lab-guides" element={<ListGuidePage />} />
         <Route path="lab-guides/create" element={<CreateGuidePage />} />
         <Route path="lab-guides/:guideId/preview" element={<PreviewGuidePage />} />
+
+
+
       </Route>
 
       {/* Catch all - redirect to home */}

@@ -25,7 +25,7 @@ class LabInstanceService:
         self,
         db: Session,
         lab_definition_id: uuid.UUID,
-        trainee_id: str,
+        trainee_id: uuid.UUID,
     ) -> LabInstance:
         """
         Simple launch flow:
@@ -135,7 +135,7 @@ class LabInstanceService:
             client.disconnect()
 
     def get_instance(
-        self, db: Session, instance_id: uuid.UUID, trainee_id: str
+        self, db: Session, instance_id: uuid.UUID, trainee_id: uuid.UUID
     ) -> Optional[LabInstance]:
         return (
             db.query(LabInstance)
@@ -149,7 +149,7 @@ class LabInstanceService:
     def list_instances(
         self,
         db: Session,
-        trainee_id: str,
+        trainee_id: uuid.UUID,
         skip: int = 0,
         limit: int = 100,
     ) -> Tuple[List[LabInstance], int]:
@@ -166,7 +166,7 @@ class LabInstanceService:
         return items, total
 
     def stop_instance(
-        self, db: Session, instance_id: uuid.UUID, trainee_id: str
+        self, db: Session, instance_id: uuid.UUID, trainee_id: uuid.UUID,
     ) -> LabInstance:
         instance = self.get_instance(db, instance_id, trainee_id)
         if not instance:
@@ -206,7 +206,7 @@ class LabInstanceService:
         return instance
 
     def terminate_instance(
-        self, db: Session, instance_id: uuid.UUID, trainee_id: str
+        self, db: Session, instance_id: uuid.UUID, trainee_id: uuid.UUID,
     ) -> None:
         instance = self.get_instance(db, instance_id, trainee_id)
         if not instance:
@@ -251,7 +251,7 @@ class LabInstanceService:
         db.commit()
 
     def refresh_instance_status(
-        self, db: Session, instance_id: uuid.UUID, trainee_id: str
+        self, db: Session, instance_id: uuid.UUID, trainee_id: uuid.UUID,
     ) -> LabInstance:
         instance = self.get_instance(db, instance_id, trainee_id)
         if not instance or not instance.vm_uuid or not instance.vcenter_host:

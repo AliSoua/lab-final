@@ -5,6 +5,7 @@ import uuid
 
 from app.config.connection.postgres_client import get_db
 from app.services.LabDefinition.lab_instance_service import LabInstanceService
+from app.services.user_service import user_service  
 from app.schemas.LabDefinition.lab_instance import (
     LabInstanceCreate,
     LabInstanceResponse,
@@ -15,18 +16,39 @@ from app.dependencies.keycloak.keycloak_roles import require_any_role
 
 require_all = require_any_role(["trainee", "moderator", "admin"])
 
-router = APIRouter()
+
+router = APIRouter(
+    prefix="/lab-instances",
+    tags=["lab-instances"],
+    responses={
+        401: {"description": "Unauthorized - Invalid or missing token"},
+        403: {"description": "Forbidden - Insufficient permissions"},
+        404: {"description": "Lab instance not found"},
+    }
+)
 lab_instance_service = LabInstanceService()
 
 
-def _get_trainee_id(userinfo: dict) -> str:
-    uid = userinfo.get("sub")
-    if not uid:
+def _get_trainee_id(userinfo: dict, db: Session) -> uuid.UUID:
+    """
+    Resolve Keycloak 'sub' to local users.id.
+    Auto-creates user profile on first access (same pattern as /profile/me).
+    """
+    keycloak_id = userinfo.get("sub")
+    if not keycloak_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token: missing user identifier",
         )
-    return uid
+
+    user = user_service.get_by_keycloak_id(db, keycloak_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User profile not found. Please access /profile/me first to sync your account.",
+        )
+
+    return user.id  # <-- local DB UUID, not the Keycloak sub
 
 
 @router.post(
@@ -40,10 +62,7 @@ def launch_lab_instance(
     db: Session = Depends(get_db),
     userinfo: dict = Depends(require_all),
 ):
-    """
-    Clone the lab's router VM template and power it on for this trainee.
-    """
-    trainee_id = _get_trainee_id(userinfo)
+    trainee_id = _get_trainee_id(userinfo, db)
 
     try:
         instance = lab_instance_service.launch_instance(
@@ -78,7 +97,7 @@ def list_my_instances(
     db: Session = Depends(get_db),
     userinfo: dict = Depends(require_all),
 ):
-    trainee_id = _get_trainee_id(userinfo)
+    trainee_id = _get_trainee_id(userinfo, db)
     items, total = lab_instance_service.list_instances(
         db, trainee_id, skip, limit
     )
@@ -95,7 +114,7 @@ def get_instance(
     db: Session = Depends(get_db),
     userinfo: dict = Depends(require_all),
 ):
-    trainee_id = _get_trainee_id(userinfo)
+    trainee_id = _get_trainee_id(userinfo, db)
     instance = lab_instance_service.get_instance(
         db, instance_id, trainee_id
     )
@@ -117,8 +136,7 @@ def refresh_instance_status(
     db: Session = Depends(get_db),
     userinfo: dict = Depends(require_all),
 ):
-    """Poll vCenter for current power state and IP."""
-    trainee_id = _get_trainee_id(userinfo)
+    trainee_id = _get_trainee_id(userinfo, db)
     try:
         instance = lab_instance_service.refresh_instance_status(
             db, instance_id, trainee_id
@@ -154,8 +172,7 @@ def stop_instance(
     db: Session = Depends(get_db),
     userinfo: dict = Depends(require_all),
 ):
-    """Power off the VM."""
-    trainee_id = _get_trainee_id(userinfo)
+    trainee_id = _get_trainee_id(userinfo, db)
     try:
         return lab_instance_service.stop_instance(
             db, instance_id, trainee_id
@@ -181,8 +198,7 @@ def terminate_instance(
     db: Session = Depends(get_db),
     userinfo: dict = Depends(require_all),
 ):
-    """Permanently destroy the VM and clean up the record."""
-    trainee_id = _get_trainee_id(userinfo)
+    trainee_id = _get_trainee_id(userinfo, db)
     try:
         lab_instance_service.terminate_instance(
             db, instance_id, trainee_id
