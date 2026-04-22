@@ -19,6 +19,7 @@ const allNavItems: NavItem[] = [
   { to: "/admin/credentials", label: "Host Credentials" },
   { to: "/admin/vcenter-credentials", label: "vCenter Credentials", adminOnly: true },
   { to: "/admin/lab-guides", label: "Lab Guides" },
+  { to: "/admin/lab-connections", label: "Lab Connections" },
 ]
 
 export function Sidebar({ userRole }: SidebarProps) {

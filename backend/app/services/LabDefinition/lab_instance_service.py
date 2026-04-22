@@ -284,9 +284,9 @@ class LabInstanceService:
                     
                     guac_conn_id = guacamole_service.create_connection(
                         name=f"lab-{lab.slug if lab else 'unknown'}-{str(instance.id)[:8]}",
-                        protocol="rdp",
+                        protocol="ssh",
                         hostname=new_ip,
-                        port=3389,
+                        port=22,
                         username="labuser",
                         password="labpassword",
                     )

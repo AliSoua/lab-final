@@ -23,6 +23,9 @@ import ListGuidePage from "@/pages/LabGuide/ListGuidePage"
 import CreateGuidePage from "@/pages/LabGuide/CreateGuidePage"
 import PreviewGuidePage from "@/pages/LabGuide/PreviewGuidePage"
 
+// Lab Connection
+import LabConnectionPage from "@/pages/LabDefinition/LabConnectionPage"
+
 // Lab Instances
 import LabInstanceDetailPage from "@/pages/LabInstance/detail/index"
 
@@ -176,6 +179,9 @@ function App() {
         <Route path="lab-guides" element={<ListGuidePage />} />
         <Route path="lab-guides/create" element={<CreateGuidePage />} />
         <Route path="lab-guides/:guideId/preview" element={<PreviewGuidePage />} />
+
+        {/* Lab Connection */}
+        <Route path="lab-connections" element={<LabConnectionPage />} />
 
 
 
