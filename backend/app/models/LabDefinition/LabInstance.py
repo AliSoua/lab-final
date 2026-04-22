@@ -36,6 +36,7 @@ class LabInstance(Base):
     power_state = Column(String(50), default="unknown")
     ip_address = Column(String(100))
     connection_url = Column(Text)
+    guacamole_connection_id = Column(String(100), nullable=True, index=True)
 
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     started_at = Column(DateTime(timezone=True))

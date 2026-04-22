@@ -348,22 +348,28 @@ export default function LabInstanceDetailPage() {
                     </div>
                 </div>
 
-                {/* Connection URL */}
-                {instance.connection_url && (
-                    <div className="mt-6 rounded-xl border border-[#e8e8e8] bg-white p-5">
-                        <div className="mb-3 flex items-center gap-2 text-[12px] font-semibold uppercase tracking-wide text-[#727373]">
-                            <Monitor className="h-4 w-4" />
-                            Connection URL
-                        </div>
-                        <a
-                            href={instance.connection_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="break-all text-[14px] font-medium text-[#1ca9b1] hover:underline"
-                        >
-                            {instance.connection_url}
-                        </a>
+                {instance.status === "provisioning" && (
+                    <div className="flex items-center gap-2 text-amber-600 text-[13px]">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Waiting for VM network...
                     </div>
+                )}
+
+                {/* Connection URL */}
+                {instance.connection_url && instance.status === "running" && (
+                    <a
+                        href={instance.connection_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={cn(
+                            "flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-6 py-3",
+                            "text-[14px] font-semibold text-white hover:bg-emerald-700",
+                            "shadow-lg shadow-emerald-600/30 transition-all duration-200"
+                        )}
+                    >
+                        <Monitor className="h-4 w-4" />
+                        Open Lab Desktop
+                    </a>
                 )}
 
                 {/* Footer hint */}

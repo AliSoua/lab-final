@@ -22,6 +22,7 @@ class LabInstanceResponse(BaseModel):
     power_state: Optional[str] = None
     ip_address: Optional[str] = None
     connection_url: Optional[str] = None
+    guacamole_connection_id: Optional[str] = None
     created_at: Optional[datetime] = None
     started_at: Optional[datetime] = None
     stopped_at: Optional[datetime] = None

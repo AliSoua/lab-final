@@ -1,6 +1,10 @@
 # docker-compose.prod.yml
 version: '3.3'
+
 services:
+  # -------------------------------------------------------------------------
+  # Core Platform
+  # -------------------------------------------------------------------------
   db:
     image: postgres:15-alpine
     container_name: database-lab
@@ -63,7 +67,8 @@ services:
     depends_on:
       - db
       - vault
-      - keycloak  
+      - keycloak
+      - guac-db
     ports:
       - "8000:8000"
     volumes:
@@ -74,6 +79,9 @@ services:
       - VAULT_ADDR=http://vault:8200
       - VAULT_TOKEN=root
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      - GUACAMOLE_API_URL=http://guacamole:8080/guacamole/api
+      - GUACAMOLE_ADMIN_USER=guacadmin
+      - GUACAMOLE_ADMIN_PASS=${GUACAMOLE_ADMIN_PASS:-guacadmin}
 
   frontend:
     build:
@@ -84,8 +92,63 @@ services:
     depends_on:
       - backend
     ports:
-      - "80:80"                     # nginx port instead of 5173
+      - "80:80"
+
+  # -------------------------------------------------------------------------
+  # Guacamole Stack (isolated database)
+  # -------------------------------------------------------------------------
+  guac-db:
+    image: postgres:15-alpine
+    container_name: guac-db
+    restart: always
+    environment:
+      POSTGRES_USER: ${GUACAMOLE_DB_USER}
+      POSTGRES_PASSWORD: ${GUACAMOLE_DB_PASS}
+      POSTGRES_DB: ${GUACAMOLE_DB}
+    command: >
+      postgres
+      -c shared_buffers=32MB
+      -c work_mem=2MB
+      -c max_connections=20
+    volumes:
+      - guac-data:/var/lib/postgresql/data
+      - ./guacamole/001-create-schema.sql:/docker-entrypoint-initdb.d/001-create-schema.sql:ro
+      - ./guacamole/002-create-admin-user.sql:/docker-entrypoint-initdb.d/002-create-admin-user.sql:ro
+    networks:
+      - default
+
+  guacd:
+    image: guacamole/guacd:1.5.5
+    container_name: guacd
+    restart: always
+    # guacd must reach VM IPs. If VMs are on isolated network, use host network
+    # or ensure routing. For now, default bridge — adjust if needed.
+    networks:
+      - default
+
+  guacamole:
+    image: guacamole/guacamole:1.5.5
+    container_name: guacamole-web
+    restart: always
+    depends_on:
+      - guac-db
+      - guacd
+    environment:
+      GUACD_HOSTNAME: guacd
+      GUACD_PORT: 4822
+      POSTGRESQL_HOSTNAME: guac-db
+      POSTGRESQL_PORT: 5432
+      POSTGRESQL_DATABASE: ${GUACAMOLE_DB}
+      POSTGRESQL_USER: ${GUACAMOLE_DB_USER}
+      POSTGRESQL_PASSWORD: ${GUACAMOLE_DB_PASS}
+      # Enable header auth for seamless SSO (optional phase 2)
+      # HEADER_ENABLED: "true"
+    ports:
+      - "127.0.0.1:8081:8080"
+    networks:
+      - default
 
 volumes:
   pgdata_lab_platform_test:
-  keycloak_data:  # Add this volume
+  keycloak_data:
+  guac-data:

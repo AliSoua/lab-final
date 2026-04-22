@@ -7,6 +7,8 @@ from typing import Optional, List, Tuple, Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 
+from app.services.guacamole_service import guacamole_service
+
 from app.models.LabDefinition.core import LabDefinition
 from app.models.LabDefinition.LabInstance import LabInstance
 from app.config.connection.vcenter_client import VCenterClient
@@ -25,7 +27,7 @@ class LabInstanceService:
         self,
         db: Session,
         lab_definition_id: uuid.UUID,
-        trainee_id: uuid.UUID,
+        trainee_id: str,
     ) -> LabInstance:
         """
         Simple launch flow:
@@ -114,7 +116,7 @@ class LabInstanceService:
                 vm_uuid=vm_uuid,
                 vm_name=new_vm_name,
                 vcenter_host=vcenter_creds["host"],
-                status="running",
+                status="provisioning",
                 power_state=power_state,
                 ip_address=ip_address,
                 started_at=datetime.utcnow(),
@@ -135,7 +137,7 @@ class LabInstanceService:
             client.disconnect()
 
     def get_instance(
-        self, db: Session, instance_id: uuid.UUID, trainee_id: uuid.UUID
+        self, db: Session, instance_id: uuid.UUID, trainee_id: str
     ) -> Optional[LabInstance]:
         return (
             db.query(LabInstance)
@@ -149,7 +151,7 @@ class LabInstanceService:
     def list_instances(
         self,
         db: Session,
-        trainee_id: uuid.UUID,
+        trainee_id: str,
         skip: int = 0,
         limit: int = 100,
     ) -> Tuple[List[LabInstance], int]:
@@ -166,7 +168,7 @@ class LabInstanceService:
         return items, total
 
     def stop_instance(
-        self, db: Session, instance_id: uuid.UUID, trainee_id: uuid.UUID,
+        self, db: Session, instance_id: uuid.UUID, trainee_id: str,
     ) -> LabInstance:
         instance = self.get_instance(db, instance_id, trainee_id)
         if not instance:
@@ -206,7 +208,7 @@ class LabInstanceService:
         return instance
 
     def terminate_instance(
-        self, db: Session, instance_id: uuid.UUID, trainee_id: uuid.UUID,
+        self, db: Session, instance_id: uuid.UUID, trainee_id: str,
     ) -> None:
         instance = self.get_instance(db, instance_id, trainee_id)
         if not instance:
@@ -250,9 +252,7 @@ class LabInstanceService:
         instance.stopped_at = datetime.utcnow()
         db.commit()
 
-    def refresh_instance_status(
-        self, db: Session, instance_id: uuid.UUID, trainee_id: uuid.UUID,
-    ) -> LabInstance:
+    def refresh_instance_status(self, db: Session, instance_id: uuid.UUID, trainee_id: str) -> LabInstance:
         instance = self.get_instance(db, instance_id, trainee_id)
         if not instance or not instance.vm_uuid or not instance.vcenter_host:
             return instance
@@ -270,16 +270,54 @@ class LabInstanceService:
             return instance
 
         try:
-            instance.power_state = client.get_vm_power_state(
-                instance.vm_uuid
-            )
-            instance.ip_address = client.get_vm_ip(instance.vm_uuid)
+            new_power_state = client.get_vm_power_state(instance.vm_uuid)
+            new_ip = client.get_vm_ip(instance.vm_uuid)
+
+            # -----------------------------------------------------------------
+            # IP appeared for the first time — create Guacamole connection now
+            # -----------------------------------------------------------------
+            if new_ip and not instance.guacamole_connection_id:
+                try:
+                    lab = db.query(LabDefinition).filter(
+                        LabDefinition.id == instance.lab_definition_id
+                    ).first()
+                    
+                    guac_conn_id = guacamole_service.create_connection(
+                        name=f"lab-{lab.slug if lab else 'unknown'}-{str(instance.id)[:8]}",
+                        protocol="rdp",
+                        hostname=new_ip,
+                        port=3389,
+                        username="labuser",
+                        password="labpassword",
+                    )
+                    
+                    instance.guacamole_connection_id = guac_conn_id
+                    instance.connection_url = guacamole_service.get_connection_url(guac_conn_id)
+                    instance.status = "running"  # Now truly running
+                    
+                except Exception as e:
+                    logger.error("Failed to create Guacamole connection on refresh: %s", e)
+                    # Keep provisioning, will retry next poll
+
+            # -----------------------------------------------------------------
+            # IP changed — update Guacamole connection
+            # -----------------------------------------------------------------
+            elif new_ip and instance.guacamole_connection_id and new_ip != instance.ip_address:
+                try:
+                    guacamole_service.update_connection(
+                        connection_id=instance.guacamole_connection_id,
+                        hostname=new_ip,
+                    )
+                except Exception as e:
+                    logger.error("Failed to update Guacamole connection IP: %s", e)
+
+            instance.power_state = new_power_state
+            instance.ip_address = new_ip
             db.commit()
             db.refresh(instance)
+            
         except Exception as e:
-            logger.warning(
-                "Failed to refresh status for %s: %s", instance_id, e
-            )
+            logger.warning("Failed to refresh status for %s: %s", instance_id, e)
         finally:
             client.disconnect()
 
