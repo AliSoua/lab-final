@@ -125,3 +125,31 @@ class LabConnectionGroupedResponse(BaseModel):
     connections: List[LabConnectionListItem]
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# ── NEW: Slot schema for Lab Definition assignment ──
+
+class LabConnectionSlot(BaseModel):
+    """Selected connection slot assigned to a Lab Definition.
+    
+    References an existing connection group by slug and declares
+    which protocols are enabled for this lab.
+    """
+    slug: str = Field(..., description="Existing LabConnection slug")
+    ssh: bool = Field(default=False, description="Enable SSH protocol for this lab")
+    rdp: bool = Field(default=False, description="Enable RDP protocol for this lab")
+    vnc: bool = Field(default=False, description="Enable VNC protocol for this lab")
+
+    @field_validator("slug")
+    @classmethod
+    def validate_slug(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not v:
+            raise ValueError("Slug cannot be empty")
+        if not re.match(r'^[a-z0-9]+(?:[._-][a-z0-9]+)*$', v):
+            raise ValueError(
+                "Slug must be lowercase alphanumeric with hyphens, dots, or underscores only"
+            )
+        if ".." in v:
+            raise ValueError("Slug cannot contain consecutive dots")
+        return v

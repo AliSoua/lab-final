@@ -1,9 +1,8 @@
-# app/models/LabDefinition/LabInstance.py
 import uuid
 from datetime import datetime
 
 from sqlalchemy import Column, String, DateTime, Integer, ForeignKey, Text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from app.db.base import Base
 
@@ -20,7 +19,6 @@ class LabInstance(Base):
         index=True,
     )
 
-    # FIXED: Changed from String(255) to UUID + ForeignKey
     trainee_id = Column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),
@@ -35,8 +33,19 @@ class LabInstance(Base):
     status = Column(String(50), default="provisioning", nullable=False)
     power_state = Column(String(50), default="unknown")
     ip_address = Column(String(100))
+
+    # Legacy single-connection fields (kept for backward compatibility)
     connection_url = Column(Text)
     guacamole_connection_id = Column(String(100), nullable=True, index=True)
+
+    # NEW: JSON mapping of all Guacamole connections per slot/protocol
+    # Example: { "postgre-test_ssh": "1", "postgre-test_rdp": "2" }
+    guacamole_connections = Column(
+        JSONB,
+        default=lambda: {},
+        nullable=False,
+        server_default="{}",
+    )
 
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     started_at = Column(DateTime(timezone=True))
@@ -45,8 +54,6 @@ class LabInstance(Base):
 
     # Relationships
     lab_definition = relationship("LabDefinition", back_populates="instances")
-    
-    # ADDED: Reverse side of User.instances
     user = relationship("User", back_populates="instances")
 
     def __repr__(self):

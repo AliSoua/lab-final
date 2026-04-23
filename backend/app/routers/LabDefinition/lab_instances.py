@@ -48,7 +48,7 @@ def _get_trainee_id(userinfo: dict, db: Session) -> uuid.UUID:
             detail="User profile not found. Please access /profile/me first to sync your account.",
         )
 
-    return user.id  # <-- local DB UUID, not the Keycloak sub
+    return user.id
 
 
 @router.post(
@@ -128,8 +128,8 @@ def get_instance(
 
 @router.post(
     "/{instance_id}/refresh",
-    response_model=LabInstanceStatusResponse,
-    summary="Refresh instance status from vCenter",
+    response_model=LabInstanceResponse,          # CHANGED: was LabInstanceStatusResponse
+    summary="Refresh instance status from vCenter and sync Guacamole connections",
 )
 def refresh_instance_status(
     instance_id: uuid.UUID,
@@ -146,13 +146,8 @@ def refresh_instance_status(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Instance not found",
             )
-        return LabInstanceStatusResponse(
-            id=instance.id,
-            status=instance.status,
-            power_state=instance.power_state,
-            ip_address=instance.ip_address,
-            vm_name=instance.vm_name,
-        )
+        # Return full instance so frontend gets guacamole_connections + connection_url
+        return instance
     except HTTPException:
         raise
     except Exception as e:

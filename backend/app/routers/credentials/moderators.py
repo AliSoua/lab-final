@@ -1,25 +1,23 @@
 # app/routers/credentials/moderators.py
 from fastapi import APIRouter, HTTPException, Depends, status, Request
 from typing import List, Dict, Any, Set
-from app.config.connection.vault_client import (
-    list_admin_vcenters,
-    read_credentials,
-)
 import hvac
-from app.config.connection.vault_client import client as vault_client
-from app.config.connection.vcenter_client import VCenterClient
 import logging
 import re
 
-from app.config.connection.vault_client import (
+from app.config.connection.vcenter_client import VCenterClient
+from app.config.connection.vault_client import VaultClient
+from app.dependencies.keycloak.keycloak_roles import require_role
+from app.dependencies.vault.vault_auth import require_vault_client
+from app.services.vault.credentials import (
     create_or_update_credentials,
     read_credentials,
     read_secret_metadata,
     delete_credentials,
     exists_credentials,
     list_moderator_hosts,
+    list_admin_vcenters,
 )
-from app.dependencies.keycloak.keycloak_roles import require_role
 from app.schemas.moderator import (
     CredentialsCreate,
     CredentialsUpdate,
@@ -47,11 +45,7 @@ def _get_user_id(userinfo) -> str:
 
 
 def _validate_host_name(host: str) -> str:
-    """Validate ESXi host for safe Vault path usage.
-
-    Rejects invalid characters outright (no silent mangling) to prevent
-    path-collision attacks where 'host!1' and 'host@1' map to the same key.
-    """
+    """Validate ESXi host for safe Vault path usage."""
     clean = host.strip().lower()
 
     if not re.match(r'^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$', clean):
@@ -71,6 +65,17 @@ def _build_path(user_id: str, safe_host: str) -> str:
     return f"credentials/moderators/{user_id}/{safe_host}"
 
 
+def _list_all_admin_ids(vault_client: hvac.Client) -> List[str]:
+    """List all admin user IDs from Vault using the provided (user-scoped) client."""
+    try:
+        return VaultClient().list_secrets("credentials/admin", vault_client)
+    except RuntimeError as e:
+        logger.error("Failed to list admin IDs from Vault: %s", e)
+        raise
+
+
+# ── CRUD Endpoints ────────────────────────────────────────────────────────────
+
 @router.post(
     "/",
     response_model=CredentialsResponse,
@@ -79,13 +84,10 @@ def _build_path(user_id: str, safe_host: str) -> str:
 def create_credentials(
     data: CredentialsCreate,
     request: Request,
+    vault_client: hvac.Client = Depends(require_vault_client),
     userinfo=Depends(require_role("moderator")),
 ):
-    """Store ESXi credentials for a new host.
-
-    CAS=0 guarantees an atomic create-only operation; if another request
-    creates the same host simultaneously, exactly one will succeed.
-    """
+    """Store ESXi credentials for a new host."""
     user_id = _get_user_id(userinfo)
     safe_host = _validate_host_name(data.esxi_host)
     path = _build_path(user_id, safe_host)
@@ -104,7 +106,8 @@ def create_credentials(
             username=data.username,
             password=data.password.get_secret_value(),
             actor=user_id,
-            cas=0,  # atomic create-only
+            cas=0,
+            user_client=vault_client,
         )
         return CredentialsResponse(
             message=f"Credentials for {data.esxi_host} stored securely"
@@ -131,22 +134,19 @@ def create_credentials(
 @router.get("/hosts", response_model=List[HostInfo])
 def list_hosts(
     request: Request,
+    vault_client: hvac.Client = Depends(require_vault_client),
     userinfo=Depends(require_role("moderator")),
 ):
-    """List all ESXi hosts stored by this moderator.
-
-    Passwords are NEVER loaded into memory. Only Vault metadata is queried.
-    Legacy secrets without metadata will show empty usernames until updated.
-    """
+    """List all ESXi hosts stored by this moderator."""
     user_id = _get_user_id(userinfo)
 
     try:
-        hosts = list_moderator_hosts(user_id)
+        hosts = list_moderator_hosts(user_id, vault_client)
         result: List[HostInfo] = []
         for host_name in hosts:
             path = _build_path(user_id, host_name)
             try:
-                meta = read_secret_metadata(path)
+                meta = read_secret_metadata(path, vault_client)
                 meta_data = meta.get("data", {}) or {}
                 custom = meta_data.get("custom_metadata") or {}
                 result.append(
@@ -173,25 +173,22 @@ def list_hosts(
 def get_host(
     esxi_host: str,
     request: Request,
+    vault_client: hvac.Client = Depends(require_vault_client),
     userinfo=Depends(require_role("moderator")),
 ):
-    """Get username for a specific ESXi host.
-
-    For legacy secrets without metadata, falls back to a single secret read
-    (password enters memory for that one host only).
-    """
+    """Get username for a specific ESXi host."""
     user_id = _get_user_id(userinfo)
     safe_host = _validate_host_name(esxi_host)
     path = _build_path(user_id, safe_host)
 
-    if not exists_credentials(path):
+    if not exists_credentials(path, vault_client):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Credentials not found",
         )
 
     try:
-        meta = read_secret_metadata(path)
+        meta = read_secret_metadata(path, vault_client)
         meta_data = meta.get("data", {}) or {}
         custom = meta_data.get("custom_metadata") or {}
 
@@ -201,9 +198,8 @@ def get_host(
                 username=custom.get("username", ""),
             )
 
-        # Legacy fallback: secret was created before metadata logic existed.
         logger.warning("Legacy secret detected (no metadata): %s", path)
-        data = read_credentials(path)
+        data = read_credentials(path, vault_client)
         return HostInfo(
             esxi_host=data.get("host", esxi_host),
             username=data.get("username", ""),
@@ -226,28 +222,22 @@ def update_credentials(
     esxi_host: str,
     data: CredentialsUpdate,
     request: Request,
+    vault_client: hvac.Client = Depends(require_vault_client),
     userinfo=Depends(require_role("moderator")),
 ):
-    """Update credentials for an existing ESXi host.
-
-    1. Verifies old_username + old_password match the current secret.
-    2. If the host name (esxi_host) is being changed, performs an atomic
-       rename: verifies the target name is free, creates the new secret,
-       then deletes the old one.
-    3. If the host name is unchanged, performs an in-place CAS update.
-    """
+    """Update credentials for an existing ESXi host."""
     user_id = _get_user_id(userinfo)
     safe_host = _validate_host_name(esxi_host)
     path = _build_path(user_id, safe_host)
 
-    if not exists_credentials(path):
+    if not exists_credentials(path, vault_client):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Credentials not found",
         )
 
     try:
-        current = read_credentials(path)
+        current = read_credentials(path, vault_client)
     except FileNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -269,14 +259,12 @@ def update_credentials(
             detail="Old credentials do not match. Update denied.",
         )
 
-    # Determine if this is a rename operation
     new_safe_host = _validate_host_name(data.esxi_host)
     new_path = _build_path(user_id, new_safe_host)
     is_rename = new_path != path
 
     if is_rename:
-        # Prevent duplicate host names for this moderator
-        if exists_credentials(new_path):
+        if exists_credentials(new_path, vault_client):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=(
@@ -285,8 +273,6 @@ def update_credentials(
                 ),
             )
 
-        # Atomic rename: create new first (so we never lose verified data),
-        # then delete old.
         try:
             create_or_update_credentials(
                 path=new_path,
@@ -294,10 +280,10 @@ def update_credentials(
                 username=data.username,
                 password=data.password.get_secret_value(),
                 actor=user_id,
-                cas=0,  # atomic create-only
+                cas=0,
+                user_client=vault_client,
             )
         except FileExistsError:
-            # Race condition: target created between check and write
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Host '{data.esxi_host}' already exists. Please retry.",
@@ -313,9 +299,8 @@ def update_credentials(
 
         # New secret is established; now remove the old one.
         try:
-            delete_credentials(path, actor=user_id)
+            delete_credentials(path, actor=user_id, user_client=vault_client)
         except Exception as e:
-            # Non-fatal orphan: new credentials are the source of truth.
             logger.error("Failed to delete old credentials %s after rename: %s", path, e)
 
         logger.info(
@@ -329,9 +314,9 @@ def update_credentials(
             message=f"Credentials renamed to {data.esxi_host} and updated successfully"
         )
 
-    # In-place update (no rename) with CAS to prevent lost updates
+    # In-place update (no rename) with CAS
     try:
-        meta = read_secret_metadata(path)
+        meta = read_secret_metadata(path, vault_client)
         meta_data = meta.get("data", {}) or {}
         current_version = meta_data.get("current_version") or 0
 
@@ -342,6 +327,7 @@ def update_credentials(
             password=data.password.get_secret_value(),
             actor=user_id,
             cas=current_version,
+            user_client=vault_client,
         )
         logger.info(
             "Credentials updated: user=%s host=%s ip=%s",
@@ -373,6 +359,7 @@ def update_credentials(
 def delete_host(
     esxi_host: str,
     request: Request,
+    vault_client: hvac.Client = Depends(require_vault_client),
     userinfo=Depends(require_role("moderator")),
 ):
     """Delete credentials for a specific ESXi host."""
@@ -380,14 +367,14 @@ def delete_host(
     safe_host = _validate_host_name(esxi_host)
     path = _build_path(user_id, safe_host)
 
-    if not exists_credentials(path):
+    if not exists_credentials(path, vault_client):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Credentials not found",
         )
 
     try:
-        delete_credentials(path, actor=user_id)
+        delete_credentials(path, actor=user_id, user_client=vault_client)
         logger.info(
             "Credentials deleted: user=%s host=%s ip=%s",
             user_id,
@@ -420,14 +407,11 @@ def delete_host(
 )
 def get_all_vcenter_templates(
     request: Request,
+    vault_client: hvac.Client = Depends(require_vault_client),
     userinfo=Depends(require_role("moderator")),
 ):
     """
     Retrieve VM templates from all vCenter servers registered by any admin.
-    
-    - Fetches all admin vCenter credentials from Vault
-    - Connects to each unique vCenter host (deduplicated by host field)
-    - Returns aggregated templates with vCenter attribution
     """
     user_id = _get_user_id(userinfo)
 
@@ -437,9 +421,8 @@ def get_all_vcenter_templates(
         request.client.host if request.client else "unknown",
     )
 
-    # Step 1: Get all admin IDs from Vault
     try:
-        admin_ids = _list_all_admin_ids()
+        admin_ids = _list_all_admin_ids(vault_client)
     except Exception as e:
         logger.error("Failed to list admin IDs from Vault: %s", e)
         raise HTTPException(
@@ -450,20 +433,18 @@ def get_all_vcenter_templates(
     if not admin_ids:
         return []
 
-    # Step 2: Collect all vCenter credentials, deduplicated by host field
     all_credentials: List[Dict[str, str]] = []
     seen_hosts: Set[str] = set()
 
     for admin_id in admin_ids:
         try:
-            hosts = list_admin_vcenters(admin_id)
+            hosts = list_admin_vcenters(admin_id, vault_client)
             for host in hosts:
                 path = f"credentials/admin/{admin_id}/{host}"
                 try:
-                    creds = read_credentials(path)
+                    creds = read_credentials(path, vault_client)
                     host_value = creds.get("host", "").strip().lower()
-                    
-                    # Deduplicate by host field - keep first occurrence
+
                     if not host_value or host_value in seen_hosts:
                         if host_value:
                             logger.debug(
@@ -472,9 +453,9 @@ def get_all_vcenter_templates(
                                 admin_id,
                             )
                         continue
-                    
+
                     seen_hosts.add(host_value)
-                    
+
                     all_credentials.append({
                         "admin_id": admin_id,
                         "host": host_value,
@@ -496,7 +477,6 @@ def get_all_vcenter_templates(
     if not all_credentials:
         return []
 
-    # Step 3: Connect to each vCenter and fetch templates
     templates_aggregate: List[Dict[str, Any]] = []
 
     for cred in all_credentials:
@@ -505,14 +485,14 @@ def get_all_vcenter_templates(
         password = cred["password"]
         admin_id = cred["admin_id"]
 
-        client = VCenterClient(
+        vc_client = VCenterClient(
             host=vcenter_host,
             username=username,
             password=password,
         )
 
         try:
-            if not client.connect():
+            if not vc_client.connect():
                 logger.warning(
                     "Failed to connect to vCenter %s (admin=%s)",
                     vcenter_host,
@@ -527,8 +507,7 @@ def get_all_vcenter_templates(
                 })
                 continue
 
-            # Fetch templates from vCenter
-            templates = client.get_templates()
+            templates = vc_client.get_templates()
 
             templates_aggregate.append({
                 "vcenter_host": vcenter_host,
@@ -559,20 +538,6 @@ def get_all_vcenter_templates(
                 "error": str(e),
             })
         finally:
-            client.disconnect()
+            vc_client.disconnect()
 
     return templates_aggregate
-
-
-def _list_all_admin_ids() -> List[str]:
-    """Helper to list all admin user IDs from Vault credentials path."""
-    try:
-        result = vault_client.secrets.kv.v2.list_secrets(path="credentials/admin")
-        keys = result["data"]["keys"]
-        # Vault returns folder keys with trailing slashes; strip them.
-        return [k.rstrip("/") for k in keys]
-    except hvac.exceptions.InvalidPath:
-        return []
-    except Exception as e:
-        logger.error("Failed to list admin IDs from Vault: %s", e)
-        raise

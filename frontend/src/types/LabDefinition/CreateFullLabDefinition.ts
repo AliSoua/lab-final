@@ -43,7 +43,18 @@ export interface StringFieldItem {
 }
 
 // =============================================================================
-// FULL LAB DEFINITION (With VMs and Guide Blocks)
+// LAB CONNECTION SLOT
+// =============================================================================
+
+export interface LabConnectionSlot {
+    slug: string
+    ssh: boolean
+    rdp: boolean
+    vnc: boolean
+}
+
+// =============================================================================
+// FULL LAB DEFINITION (With VMs, Connections and Guide Blocks)
 // =============================================================================
 
 // VM Template Item for creation
@@ -95,6 +106,7 @@ export interface CreateFullLabDefinitionRequest {
     tags: string[]
     network_profile_id?: string // UUID as string
     vms: LabVMItemCreate[]
+    connections: LabConnectionSlot[]
     guide_version_id?: string
 }
 
@@ -126,6 +138,9 @@ export interface CreateFullLabDefinitionFormData {
 
     // VMs
     vms: LabVMItemCreate[]
+
+    // Connections
+    connections: LabConnectionSlot[]
 
     // Guide
     guide_version_id?: string
@@ -171,8 +186,9 @@ export const DEFAULT_CREATE_FULL_LAB_FORM_DATA: CreateFullLabDefinitionFormData 
     objectives: [],
     prerequisites: [],
 
-    // VMs & Guide
+    // VMs, Connections & Guide
     vms: [],
+    connections: [],
     guide_version_id: "",
 
     // Network
@@ -216,6 +232,7 @@ export function toFullCreateRequest(
             ...vm,
             order: vm.order ?? index
         })),
+        connections: formData.connections,
         guide_version_id: formData.guide_version_id || undefined
     }
 }

@@ -6,13 +6,14 @@ from datetime import datetime
 
 from app.schemas.LabDefinition.LabVM import LabVMResponse, LabVMCreate
 from app.schemas.LabDefinition.LabGuide import LabGuideStepCreate, LabGuideResponse
+from app.schemas.LabDefinition.LabConnection import LabConnectionSlot
 from app.schemas.LabDefinition.core import (
     LabCategory, LabDifficulty, LabStatus, InfrastructureProvider
 )
 
 
 class FullLabDefinitionCreate(BaseModel):
-    """Create a complete lab with VMs and optionally a guide."""
+    """Create a complete lab with VMs, Connection Slots and optionally a guide."""
     name: str
     slug: str
     short_description: Optional[str] = None
@@ -38,8 +39,31 @@ class FullLabDefinitionCreate(BaseModel):
     # VMs to clone
     vms: List[LabVMCreate] = Field(default_factory=list)
 
+    # Connection slots (reference existing connections by slug + protocol flags)
+    connections: List[LabConnectionSlot] = Field(default_factory=list)
+
     # Guide version 
     guide_version_id: Optional[UUID] = Field(None, description="Assign existing guide version")
+
+
+class FullThumbnailLabDefinitionCreate(BaseModel):
+    """Validated multipart form payload for lab creation with thumbnail."""
+    name: str
+    slug: str
+    description: str
+    short_description: Optional[str] = None
+    duration_minutes: int = 120
+    max_concurrent_users: int = 1
+    cooldown_minutes: int = 0
+    difficulty: LabDifficulty = LabDifficulty.beginner
+    category: LabCategory = LabCategory.other
+    track: Optional[str] = None
+    objectives: List[str] = Field(default_factory=list)
+    prerequisites: List[str] = Field(default_factory=list)
+    tags: List[str] = Field(default_factory=list)
+    vms: List[LabVMCreate] = Field(default_factory=list)
+    connections: List[LabConnectionSlot] = Field(default_factory=list)
+    guide_version_id: Optional[UUID] = None
 
 
 class FullLabDefinitionResponse(BaseModel):
@@ -67,7 +91,11 @@ class FullLabDefinitionResponse(BaseModel):
     featured_priority: int = 0
 
     vms: List[LabVMResponse] = Field(default_factory=list)
-    guide_version_id: Optional[UUID] = None  # Populated if assigned
+    connection_slots: List[LabConnectionSlot] = Field(
+        default_factory=list,
+        description="Assigned connection slots (slug + enabled protocols)"
+    )
+    guide_version_id: Optional[UUID] = None
 
     created_at: datetime
     created_by: Optional[str] = None

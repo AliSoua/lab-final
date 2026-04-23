@@ -7,20 +7,19 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import asc, func
 from uuid import UUID
+import hvac
 
 from app.models.LabDefinition.LabConnection import LabConnection
 from app.schemas.LabDefinition.LabConnection import LabConnectionCreate, LabConnectionUpdate
-from app.config.connection.vault_client import (
+from app.config.connection.vault_client import VaultClient
+from app.services.vault.credentials import (
     read_credentials,
-    delete_credentials,
     exists_credentials,
-    client as vault_client,
 )
 
 logger = logging.getLogger(__name__)
 
 VAULT_BASE_PATH = "credentials/lab_connections"
-VAULT_MOUNT_POINT = "secret"  # Adjust to your KV v2 mount point
 
 
 def _build_vault_path(slug: str, protocol: str) -> str:
@@ -44,13 +43,19 @@ def _validate_slug(slug: str) -> str:
     return safe
 
 
-def _write_vault_creds(slug: str, protocol: str, username: str, password: str) -> None:
+def _write_vault_creds(
+    slug: str,
+    protocol: str,
+    username: str,
+    password: str,
+    vault_client: hvac.Client,
+) -> None:
     path = _build_vault_path(slug, protocol)
     try:
-        vault_client.secrets.kv.v2.create_or_update_secret(
+        VaultClient().write_secret(
             path=path,
             secret={"username": username, "password": password},
-            mount_point=VAULT_MOUNT_POINT,
+            user_client=vault_client,
         )
         logger.info("Vault credentials written to %s", path)
     except Exception as e:
@@ -61,29 +66,11 @@ def _write_vault_creds(slug: str, protocol: str, username: str, password: str) -
         )
 
 
-def _destroy_vault_path(slug: str, protocol: str) -> None:
-    """Permanently delete ALL versions and metadata for a Vault path.
-    
-    Uses KV v2 metadata deletion which removes the secret entirely [^1^].
-    This prevents orphaned credentials from accumulating.
-    """
+def _destroy_vault_path(slug: str, protocol: str, vault_client: hvac.Client) -> None:
+    """Permanently delete ALL versions and metadata for a Vault path."""
     path = _build_vault_path(slug, protocol)
     try:
-        # First check if path exists
-        try:
-            vault_client.secrets.kv.v2.read_secret_metadata(
-                path=path,
-                mount_point=VAULT_MOUNT_POINT,
-            )
-        except Exception:
-            logger.debug("No Vault metadata found at %s, nothing to destroy", path)
-            return
-
-        # Permanently delete all versions + metadata (cannot be undeleted)
-        vault_client.secrets.kv.v2.delete_metadata_and_all_versions(
-            path=path,
-            mount_point=VAULT_MOUNT_POINT,
-        )
+        VaultClient().delete_secret(path, user_client=vault_client)
         logger.info("Vault path permanently destroyed: %s", path)
     except Exception as e:
         logger.error("Failed to destroy Vault path %s: %s", path, e)
@@ -95,6 +82,7 @@ def create_connection(
     db: Session,
     data: LabConnectionCreate,
     user_id: str,
+    vault_client: hvac.Client,
 ) -> LabConnection:
     """Create a LabConnection and store its credentials in Vault."""
     slug = _validate_slug(data.slug)
@@ -122,7 +110,7 @@ def create_connection(
         )
 
     # Write credentials to Vault first (fail fast before DB commit)
-    _write_vault_creds(slug, protocol, data.username, data.password)
+    _write_vault_creds(slug, protocol, data.username, data.password, vault_client)
 
     connection = LabConnection(
         slug=slug,
@@ -148,7 +136,9 @@ def get_connection(db: Session, connection_id: UUID) -> Optional[LabConnection]:
 
 
 def get_connection_detail(
-    db: Session, connection_id: UUID
+    db: Session,
+    connection_id: UUID,
+    vault_client: hvac.Client,
 ) -> Tuple[Optional[LabConnection], Optional[str], Optional[str]]:
     """Fetch connection plus Vault-derived path and username."""
     connection = get_connection(db, connection_id)
@@ -159,8 +149,8 @@ def get_connection_detail(
     username = None
 
     try:
-        if exists_credentials(vault_path):
-            creds = read_credentials(vault_path)
+        if exists_credentials(vault_path, vault_client):
+            creds = read_credentials(vault_path, vault_client)
             username = creds.get("username")
     except Exception as e:
         logger.warning("Failed to read Vault credentials at %s: %s", vault_path, e)
@@ -230,6 +220,7 @@ def update_connection(
     connection_id: UUID,
     data: LabConnectionUpdate,
     user_id: str,
+    vault_client: hvac.Client,
 ) -> LabConnection:
     connection = get_connection(db, connection_id)
     if not connection:
@@ -266,7 +257,7 @@ def update_connection(
         # Move Vault credentials: write new, destroy old
         try:
             old_path = _build_vault_path(old_slug, old_protocol)
-            old_creds = read_credentials(old_path) if exists_credentials(old_path) else {}
+            old_creds = read_credentials(old_path, vault_client) if exists_credentials(old_path, vault_client) else {}
             username = data.username if data.username else old_creds.get("username", "")
             password = data.password if data.password else old_creds.get("password", "")
 
@@ -276,8 +267,8 @@ def update_connection(
                     detail="Username and password are required when renaming a connection.",
                 )
 
-            _write_vault_creds(new_slug, old_protocol, username, password)
-            _destroy_vault_path(old_slug, old_protocol)
+            _write_vault_creds(new_slug, old_protocol, username, password, vault_client)
+            _destroy_vault_path(old_slug, old_protocol, vault_client)
         except HTTPException:
             raise
         except Exception as e:
@@ -291,11 +282,11 @@ def update_connection(
         # In-place credential rotation
         path = _build_vault_path(old_slug, old_protocol)
         try:
-            old_creds = read_credentials(path) if exists_credentials(path) else {}
+            old_creds = read_credentials(path, vault_client) if exists_credentials(path, vault_client) else {}
             merged_username = data.username if data.username else old_creds.get("username", "")
             merged_password = data.password if data.password else old_creds.get("password", "")
 
-            _write_vault_creds(old_slug, old_protocol, merged_username, merged_password)
+            _write_vault_creds(old_slug, old_protocol, merged_username, merged_password, vault_client)
         except HTTPException:
             raise
         except Exception as e:
@@ -320,7 +311,12 @@ def update_connection(
     return connection
 
 
-def delete_connection(db: Session, connection_id: UUID, user_id: str) -> None:
+def delete_connection(
+    db: Session,
+    connection_id: UUID,
+    user_id: str,
+    vault_client: hvac.Client,
+) -> None:
     connection = get_connection(db, connection_id)
     if not connection:
         raise HTTPException(
@@ -329,7 +325,7 @@ def delete_connection(db: Session, connection_id: UUID, user_id: str) -> None:
         )
 
     # Permanently destroy all Vault versions for this path
-    _destroy_vault_path(connection.slug, connection.protocol)
+    _destroy_vault_path(connection.slug, connection.protocol, vault_client)
 
     db.delete(connection)
     db.commit()

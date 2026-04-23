@@ -3,10 +3,11 @@ import { cn } from "@/lib/utils"
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { FormProvider, useForm } from "react-hook-form"
-import { ChevronLeft, ChevronRight, Save, X, Layers, Server, BookOpen, FileText, ListChecks, Check } from "lucide-react"
+import { ChevronLeft, ChevronRight, Save, X, Layers, Server, BookOpen, FileText, ListChecks, Check, Link } from "lucide-react"
 import { BasicInfoStep } from "./BasicInfoStep"
 import { DetailsStep } from "./DetailsStep"
 import { VMsStep } from "./VMsStep"
+import { ConnectionsStep } from "./ConnectionsStep"
 import { GuideStep } from "./GuideStep"
 import { ReviewStep } from "./ReviewStep"
 import {
@@ -20,12 +21,13 @@ interface CreateFullLabWizardProps {
     onSuccess?: () => void
 }
 
-export type WizardStep = "basic" | "details" | "vms" | "guide" | "review"
+export type WizardStep = "basic" | "details" | "vms" | "connections" | "guide" | "review"
 
 const STEPS: { id: WizardStep; label: string; icon: React.ElementType }[] = [
     { id: "basic", label: "Basic Info", icon: FileText },
     { id: "details", label: "Details", icon: ListChecks },
     { id: "vms", label: "VMs", icon: Server },
+    { id: "connections", label: "Connections", icon: Link },
     { id: "guide", label: "Guide", icon: BookOpen },
     { id: "review", label: "Review", icon: Layers },
 ]
@@ -50,11 +52,12 @@ export function CreateFullLabWizard({ onSuccess }: CreateFullLabWizardProps) {
             basic: ["name", "slug", "description", "category", "difficulty", "duration_minutes"],
             details: [],
             vms: ["vms"],
+            connections: [],
             guide: ["guide_version_id"],
             review: []
         }
 
-        if (currentStep === "details") {
+        if (currentStep === "details" || currentStep === "connections") {
             return true
         }
 
@@ -117,6 +120,8 @@ export function CreateFullLabWizard({ onSuccess }: CreateFullLabWizardProps) {
                 return <DetailsStep />
             case "vms":
                 return <VMsStep />
+            case "connections":
+                return <ConnectionsStep />
             case "guide":
                 return <GuideStep />
             case "review":
@@ -145,7 +150,7 @@ export function CreateFullLabWizard({ onSuccess }: CreateFullLabWizardProps) {
                                     Create Full Lab Definition
                                 </h1>
                                 <p className="text-sm text-[#727373] mt-0.5">
-                                    Configure a complete lab environment with VMs and guided instructions
+                                    Configure a complete lab environment with VMs, connections and guided instructions
                                 </p>
                             </div>
                         </div>

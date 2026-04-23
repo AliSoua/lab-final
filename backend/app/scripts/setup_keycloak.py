@@ -92,6 +92,64 @@ except KeycloakGetError as e:
 except Exception as e:
     print(f"[ERROR] Unexpected error creating client: {e}")
 
+# 4b. Ensure realm roles mapper is configured for the client
+# Keycloak sometimes omits realm_access.roles if the mapper isn't explicitly added
+try:
+    client_id = realm_admin.get_client_id(CLIENT_ID)
+    print(f"[INFO] Client ID: {client_id}")
+    realm_admin.add_mapper_to_client(
+        client_id,
+        {
+            "name": "lab-backend-audience",
+            "protocol": "openid-connect",
+            "protocolMapper": "oidc-audience-mapper",
+            "consentRequired": False,
+            "config": {
+                "included.client.audience": CLIENT_ID,
+                "id.token.claim": "false",
+                "access.token.claim": "true"
+            }
+        }
+    )
+    print(f"[INFO] Added audience mapper to '{CLIENT_ID}'.")
+    client = realm_admin.get_client(client_id)
+    print(f"[INFO] Client: {client}")
+    # Get the client's dedicated scope
+    scopes = realm_admin.get_client_scope_by_name(f"{CLIENT_ID}-dedicated")
+    if not scopes:
+        # Try to find the dedicated client scope
+        all_scopes = realm_admin.get_client_scopes()
+        dedicated_scope = next((s for s in all_scopes if s.get("name") == f"{CLIENT_ID}-dedicated"), None)
+        if dedicated_scope:
+            scope_id = dedicated_scope["id"]
+            # Check if realm roles mapper exists
+            mappers = realm_admin.get_mappers_from_client_scope(scope_id)
+            has_realm_roles = any(m.get("name") == "realm roles" for m in mappers)
+            
+            if not has_realm_roles:
+                realm_admin.add_mapper_to_client_scope(
+                    scope_id,
+                    {
+                        "name": "realm roles",
+                        "protocol": "openid-connect",
+                        "protocolMapper": "oidc-usermodel-realm-role-mapper",
+                        "consentRequired": False,
+                        "config": {
+                            "multivalued": "true",
+                            "user.attribute": "foo",
+                            "id.token.claim": "true",
+                            "access.token.claim": "true",
+                            "claim.name": "realm_access.roles",
+                            "jsonType.label": "String"
+                        }
+                    }
+                )
+                print(f"[INFO] Added realm roles mapper to '{CLIENT_ID}' client scope.")
+            else:
+                print(f"[INFO] Realm roles mapper already exists.")
+except Exception as e:
+    print(f"[WARN] Could not verify realm roles mapper: {e}")
+
 # 5️⃣ Create roles
 for role in ROLES:
     try:

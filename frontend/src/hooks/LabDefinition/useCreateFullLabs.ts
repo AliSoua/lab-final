@@ -3,8 +3,10 @@ import { useState, useCallback } from "react"
 import { toast } from "sonner"
 import type {
     CreateFullLabDefinitionRequest,
-    CreateFullLabDefinitionFormData
+    CreateFullLabDefinitionFormData,
+    LabConnectionSlot
 } from "@/types/LabDefinition/CreateFullLabDefinition"
+import { toFullCreateRequest } from "@/types/LabDefinition/CreateFullLabDefinition"
 import type { LabDefinition } from "@/types/LabDefinition/ListLabs"
 
 const API_BASE_URL =
@@ -18,7 +20,7 @@ interface UseCreateFullLabsReturn {
 }
 
 /**
- * Hook to create a full lab definition with VMs and a selected Guide
+ * Hook to create a full lab definition with VMs, Connection Slots and a selected Guide
  * 
  * Uses two separate endpoints:
  * - POST /lab-definitions/full (JSON, no image)
@@ -88,6 +90,9 @@ export function useCreateFullLabs(): UseCreateFullLabsReturn {
                     formData.append("tags", JSON.stringify(data.tags.map(t => t.value)))
                     formData.append("vms", JSON.stringify(data.vms || []))
 
+                    // Connection slots (slug + protocol flags)
+                    formData.append("connections", JSON.stringify(data.connections || []))
+
                     // Add the file (required for this endpoint)
                     if (data.thumbnail_file instanceof File) {
                         formData.append("thumbnail", data.thumbnail_file)
@@ -103,30 +108,7 @@ export function useCreateFullLabs(): UseCreateFullLabsReturn {
                     })
                 } else {
                     // Use JSON for regular request (no file) → /full
-                    const { thumbnail_file, ...jsonData } = data
-
-                    const requestBody: CreateFullLabDefinitionRequest = {
-                        name: jsonData.name,
-                        slug: jsonData.slug,
-                        description: jsonData.description,
-                        short_description: jsonData.short_description,
-                        category: jsonData.category as import("@/types/LabDefinition/CreateFullLabDefinition").LabCategory,
-                        difficulty: jsonData.difficulty as import("@/types/LabDefinition/CreateFullLabDefinition").LabDifficulty,
-                        duration_minutes: jsonData.duration_minutes,
-                        max_concurrent_users: jsonData.max_concurrent_users,
-                        cooldown_minutes: jsonData.cooldown_minutes,
-                        track: jsonData.track || undefined,
-                        thumbnail_url: jsonData.thumbnail_url || undefined,
-                        status: jsonData.status,
-                        // Map StringFieldItem[] to string[]
-                        objectives: jsonData.objectives.map(o => o.value),
-                        prerequisites: jsonData.prerequisites.map(p => p.value),
-                        tags: jsonData.tags.map(t => t.value),
-                        network_profile_id: jsonData.network_profile_id || undefined,
-                        vms: jsonData.vms,
-                        guide_version_id: jsonData.guide_version_id || undefined,
-                        // featured fields use defaults from backend (is_featured=false, featured_priority=0)
-                    }
+                    const requestBody: CreateFullLabDefinitionRequest = toFullCreateRequest(data)
 
                     response = await fetch(url, {
                         method: "POST",

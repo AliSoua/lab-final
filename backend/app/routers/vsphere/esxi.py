@@ -1,10 +1,12 @@
 # app/routers/vsphere/esxi.py
 from fastapi import APIRouter, HTTPException, Depends, status
 from typing import List, Dict, Callable
+import hvac
 
 from app.dependencies.keycloak.keycloak_roles import require_role
+from app.dependencies.vault.vault_auth import require_vault_client
 from app.config.connection.esxi_client import ESXiClient
-from app.config.connection.vault_client import list_moderator_hosts, read_credentials
+from app.services.vault.credentials import list_moderator_hosts, read_credentials
 
 router = APIRouter(prefix="/vsphere/esxi", tags=["vsphere"])
 
@@ -19,14 +21,18 @@ def _get_user_id(userinfo) -> str:
     return user_id
 
 
-def _fetch_for_all_hosts(user_id: str, fetch_fn: Callable[[ESXiClient], Dict | List]):
+def _fetch_for_all_hosts(
+    user_id: str,
+    vault_client: hvac.Client,
+    fetch_fn: Callable[[ESXiClient], Dict | List],
+):
     """
     Helper that iterates every ESXi host stored in Vault for this moderator,
     connects to each, runs fetch_fn, and aggregates results.
     Partial failures are captured so one offline host doesn't break the whole request.
     """
     try:
-        host_names = list_moderator_hosts(user_id)
+        host_names = list_moderator_hosts(user_id, vault_client)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -47,7 +53,7 @@ def _fetch_for_all_hosts(user_id: str, fetch_fn: Callable[[ESXiClient], Dict | L
         client: ESXiClient | None = None
 
         try:
-            creds = read_credentials(path)
+            creds = read_credentials(path, vault_client)
             host = creds.get("host")
             username = creds.get("username")
             password = creds.get("password")
@@ -101,37 +107,49 @@ def _fetch_for_all_hosts(user_id: str, fetch_fn: Callable[[ESXiClient], Dict | L
 
 
 @router.get("/connection")
-def esxi_connection_health(userinfo=Depends(require_role("moderator"))):
+def esxi_connection_health(
+    vault_client: hvac.Client = Depends(require_vault_client),
+    userinfo=Depends(require_role("moderator")),
+):
     """
     Check connection health for ALL ESXi hosts stored in Vault.
     Returns per-host health status.
     """
     user_id = _get_user_id(userinfo)
-    return _fetch_for_all_hosts(user_id, lambda client: client.health_check())
+    return _fetch_for_all_hosts(user_id, vault_client, lambda client: client.health_check())
 
 
 @router.get("/templates")
-def get_esxi_templates(userinfo=Depends(require_role("moderator"))):
+def get_esxi_templates(
+    vault_client: hvac.Client = Depends(require_vault_client),
+    userinfo=Depends(require_role("moderator")),
+):
     """
     Get VM templates from ALL ESXi hosts.
     """
     user_id = _get_user_id(userinfo)
-    return _fetch_for_all_hosts(user_id, lambda client: client.get_templates())
+    return _fetch_for_all_hosts(user_id, vault_client, lambda client: client.get_templates())
 
 
 @router.get("/info")
-def get_esxi_info(userinfo=Depends(require_role("moderator"))):
+def get_esxi_info(
+    vault_client: hvac.Client = Depends(require_vault_client),
+    userinfo=Depends(require_role("moderator")),
+):
     """
     Get host information for ALL configured ESXi hosts.
     """
     user_id = _get_user_id(userinfo)
-    return _fetch_for_all_hosts(user_id, lambda client: client.get_host_info())
+    return _fetch_for_all_hosts(user_id, vault_client, lambda client: client.get_host_info())
 
 
 @router.get("/vms")
-def get_all_vms(userinfo=Depends(require_role("moderator"))):
+def get_all_vms(
+    vault_client: hvac.Client = Depends(require_vault_client),
+    userinfo=Depends(require_role("moderator")),
+):
     """
     Get all VMs from ALL ESXi hosts with power status.
     """
     user_id = _get_user_id(userinfo)
-    return _fetch_for_all_hosts(user_id, lambda client: client.get_vms())
+    return _fetch_for_all_hosts(user_id, vault_client, lambda client: client.get_vms())

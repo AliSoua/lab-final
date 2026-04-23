@@ -19,8 +19,8 @@ interface UseLabConnectionReturn {
     isLoading: boolean
     isSubmitting: boolean
     error: string | null
-    refetch: () => void
-    refetchGrouped: () => void
+    refetch: () => Promise<void>
+    refetchGrouped: () => Promise<void>
     createConnection: (data: LabConnectionCreateRequest) => Promise<void>
     updateConnection: (connectionId: string, data: LabConnectionUpdateRequest) => Promise<void>
     deleteConnection: (connectionId: string) => Promise<void>
@@ -69,6 +69,8 @@ export function useLabConnection(): UseLabConnectionReturn {
                 const message = err instanceof Error ? err.message : "Failed to load connections"
                 setError(message)
                 toast.error(message)
+                throw err
+
             } finally {
                 setIsLoading(false)
             }
@@ -106,6 +108,8 @@ export function useLabConnection(): UseLabConnectionReturn {
                 const message = err instanceof Error ? err.message : "Failed to load grouped connections"
                 setError(message)
                 toast.error(message)
+                throw err
+
             } finally {
                 setIsLoading(false)
             }

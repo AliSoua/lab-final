@@ -1,22 +1,34 @@
 # app/routers/LabDefinition/CreateLabDefinition.py
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from sqlalchemy.orm import Session
-from typing import Optional, List
+from typing import Optional, List, Dict, Any, Union
 import json
 import uuid
+import hvac
+import logging
 
 from app.config.connection.postgres_client import get_db
+from app.dependencies.keycloak.keycloak_roles import require_any_role
+from app.config.connection.vault_client import VaultClient
+from app.dependencies.vault.vault_auth import require_vault_client
 from app.services.LabDefinition.lab_service import LabService
 from app.services.LabDefinition.lab_vm_service import LabVMService
+from app.services.LabDefinition.LabConnection import (
+    list_connections_grouped_by_slug,
+)
 from app.services.file_upload_service import file_upload_service
 from app.schemas.LabDefinition.core import LabDefinitionCreate, LabDefinitionResponse, LabDifficulty, LabCategory
+from app.schemas.LabDefinition.LabVM import LabVMCreate
+from app.schemas.LabDefinition.LabConnection import LabConnectionSlot
+from app.schemas.LabDefinition.full_lab import (
+    FullLabDefinitionCreate,
+    FullLabDefinitionResponse,
+    FullThumbnailLabDefinitionCreate,
+)
 from app.models.LabDefinition.core import LabDefinition
 from app.models.LabDefinition.LabVM import LabVM
-from app.dependencies.keycloak.keycloak_roles import require_any_role
-from app.schemas.LabDefinition.full_lab import (
-    FullLabDefinitionCreate, 
-    FullLabDefinitionResponse,
-)
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 require_admin_or_moderator = require_any_role(["admin", "moderator"])
@@ -24,27 +36,164 @@ lab_service = LabService()
 vm_service = LabVMService()
 
 
+def _slot_to_dict(slot: Union[LabConnectionSlot, Dict[str, Any]]) -> Dict[str, Any]:
+    """Normalize a LabConnectionSlot (model or dict) to a plain dict."""
+    if isinstance(slot, dict):
+        return slot
+    if hasattr(slot, "model_dump"):
+        return slot.model_dump()
+    # Pydantic v1 fallback
+    if hasattr(slot, "dict"):
+        return slot.dict()
+    raise ValueError(f"Unexpected slot type: {type(slot)}")
+
+
+def _validate_connection_slots(
+    db: Session,
+    slots: List[Union[LabConnectionSlot, Dict[str, Any]]],
+    vault_user_client: hvac.Client,
+) -> List[Dict[str, Any]]:
+    """Validate that requested connection slots exist in DB and are Vault-accessible."""
+    if not slots:
+        return []
+
+    # Fetch all existing connections grouped by slug
+    grouped = list_connections_grouped_by_slug(db, search=None)
+
+    # Normalize grouped items to dicts (handles ORM objects, Pydantic models, or raw dicts)
+    def _normalize_group(g: Any) -> Dict[str, Any]:
+        if isinstance(g, dict):
+            return g
+        if hasattr(g, "model_dump"):
+            return g.model_dump()
+        if hasattr(g, "dict"):
+            return g.dict()
+        return {
+            "slug": getattr(g, "slug"),
+            "connections": getattr(g, "connections", []),
+        }
+
+    grouped_dicts = [_normalize_group(g) for g in grouped]
+    slug_map = {g["slug"]: g for g in grouped_dicts}
+
+    resolved: List[Dict[str, Any]] = []
+
+    for slot in slots:
+        slot_dict = _slot_to_dict(slot)
+        slot_slug = slot_dict["slug"]
+
+        if slot_slug not in slug_map:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Lab connection slug '{slot_slug}' not found",
+            )
+
+        group = slug_map[slot_slug]
+
+        # Normalize nested connections and extract available protocols
+        connections = group.get("connections", [])
+        available_protocols: set[str] = set()
+        for c in connections:
+            if isinstance(c, dict):
+                if proto := c.get("protocol"):
+                    available_protocols.add(proto)
+            else:
+                if proto := getattr(c, "protocol", None):
+                    available_protocols.add(proto)
+
+        # Validate requested protocols exist for this slug
+        requested: list[str] = []
+        if slot_dict.get("ssh"):
+            if "ssh" not in available_protocols:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"SSH not available for connection '{slot_slug}'",
+                )
+            requested.append("ssh")
+        if slot_dict.get("rdp"):
+            if "rdp" not in available_protocols:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"RDP not available for connection '{slot_slug}'",
+                )
+            requested.append("rdp")
+        if slot_dict.get("vnc"):
+            if "vnc" not in available_protocols:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"VNC not available for connection '{slot_slug}'",
+                )
+            requested.append("vnc")
+
+        # Vault permission check: verify user can read these connection secrets
+        vault_client = VaultClient()
+        for protocol in requested:
+            vault_path = f"credentials/lab_connections/{slot_slug}/{protocol}"
+            try:
+                vault_client.read_metadata(vault_path, vault_user_client)
+            except PermissionError:
+                logger.warning(
+                    "User denied Vault access to %s (protocol=%s)", slot_slug, protocol
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Access denied to connection '{slot_slug}/{protocol}'",
+                )
+            except FileNotFoundError:
+                logger.error(
+                    "Connection metadata missing in Vault: %s/%s", slot_slug, protocol
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Connection '{slot_slug}/{protocol}' is not fully configured",
+                )
+            except Exception as e:
+                logger.error(
+                    "Vault check failed for %s/%s: %s", slot_slug, protocol, e
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to validate connection '{slot_slug}/{protocol}'",
+                )
+
+        resolved.append({
+            "slug": slot_slug,
+            "ssh": slot_dict.get("ssh", False),
+            "rdp": slot_dict.get("rdp", False),
+            "vnc": slot_dict.get("vnc", False),
+        })
+
+    return resolved
+
+
 # ==============================================================================
-# FULL LAB DEFINITION ENDPOINTS (With VMs + Guide assignment only)
+# FULL LAB DEFINITION ENDPOINTS (With VMs + Connection Slots + Guide)
 # ==============================================================================
 
 @router.post(
     "/full",
     response_model=FullLabDefinitionResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Create complete lab with VMs and existing Guide",
+    summary="Create complete lab with VMs, Connection Slots and existing Guide",
 )
 def create_full_lab_definition(
     data: FullLabDefinitionCreate,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(require_admin_or_moderator)
+    current_user: dict = Depends(require_admin_or_moderator),
+    vault_user_client: hvac.Client = Depends(require_vault_client),
 ):
     """
-    Atomic creation of LabDefinition + LabVMs with an existing Guide.
+    Atomic creation of LabDefinition + LabVMs + ConnectionSlot references with an existing Guide.
     
-    The guide must be created separately beforehand and linked by **guide_version_id**.
+    Connections are NOT created here — they must already exist. Only the slot
+    assignments (slug + enabled protocols) are stored on the lab definition.
     """
     try:
+        # Validate and resolve connection slots (DB + Vault check)
+        connection_slots = _validate_connection_slots(
+            db, data.connections, vault_user_client
+        )
+
         # Create Lab Definition
         lab = LabDefinition(
             name=data.name,
@@ -67,6 +216,7 @@ def create_full_lab_definition(
             featured_priority=data.featured_priority or 0,
             infrastructure_provider=data.infrastructure_provider.value if data.infrastructure_provider else "vsphere",
             guide_version_id=data.guide_version_id,
+            connection_slots=connection_slots,
         )
         
         db.add(lab)
@@ -97,6 +247,9 @@ def create_full_lab_definition(
         
         return lab
         
+    except HTTPException:
+        db.rollback()
+        raise
     except ValueError as e:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
@@ -112,40 +265,28 @@ def create_full_lab_definition(
     "/full/thumbnail",
     response_model=FullLabDefinitionResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Create complete lab with VMs, existing Guide, and thumbnail upload",
+    summary="Create complete lab with VMs, Connection Slots, existing Guide, and thumbnail upload",
 )
 async def create_full_lab_definition_with_thumbnail(
-    name: str = Form(..., max_length=255),
-    slug: str = Form(..., max_length=255),
-    description: str = Form(...),
-    short_description: Optional[str] = Form(None, max_length=500),
-    duration_minutes: int = Form(120),
-    max_concurrent_users: int = Form(1),
-    cooldown_minutes: int = Form(0),
-    difficulty: str = Form("beginner"),
-    category: str = Form("other"),
-    track: Optional[str] = Form(None, max_length=100),
-    objectives: Optional[str] = Form("[]"),
-    prerequisites: Optional[str] = Form("[]"),
-    tags: Optional[str] = Form("[]"),
-    vms: str = Form(...),
-    guide_version_id: str = Form(...),
-    thumbnail: UploadFile = File(...),
+    data: FullThumbnailLabDefinitionCreate,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(require_admin_or_moderator)
+    current_user: dict = Depends(require_admin_or_moderator),
+    vault_user_client: hvac.Client = Depends(require_vault_client),
 ):
     """
-    Atomic creation of LabDefinition + LabVMs + existing Guide with thumbnail upload.
+    Atomic creation of LabDefinition + LabVMs + ConnectionSlot references + existing Guide with thumbnail upload.
     
     - **vms**: JSON array of VM clone configs
-    - **guide_id**: Required existing guide UUID (must be created separately)
+    - **connections**: JSON array of LabConnectionSlot configs (slug + protocol flags)
+    - **guide_version_id**: Required existing guide UUID (must be created separately)
     """
     try:
-        objectives_list = json.loads(objectives) if objectives else []
-        prerequisites_list = json.loads(prerequisites) if prerequisites else []
-        tags_list = json.loads(tags) if tags else []
-        vms_list = json.loads(vms) if vms else []
-        guide_version_id_uuid = uuid.UUID(guide_version_id)
+        objectives_list = json.loads(data.objectives) if data.objectives else []
+        prerequisites_list = json.loads(data.prerequisites) if data.prerequisites else []
+        tags_list = json.loads(data.tags) if data.tags else []
+        vms_list = json.loads(data.vms) if data.vms else []
+        connections_list = json.loads(data.connections) if data.connections else []
+        guide_version_id_uuid = uuid.UUID(data.guide_version_id)    
         
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}")
@@ -153,44 +294,85 @@ async def create_full_lab_definition_with_thumbnail(
         raise HTTPException(status_code=400, detail=f"Invalid data format: {str(e)}")
 
     try:
-        difficulty_enum = LabDifficulty(difficulty)
+        difficulty_enum = LabDifficulty(data.difficulty)
     except ValueError:
-        raise HTTPException(status_code=400, detail=f"Invalid difficulty: {difficulty}")
+        raise HTTPException(status_code=400, detail=f"Invalid difficulty: {data.difficulty}")
     
     try:
-        category_enum = LabCategory(category)
+        category_enum = LabCategory(data.category)
     except ValueError:
-        raise HTTPException(status_code=400, detail=f"Invalid category: {category}")
+        raise HTTPException(status_code=400, detail=f"Invalid category: {data.category}")
+
+    # Validate nested Pydantic models
+    try:
+        vms_validated = [LabVMCreate(**vm) for vm in vms_list]
+        connections_validated = [LabConnectionSlot(**c) for c in connections_list]
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid VM or Connection data: {str(e)}")
+
+    # Validate connection slots against DB + Vault
+    try:
+        connection_slots = _validate_connection_slots(
+            db, connections_validated, vault_user_client
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Connection validation failed: {str(e)}"
+        )
+
+    # Build validated thumbnail schema (useful for documentation and validation)
+    thumbnail_data = FullThumbnailLabDefinitionCreate(
+        name=data.name,
+        slug=data.slug,
+        description=data.description,
+        short_description=data.short_description,
+        duration_minutes=data.duration_minutes,
+        max_concurrent_users=data.max_concurrent_users,
+        cooldown_minutes=data.cooldown_minutes,
+        difficulty=difficulty_enum,
+        category=category_enum,
+        track=data.track,
+        objectives=objectives_list,
+        prerequisites=prerequisites_list,
+        tags=tags_list,
+        vms=vms_validated,
+        connections=connections_validated,
+        guide_version_id=guide_version_id_uuid,
+    )
 
     try:
-        existing = db.query(LabDefinition).filter(LabDefinition.slug == slug).first()
+        existing = db.query(LabDefinition).filter(LabDefinition.slug == data.slug).first()
         if existing:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail=f"Lab with slug '{slug}' already exists"
+                detail=f"Lab with slug '{data.slug}' already exists"
             )
 
         lab = LabDefinition(
-            name=name,
-            slug=slug,
-            description=description,
-            short_description=short_description,
-            category=category_enum.value,
-            difficulty=difficulty_enum.value,
-            duration_minutes=duration_minutes,
-            max_concurrent_users=max_concurrent_users,
-            cooldown_minutes=cooldown_minutes,
-            objectives=objectives_list,
-            prerequisites=prerequisites_list,
-            tags=tags_list,
-            track=track,
+            name=thumbnail_data.name,
+            slug=thumbnail_data.slug,
+            description=thumbnail_data.description,
+            short_description=thumbnail_data.short_description,
+            category=thumbnail_data.category.value,
+            difficulty=thumbnail_data.difficulty.value,
+            duration_minutes=thumbnail_data.duration_minutes,
+            max_concurrent_users=thumbnail_data.max_concurrent_users,
+            cooldown_minutes=thumbnail_data.cooldown_minutes,
+            objectives=thumbnail_data.objectives,
+            prerequisites=thumbnail_data.prerequisites,
+            tags=thumbnail_data.tags,
+            track=thumbnail_data.track,
             thumbnail_url=None,
             created_by=current_user["sub"],
             status="draft",
             is_featured=False,
             featured_priority=0,
             infrastructure_provider="vsphere",
-            guide_version_id=guide_version_id_uuid,
+            guide_version_id=thumbnail_data.guide_version_id,
+            connection_slots=connection_slots,
         )
         
         db.add(lab)
@@ -198,22 +380,22 @@ async def create_full_lab_definition_with_thumbnail(
         
         # Create VMs
         created_vms = []
-        for idx, vm_data in enumerate(vms_list):
+        for idx, vm_data in enumerate(thumbnail_data.vms):
             vm = LabVM(
                 lab_id=lab.id,
-                source_vm_id=str(vm_data["source_vm_id"]),
-                name=vm_data["name"],
-                snapshot_name=vm_data.get("snapshot_name"),
-                cpu_cores=vm_data.get("cpu_cores"),
-                memory_mb=vm_data.get("memory_mb"),
-                order=vm_data.get("order", idx),
+                source_vm_id=str(vm_data.source_vm_id),
+                name=vm_data.name,
+                snapshot_name=vm_data.snapshot_name,
+                cpu_cores=vm_data.cpu_cores,
+                memory_mb=vm_data.memory_mb,
+                order=vm_data.order if vm_data.order is not None else idx,
             )
             db.add(vm)
             created_vms.append(vm)
         
         # Handle thumbnail upload
         image_url = await file_upload_service.save_lab_thumbnail(
-            file=thumbnail,
+            file=data.thumbnail,
             lab_id=lab.id
         )
         lab.thumbnail_url = image_url

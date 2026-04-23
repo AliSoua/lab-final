@@ -4,9 +4,11 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 import logging
+import hvac
 
 from app.config.connection.postgres_client import get_db
 from app.dependencies.keycloak.keycloak_roles import require_any_role
+from app.dependencies.vault.vault_auth import require_vault_client
 from app.schemas.LabDefinition.LabConnection import (
     LabConnectionCreate,
     LabConnectionUpdate,
@@ -48,13 +50,14 @@ def create_connection_endpoint(
     data: LabConnectionCreate,
     db: Session = Depends(get_db),
     userinfo: dict = Depends(require_any_role(["moderator", "admin"])),
+    vault_user_client: hvac.Client = Depends(require_vault_client),
 ):
     user_id = _get_user_id(userinfo)
     logger.info(
         "LabConnection create attempt: user=%s slug=%s protocol=%s",
         user_id, data.slug, data.protocol,
     )
-    connection = create_connection(db, data, user_id)
+    connection = create_connection(db, data, user_id, vault_user_client)
     return connection
 
 
@@ -127,13 +130,14 @@ def update_connection_endpoint(
     data: LabConnectionUpdate,
     db: Session = Depends(get_db),
     userinfo: dict = Depends(require_any_role(["moderator", "admin"])),
+    vault_user_client: hvac.Client = Depends(require_vault_client),
 ):
     user_id = _get_user_id(userinfo)
     logger.info(
         "LabConnection update attempt: user=%s connection_id=%s",
         user_id, connection_id,
     )
-    connection = update_connection(db, connection_id, data, user_id)
+    connection = update_connection(db, connection_id, data, user_id, vault_user_client)
     return connection
 
 
@@ -145,7 +149,8 @@ def delete_connection_endpoint(
     connection_id: UUID,
     db: Session = Depends(get_db),
     userinfo: dict = Depends(require_any_role(["moderator", "admin"])),
+    vault_user_client: hvac.Client = Depends(require_vault_client),
 ):
     user_id = _get_user_id(userinfo)
-    delete_connection(db, connection_id, user_id)
+    delete_connection(db, connection_id, user_id, vault_user_client)
     return None

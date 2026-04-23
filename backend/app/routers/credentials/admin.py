@@ -1,10 +1,13 @@
 # app/routers/credentials/admin.py
 from fastapi import APIRouter, HTTPException, Depends, status, Request
 from typing import List
+import hvac
 import logging
 import re
 
-from app.config.connection.vault_client import (
+from app.dependencies.keycloak.keycloak_roles import require_role
+from app.dependencies.vault.vault_auth import require_vault_client
+from app.services.vault.credentials import (
     create_or_update_credentials,
     read_credentials,
     read_secret_metadata,
@@ -12,7 +15,6 @@ from app.config.connection.vault_client import (
     exists_credentials,
     list_admin_vcenters,
 )
-from app.dependencies.keycloak.keycloak_roles import require_role
 from app.schemas.credentials.admin import (
     VCenterCredentialsCreate,
     VCenterCredentialsUpdate,
@@ -68,6 +70,7 @@ def _build_path(user_id: str, safe_host: str) -> str:
 def create_vcenter_credentials(
     data: VCenterCredentialsCreate,
     request: Request,
+    vault_client: hvac.Client = Depends(require_vault_client),
     userinfo=Depends(require_role("admin")),
 ):
     """Store vCenter credentials for a new host."""
@@ -85,11 +88,12 @@ def create_vcenter_credentials(
     try:
         create_or_update_credentials(
             path=path,
-            esxi_host=data.vcenter_host,  # Maps to generic 'host' key in Vault
+            esxi_host=data.vcenter_host,
             username=data.username,
             password=data.password.get_secret_value(),
             actor=user_id,
             cas=0,
+            user_client=vault_client,
         )
         return VCenterCredentialsResponse(
             message=f"vCenter credentials for {data.vcenter_host} stored securely"
@@ -119,18 +123,19 @@ def create_vcenter_credentials(
 @router.get("/hosts", response_model=List[VCenterInfo])
 def list_vcenter_hosts(
     request: Request,
+    vault_client: hvac.Client = Depends(require_vault_client),
     userinfo=Depends(require_role("admin")),
 ):
     """List all vCenter hosts stored by this admin."""
     user_id = _get_user_id(userinfo)
 
     try:
-        hosts = list_admin_vcenters(user_id)
+        hosts = list_admin_vcenters(user_id, vault_client)
         result: List[VCenterInfo] = []
         for host_name in hosts:
             path = _build_path(user_id, host_name)
             try:
-                meta = read_secret_metadata(path)
+                meta = read_secret_metadata(path, vault_client)
                 meta_data = meta.get("data", {}) or {}
                 custom = meta_data.get("custom_metadata") or {}
                 result.append(
@@ -157,6 +162,7 @@ def list_vcenter_hosts(
 def get_vcenter_host(
     vcenter_host: str,
     request: Request,
+    vault_client: hvac.Client = Depends(require_vault_client),
     userinfo=Depends(require_role("admin")),
 ):
     """Get username for a specific vCenter host."""
@@ -164,14 +170,14 @@ def get_vcenter_host(
     safe_host = _validate_vcenter_name(vcenter_host)
     path = _build_path(user_id, safe_host)
 
-    if not exists_credentials(path):
+    if not exists_credentials(path, vault_client):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="vCenter credentials not found",
         )
 
     try:
-        meta = read_secret_metadata(path)
+        meta = read_secret_metadata(path, vault_client)
         meta_data = meta.get("data", {}) or {}
         custom = meta_data.get("custom_metadata") or {}
 
@@ -182,7 +188,7 @@ def get_vcenter_host(
             )
 
         logger.warning("Legacy secret detected (no metadata): %s", path)
-        data = read_credentials(path)
+        data = read_credentials(path, vault_client)
         return VCenterInfo(
             vcenter_host=data.get("host", vcenter_host),
             username=data.get("username", ""),
@@ -205,6 +211,7 @@ def update_vcenter_credentials(
     vcenter_host: str,
     data: VCenterCredentialsUpdate,
     request: Request,
+    vault_client: hvac.Client = Depends(require_vault_client),
     userinfo=Depends(require_role("admin")),
 ):
     """Update credentials for an existing vCenter host."""
@@ -212,14 +219,14 @@ def update_vcenter_credentials(
     safe_host = _validate_vcenter_name(vcenter_host)
     path = _build_path(user_id, safe_host)
 
-    if not exists_credentials(path):
+    if not exists_credentials(path, vault_client):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="vCenter credentials not found",
         )
 
     try:
-        current = read_credentials(path)
+        current = read_credentials(path, vault_client)
     except FileNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -246,7 +253,7 @@ def update_vcenter_credentials(
     is_rename = new_path != path
 
     if is_rename:
-        if exists_credentials(new_path):
+        if exists_credentials(new_path, vault_client):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=(
@@ -263,6 +270,7 @@ def update_vcenter_credentials(
                 password=data.password.get_secret_value(),
                 actor=user_id,
                 cas=0,
+                user_client=vault_client,
             )
         except FileExistsError:
             raise HTTPException(
@@ -279,7 +287,7 @@ def update_vcenter_credentials(
             )
 
         try:
-            delete_credentials(path, actor=user_id)
+            delete_credentials(path, actor=user_id, user_client=vault_client)
         except Exception as e:
             logger.error(
                 "Failed to delete old vCenter credentials %s after rename: %s", path, e
@@ -297,7 +305,7 @@ def update_vcenter_credentials(
         )
 
     try:
-        meta = read_secret_metadata(path)
+        meta = read_secret_metadata(path, vault_client)
         meta_data = meta.get("data", {}) or {}
         current_version = meta_data.get("current_version") or 0
 
@@ -308,6 +316,7 @@ def update_vcenter_credentials(
             password=data.password.get_secret_value(),
             actor=user_id,
             cas=current_version,
+            user_client=vault_client,
         )
         logger.info(
             "vCenter credentials updated: user=%s host=%s ip=%s",
@@ -339,6 +348,7 @@ def update_vcenter_credentials(
 def delete_vcenter_host(
     vcenter_host: str,
     request: Request,
+    vault_client: hvac.Client = Depends(require_vault_client),
     userinfo=Depends(require_role("admin")),
 ):
     """Delete credentials for a specific vCenter host."""
@@ -346,14 +356,14 @@ def delete_vcenter_host(
     safe_host = _validate_vcenter_name(vcenter_host)
     path = _build_path(user_id, safe_host)
 
-    if not exists_credentials(path):
+    if not exists_credentials(path, vault_client):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="vCenter credentials not found",
         )
 
     try:
-        delete_credentials(path, actor=user_id)
+        delete_credentials(path, actor=user_id, user_client=vault_client)
         logger.info(
             "vCenter credentials deleted: user=%s host=%s ip=%s",
             user_id,

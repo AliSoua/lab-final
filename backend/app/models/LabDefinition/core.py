@@ -2,7 +2,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Column, String, DateTime, Integer, Text, ARRAY, Boolean, ForeignKey
+from sqlalchemy import Column, String, DateTime, Integer, Text, ARRAY, Boolean, ForeignKey, JSON
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from app.db.base import Base
@@ -60,6 +60,9 @@ class LabDefinition(Base):
         nullable=True,
         index=True
     )
+
+    # Connection Slots (assigned existing connections: slug + protocol flags)
+    connection_slots = Column(JSON, default=list, nullable=False)
 
     # Relationships
     vms = relationship(
