@@ -8,11 +8,13 @@ from hvac.exceptions import InvalidPath, Forbidden, InvalidRequest
 
 logger = logging.getLogger(__name__)
 
-VAULT_URL = os.getenv("VAULT_ADDR", "http://vault:8200")
-VAULT_TOKEN = os.getenv("VAULT_TOKEN", "root")
+VAULT_URL = os.getenv("VAULT_ADDR")
+VAULT_TOKEN = os.getenv("VAULT_TOKEN")
 
 if not VAULT_URL:
     raise RuntimeError("VAULT_ADDR environment variable is not set")
+if not VAULT_TOKEN:
+    raise RuntimeError("VAULT_TOKEN environment variable is not set")
 
 
 class VaultClient:

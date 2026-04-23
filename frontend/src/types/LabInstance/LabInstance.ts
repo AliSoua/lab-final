@@ -18,6 +18,7 @@ export interface LabInstance {
     started_at: string | null
     stopped_at: string | null
     expires_at: string | null
+    guacamole_connections?: Record<string, string>
 }
 
 export interface LabInstanceCreate {
