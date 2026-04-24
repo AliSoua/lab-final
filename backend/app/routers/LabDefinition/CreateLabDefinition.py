@@ -1,6 +1,8 @@
 # app/routers/LabDefinition/CreateLabDefinition.py
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
+from pydantic import ValidationError
 from typing import Optional, List, Dict, Any, Union
 import json
 import uuid
@@ -23,7 +25,6 @@ from app.schemas.LabDefinition.LabConnection import LabConnectionSlot
 from app.schemas.LabDefinition.full_lab import (
     FullLabDefinitionCreate,
     FullLabDefinitionResponse,
-    FullThumbnailLabDefinitionCreate,
 )
 from app.models.LabDefinition.core import LabDefinition
 from app.models.LabDefinition.LabVM import LabVM
@@ -189,6 +190,13 @@ def create_full_lab_definition(
     assignments (slug + enabled protocols) are stored on the lab definition.
     """
     try:
+        # Reject duplicate slug early with a clean message (race still covered by IntegrityError below)
+        if db.query(LabDefinition).filter(LabDefinition.slug == data.slug).first():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"A lab with slug '{data.slug}' already exists",
+            )
+
         # Validate and resolve connection slots (DB + Vault check)
         connection_slots = _validate_connection_slots(
             db, data.connections, vault_user_client
@@ -250,14 +258,32 @@ def create_full_lab_definition(
     except HTTPException:
         db.rollback()
         raise
-    except ValueError as e:
+    except IntegrityError as e:
         db.rollback()
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    except Exception as e:
+        logger.warning("IntegrityError creating lab '%s': %s", data.slug, e.orig)
+        orig = str(e.orig).lower() if e.orig is not None else ""
+        if "slug" in orig or "ix_lab_definitions_slug" in orig:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"A lab with slug '{data.slug}' already exists",
+            )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Database constraint violated while creating the lab",
+        )
+    except ValueError:
         db.rollback()
+        logger.exception("ValueError creating lab '%s'", data.slug)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid input data",
+        )
+    except Exception:
+        db.rollback()
+        logger.exception("Unexpected error creating lab '%s'", data.slug)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create lab definition: {str(e)}"
+            detail="Failed to create lab definition",
         )
 
 
@@ -268,47 +294,89 @@ def create_full_lab_definition(
     summary="Create complete lab with VMs, Connection Slots, existing Guide, and thumbnail upload",
 )
 async def create_full_lab_definition_with_thumbnail(
-    data: FullThumbnailLabDefinitionCreate,
+    name: str = Form(...),
+    slug: str = Form(...),
+    description: Optional[str] = Form(None),
+    short_description: Optional[str] = Form(None),
+    duration_minutes: int = Form(120),
+    max_concurrent_users: int = Form(1),
+    cooldown_minutes: int = Form(0),
+    difficulty: str = Form("beginner"),
+    category: str = Form("other"),
+    track: Optional[str] = Form(None),
+    objectives: Optional[str] = Form(None),
+    prerequisites: Optional[str] = Form(None),
+    tags: Optional[str] = Form(None),
+    vms: Optional[str] = Form(None),
+    connections: Optional[str] = Form(None),
+    guide_version_id: Optional[str] = Form(None),
+    thumbnail: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_admin_or_moderator),
     vault_user_client: hvac.Client = Depends(require_vault_client),
 ):
     """
-    Atomic creation of LabDefinition + LabVMs + ConnectionSlot references + existing Guide with thumbnail upload.
-    
-    - **vms**: JSON array of VM clone configs
-    - **connections**: JSON array of LabConnectionSlot configs (slug + protocol flags)
-    - **guide_version_id**: Required existing guide UUID (must be created separately)
+    Atomic creation of LabDefinition + LabVMs + ConnectionSlot references + existing Guide
+    from a `multipart/form-data` request that includes a thumbnail file upload.
+
+    JSON-encoded form fields:
+    - **objectives / prerequisites / tags**: JSON array of strings
+    - **vms**: JSON array of LabVMCreate objects
+    - **connections**: JSON array of LabConnectionSlot objects (slug + protocol flags)
+    - **guide_version_id**: Optional existing guide UUID (must be created separately)
     """
-    try:
-        objectives_list = json.loads(data.objectives) if data.objectives else []
-        prerequisites_list = json.loads(data.prerequisites) if data.prerequisites else []
-        tags_list = json.loads(data.tags) if data.tags else []
-        vms_list = json.loads(data.vms) if data.vms else []
-        connections_list = json.loads(data.connections) if data.connections else []
-        guide_version_id_uuid = uuid.UUID(data.guide_version_id)    
-        
-    except json.JSONDecodeError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}")
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid data format: {str(e)}")
+    def _parse_json_field(field_name: str, raw: Optional[str]):
+        if not raw:
+            return []
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Field '{field_name}' is not valid JSON",
+            )
+
+    objectives_list = _parse_json_field("objectives", objectives)
+    prerequisites_list = _parse_json_field("prerequisites", prerequisites)
+    tags_list = _parse_json_field("tags", tags)
+    vms_list = _parse_json_field("vms", vms)
+    connections_list = _parse_json_field("connections", connections)
 
     try:
-        difficulty_enum = LabDifficulty(data.difficulty)
-    except ValueError:
-        raise HTTPException(status_code=400, detail=f"Invalid difficulty: {data.difficulty}")
-    
-    try:
-        category_enum = LabCategory(data.category)
-    except ValueError:
-        raise HTTPException(status_code=400, detail=f"Invalid category: {data.category}")
+        guide_version_id_uuid = uuid.UUID(guide_version_id) if guide_version_id else None
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Field 'guide_version_id' must be a valid UUID",
+        )
 
-    # Validate nested Pydantic models
+    try:
+        difficulty_enum = LabDifficulty(difficulty)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Field 'difficulty' has an invalid value: '{difficulty}'",
+        )
+
+    try:
+        category_enum = LabCategory(category)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Field 'category' has an invalid value: '{category}'",
+        )
+
+    # Validate nested Pydantic models with precise field targeting
     try:
         vms_validated = [LabVMCreate(**vm) for vm in vms_list]
         connections_validated = [LabConnectionSlot(**c) for c in connections_list]
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid VM or Connection data: {str(e)}")
+    except ValidationError as e:
+        first = e.errors()[0] if e.errors() else {"loc": ("unknown",), "msg": "invalid"}
+        field_path = ".".join(str(p) for p in first.get("loc", ()))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid '{field_path}': {first.get('msg', 'invalid value')}",
+        )
 
     # Validate connection slots against DB + Vault
     try:
@@ -317,70 +385,50 @@ async def create_full_lab_definition_with_thumbnail(
         )
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
+        logger.exception("Connection validation failed for lab '%s'", slug)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Connection validation failed: {str(e)}"
+            detail="Connection validation failed",
         )
 
-    # Build validated thumbnail schema (useful for documentation and validation)
-    thumbnail_data = FullThumbnailLabDefinitionCreate(
-        name=data.name,
-        slug=data.slug,
-        description=data.description,
-        short_description=data.short_description,
-        duration_minutes=data.duration_minutes,
-        max_concurrent_users=data.max_concurrent_users,
-        cooldown_minutes=data.cooldown_minutes,
-        difficulty=difficulty_enum,
-        category=category_enum,
-        track=data.track,
-        objectives=objectives_list,
-        prerequisites=prerequisites_list,
-        tags=tags_list,
-        vms=vms_validated,
-        connections=connections_validated,
-        guide_version_id=guide_version_id_uuid,
-    )
-
     try:
-        existing = db.query(LabDefinition).filter(LabDefinition.slug == data.slug).first()
-        if existing:
+        if db.query(LabDefinition).filter(LabDefinition.slug == slug).first():
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail=f"Lab with slug '{data.slug}' already exists"
+                detail=f"A lab with slug '{slug}' already exists",
             )
 
         lab = LabDefinition(
-            name=thumbnail_data.name,
-            slug=thumbnail_data.slug,
-            description=thumbnail_data.description,
-            short_description=thumbnail_data.short_description,
-            category=thumbnail_data.category.value,
-            difficulty=thumbnail_data.difficulty.value,
-            duration_minutes=thumbnail_data.duration_minutes,
-            max_concurrent_users=thumbnail_data.max_concurrent_users,
-            cooldown_minutes=thumbnail_data.cooldown_minutes,
-            objectives=thumbnail_data.objectives,
-            prerequisites=thumbnail_data.prerequisites,
-            tags=thumbnail_data.tags,
-            track=thumbnail_data.track,
+            name=name,
+            slug=slug,
+            description=description,
+            short_description=short_description,
+            category=category_enum.value,
+            difficulty=difficulty_enum.value,
+            duration_minutes=duration_minutes,
+            max_concurrent_users=max_concurrent_users,
+            cooldown_minutes=cooldown_minutes,
+            objectives=objectives_list,
+            prerequisites=prerequisites_list,
+            tags=tags_list,
+            track=track,
             thumbnail_url=None,
             created_by=current_user["sub"],
             status="draft",
             is_featured=False,
             featured_priority=0,
             infrastructure_provider="vsphere",
-            guide_version_id=thumbnail_data.guide_version_id,
+            guide_version_id=guide_version_id_uuid,
             connection_slots=connection_slots,
         )
-        
+
         db.add(lab)
         db.flush()
-        
+
         # Create VMs
         created_vms = []
-        for idx, vm_data in enumerate(thumbnail_data.vms):
+        for idx, vm_data in enumerate(vms_validated):
             vm = LabVM(
                 lab_id=lab.id,
                 source_vm_id=str(vm_data.source_vm_id),
@@ -392,33 +440,51 @@ async def create_full_lab_definition_with_thumbnail(
             )
             db.add(vm)
             created_vms.append(vm)
-        
-        # Handle thumbnail upload
+
+        # Handle thumbnail upload (after DB flush so we have lab.id)
         image_url = await file_upload_service.save_lab_thumbnail(
-            file=data.thumbnail,
-            lab_id=lab.id
+            file=thumbnail,
+            lab_id=lab.id,
         )
         lab.thumbnail_url = image_url
-        
+
         db.commit()
-        
+
         db.refresh(lab)
         for vm in created_vms:
             db.refresh(vm)
-        
+
         lab.vms = created_vms
-        
+
         return lab
-        
+
     except HTTPException:
         db.rollback()
         raise
-    except ValueError as e:
+    except IntegrityError as e:
         db.rollback()
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    except Exception as e:
+        logger.warning("IntegrityError creating lab '%s': %s", slug, e.orig)
+        orig = str(e.orig).lower() if e.orig is not None else ""
+        if "slug" in orig or "ix_lab_definitions_slug" in orig:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"A lab with slug '{slug}' already exists",
+            )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Database constraint violated while creating the lab",
+        )
+    except ValueError:
         db.rollback()
+        logger.exception("ValueError creating lab '%s'", slug)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid input data",
+        )
+    except Exception:
+        db.rollback()
+        logger.exception("Unexpected error creating lab '%s'", slug)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create lab definition: {str(e)}"
+            detail="Failed to create lab definition",
         )

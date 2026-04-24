@@ -7,7 +7,6 @@ import { PublicLayout } from "@/components/layout/PublicLayout"
 import LoginPage from "@/pages/LoginPage"
 import CatalogPage from "@/pages/LabDefinition/catalogue/index"
 import ListLabDefinitionsPage from "@/pages/LabDefinition/ListLabDefinitionsPage"
-import CreateSimpleLabDefinitionsPage from "@/pages/LabDefinition/CreateSimpleLabDefinitionsPage"
 import CreateFullLabDefinitionsPage from "@/pages/LabDefinition/CreateFullLabDefinitionsPage"
 import LabDetailPage from "@/pages/LabDefinition/detail/index"
 import { ProfilePage } from "@/pages/profile/ProfilePage"
@@ -174,7 +173,6 @@ function App() {
         {/* Lab Definitions Management */}
         <Route index element={<Navigate to="/admin/lab-definitions" replace />} />
         <Route path="lab-definitions" element={<ListLabDefinitionsPage />} />
-        <Route path="lab-definitions/create-simple" element={<CreateSimpleLabDefinitionsPage />} />
         <Route path="lab-definitions/create-full" element={<CreateFullLabDefinitionsPage />} />
 
         {/* Infrastructure */}

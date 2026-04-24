@@ -46,26 +46,6 @@ class FullLabDefinitionCreate(BaseModel):
     guide_version_id: Optional[UUID] = Field(None, description="Assign existing guide version")
 
 
-class FullThumbnailLabDefinitionCreate(BaseModel):
-    """Validated multipart form payload for lab creation with thumbnail."""
-    name: str
-    slug: str
-    description: str
-    short_description: Optional[str] = None
-    duration_minutes: int = 120
-    max_concurrent_users: int = 1
-    cooldown_minutes: int = 0
-    difficulty: LabDifficulty = LabDifficulty.beginner
-    category: LabCategory = LabCategory.other
-    track: Optional[str] = None
-    objectives: List[str] = Field(default_factory=list)
-    prerequisites: List[str] = Field(default_factory=list)
-    tags: List[str] = Field(default_factory=list)
-    vms: List[LabVMCreate] = Field(default_factory=list)
-    connections: List[LabConnectionSlot] = Field(default_factory=list)
-    guide_version_id: Optional[UUID] = None
-
-
 class FullLabDefinitionResponse(BaseModel):
     id: UUID
     name: str

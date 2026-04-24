@@ -82,8 +82,6 @@ export default function ListLabDefinitionsPage() {
         setCurrentPage(page)
         window.scrollTo({ top: 0, behavior: "smooth" })
     }, [])
-
-    const handleCreateSimple = () => navigate("/admin/lab-definitions/create-simple")
     const handleCreateFull = () => navigate("/admin/lab-definitions/create-full")
     const handleView = (lab: LabDefinition) => navigate(`/admin/lab-definitions/${lab.id}`)
     const handleEdit = (lab: LabDefinition) => navigate(`/admin/lab-definitions/${lab.id}/edit`)
@@ -117,22 +115,7 @@ export default function ListLabDefinitionsPage() {
                             )}
                         >
                             <Layers className="h-4 w-4 text-[#727373]" />
-                            <span>Create Full Lab</span>
-                        </button>
-
-                        <button
-                            onClick={handleCreateSimple}
-                            disabled={isLoading}
-                            className={cn(
-                                "flex items-center gap-2 rounded-lg px-4 py-2",
-                                "bg-[#1ca9b1] text-white text-sm font-medium",
-                                "hover:bg-[#17959c] hover:shadow-md",
-                                "transition-all duration-200",
-                                "disabled:opacity-50 disabled:cursor-not-allowed"
-                            )}
-                        >
-                            <Zap className="h-4 w-4" />
-                            <span>Create Simple</span>
+                            <span>Create Lab Definition</span>
                         </button>
                     </div>
                 </div>
