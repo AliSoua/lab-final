@@ -2,6 +2,7 @@
 from keycloak import KeycloakAdmin
 from keycloak.exceptions import KeycloakConnectionError, KeycloakGetError
 from dotenv import load_dotenv
+from urllib.parse import urlparse
 import os
 import sys
 
@@ -15,10 +16,15 @@ REALM_NAME = "lab-orchestration"
 CLIENT_ID = "lab-backend"
 ROLES = ["admin", "moderator", "trainee"]
 
+# Guacamole SSO config (override via env if you run behind a reverse proxy)
+GUACAMOLE_CLIENT_ID = os.getenv("GUACAMOLE_CLIENT_ID", "guacamole")
+GUACAMOLE_PUBLIC_URL = os.getenv("GUACAMOLE_PUBLIC_URL", "http://localhost:8081/guacamole").rstrip("/")
+
 summary = {
     "connected": False,
     "realm_created": False,
     "client_created": False,
+    "guacamole_client_created": False,
     "roles_created": {},
     "users_created": {},
     "roles_assigned": {}
@@ -150,6 +156,42 @@ try:
 except Exception as e:
     print(f"[WARN] Could not verify realm roles mapper: {e}")
 
+# 4c. Create Guacamole OpenID Connect client (public / implicit flow)
+try:
+    guacamole_origin = f"{urlparse(GUACAMOLE_PUBLIC_URL).scheme}://{urlparse(GUACAMOLE_PUBLIC_URL).netloc}"
+
+    realm_admin.create_client(
+        {
+            "clientId": GUACAMOLE_CLIENT_ID,
+            "name": "Apache Guacamole",
+            "description": "Guacamole SSO client for lab platform",
+            "enabled": True,
+            "publicClient": True,
+            "standardFlowEnabled": True,
+            "implicitFlowEnabled": True,
+            "directAccessGrantsEnabled": False,
+            "serviceAccountsEnabled": False,
+            "authorizationServicesEnabled": False,
+            "redirectUris": [f"{GUACAMOLE_PUBLIC_URL}/*"],
+            "webOrigins": [guacamole_origin],
+            "baseUrl": f"{GUACAMOLE_PUBLIC_URL}/",
+            "adminUrl": f"{GUACAMOLE_PUBLIC_URL}/",
+        },
+        skip_exists=True,
+    )
+    summary["guacamole_client_created"] = True
+    print(f"[INFO] Guacamole client '{GUACAMOLE_CLIENT_ID}' created or already existed.")
+    print(f"[INFO] Guacamole redirect URI: {GUACAMOLE_PUBLIC_URL}/*")
+    print(f"[INFO] Guacamole web origin:   {guacamole_origin}")
+except KeycloakGetError as e:
+    if e.response_code == 409:
+        summary["guacamole_client_created"] = True
+        print(f"[INFO] Guacamole client '{GUACAMOLE_CLIENT_ID}' already exists.")
+    else:
+        print(f"[ERROR] Failed to create Guacamole client: {e}")
+except Exception as e:
+    print(f"[ERROR] Unexpected error creating Guacamole client: {e}")
+
 # 5️⃣ Create roles
 for role in ROLES:
     try:
@@ -216,6 +258,7 @@ print("\n=== Keycloak Setup Summary ===")
 print(f"Connected: {summary['connected']}")
 print(f"Realm created: {summary['realm_created']}")
 print(f"Client created: {summary['client_created']}")
+print(f"Guacamole client created: {summary['guacamole_client_created']}")
 print("Roles status:")
 for role, status in summary["roles_created"].items():
     print(f"  - {role}: {status}")

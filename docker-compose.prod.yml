@@ -89,6 +89,9 @@ services:
       - GUACAMOLE_API_URL=http://guacamole:8080/guacamole/api
       - GUACAMOLE_ADMIN_USER=guacadmin
       - GUACAMOLE_ADMIN_PASS=${GUACAMOLE_ADMIN_PASS:-guacadmin}
+      # Guacamole SSO config (used by setup_keycloak.py)
+      - GUACAMOLE_CLIENT_ID=guacamole
+      - GUACAMOLE_PUBLIC_URL=http://localhost:8081/guacamole
 
   frontend:
     build:
@@ -128,8 +131,6 @@ services:
     image: guacamole/guacd:1.5.5
     container_name: guacd
     restart: always
-    # guacd must reach VM IPs. If VMs are on isolated network, use host network
-    # or ensure routing. For now, default bridge — adjust if needed.
     networks:
       - default
 
@@ -148,10 +149,30 @@ services:
       POSTGRESQL_DATABASE: ${GUACAMOLE_DB}
       POSTGRESQL_USER: ${GUACAMOLE_DB_USER}
       POSTGRESQL_PASSWORD: ${GUACAMOLE_DB_PASS}
-      # Enable header auth for seamless SSO (optional phase 2)
-      # HEADER_ENABLED: "true"
+
+      # --- OpenID Connect SSO (Keycloak) ---
+      # Browser-facing URL (user is redirected here)
+      OPENID_AUTHORIZATION_ENDPOINT: http://localhost:8080/realms/lab-orchestration/protocol/openid-connect/auth
+      # Internal Docker DNS for JWKS (Guacamole container fetches keys here)
+      OPENID_JWKS_ENDPOINT: http://keycloak:8080/realms/lab-orchestration/protocol/openid-connect/certs
+      # Must match the 'iss' claim in the token
+      OPENID_ISSUER: http://localhost:8080/realms/lab-orchestration
+      OPENID_CLIENT_ID: guacamole
+      OPENID_REDIRECT_URI: http://localhost:8081/guacamole/
+      OPENID_USERNAME_CLAIM_TYPE: preferred_username
+      OPENID_SCOPE: openid email profile
+      OPENID_LOGOUT_ENDPOINT: http://keycloak:8080/realms/lab-orchestration/protocol/openid-connect/logout
+
+      # Auto-create Guacamole users on first Keycloak login
+      POSTGRESQL_AUTO_CREATE_ACCOUNTS: "true"
+
+      # Force OpenID first. Use "*,openid" instead if you still need local guacadmin login.
+      EXTENSION_PRIORITY: openid
     ports:
       - "127.0.0.1:8081:8080"
+    volumes:
+      # Mount the SSO extension JAR
+      - ./guacamole/extensions:/etc/guacamole/extensions
     networks:
       - default
 

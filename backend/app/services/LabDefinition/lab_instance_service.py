@@ -613,12 +613,14 @@ class LabInstanceService:
         """Safely load guacamole_connections JSON dict."""
         raw = getattr(instance, "guacamole_connections", None)
         if isinstance(raw, dict):
+            # CRITICAL: Return a copy so callers don't mutate SQLAlchemy's tracked object
+            copied = dict(raw)
             logger.debug(
                 "[GUAC] Loaded connections map for instance %s: %d entries",
                 instance.id,
-                len(raw),
+                len(copied),
             )
-            return raw
+            return copied
         if isinstance(raw, str):
             try:
                 parsed = json.loads(raw)
@@ -630,8 +632,9 @@ class LabInstanceService:
                 return parsed
             except json.JSONDecodeError:
                 logger.warning(
-                    "[GUAC] Failed to parse guacamole_connections JSON for instance %s",
+                    "[GUAC] Failed to parse guacamole_connections JSON for instance %s. Raw: %s",
                     instance.id,
+                    raw,
                 )
                 return {}
         logger.debug(
@@ -644,7 +647,8 @@ class LabInstanceService:
     def _save_connections_map(
         self, instance: LabInstance, mapping: Dict[str, str]
     ) -> None:
-        instance.guacamole_connections = mapping
+        # CRITICAL: Assign a new dict so SQLAlchemy detects the change
+        instance.guacamole_connections = dict(mapping)
         logger.debug(
             "[GUAC] Saved connections map for instance %s: %s",
             instance.id,
