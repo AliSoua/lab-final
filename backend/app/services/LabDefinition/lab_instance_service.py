@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import desc
 
 from app.services.guacamole_service import guacamole_service
+from app.services.user_service import user_service
 
 from app.models.LabDefinition.core import LabDefinition
 from app.models.LabDefinition.LabInstance import LabInstance
@@ -363,7 +364,7 @@ class LabInstanceService:
             "[TERMINATE] Deleting Guacamole connections for instance %s",
             instance_id,
         )
-        self._delete_guacamole_connections(instance)
+        self._delete_guacamole_connections(instance, db=db)
 
         # 2. Destroy the VM
         if instance.vm_uuid and instance.vcenter_host:
@@ -604,6 +605,31 @@ class LabInstanceService:
     # Guacamole / Connection Slot Helpers
     # ------------------------------------------------------------------
 
+    def _resolve_keycloak_username(
+        self, db: Session, trainee_id: uuid.UUID
+    ) -> Optional[str]:
+        """
+        Resolve the trainee's Keycloak `preferred_username` (mirrored as
+        `User.username` on local sync). Used to grant Guacamole permissions
+        so the header-auth-provisioned user can see the connections.
+        """
+        try:
+            user = user_service.get_by_id(db, trainee_id)
+        except Exception as e:
+            logger.warning(
+                "[GUAC] Failed to load user %s for Guacamole permission sync: %s",
+                trainee_id,
+                e,
+            )
+            return None
+        if not user or not user.username:
+            logger.warning(
+                "[GUAC] No username found for trainee %s — skipping permission sync",
+                trainee_id,
+            )
+            return None
+        return user.username
+
     def _default_port(self, protocol: str) -> int:
         port = {"ssh": 22, "rdp": 3389, "vnc": 5901}.get(protocol.lower(), 22)
         logger.debug("[GUAC] Default port for %s = %d", protocol, port)
@@ -756,6 +782,21 @@ class LabInstanceService:
             initial_count,
         )
 
+        # Resolve the trainee's Guacamole username (mirrors Keycloak
+        # preferred_username via local users.username). Pre-provision the
+        # Guacamole user so permission grants below cannot race with the
+        # header-auth extension's first-login provisioning.
+        keycloak_username = self._resolve_keycloak_username(db, instance.trainee_id)
+        if keycloak_username:
+            try:
+                guacamole_service.ensure_user(keycloak_username)
+            except Exception as e:
+                logger.warning(
+                    "[GUAC-SYNC] Failed to ensure Guacamole user %s: %s",
+                    keycloak_username,
+                    e,
+                )
+
         for slot in slots:
             if not isinstance(slot, dict):
                 logger.warning(
@@ -862,6 +903,22 @@ class LabInstanceService:
                             instance.id,
                         )
 
+                    # Grant READ so the header-auth-provisioned trainee can
+                    # see the connection. Non-fatal on failure.
+                    target_id = existing_id or connections_map.get(conn_key)
+                    if keycloak_username and target_id:
+                        try:
+                            guacamole_service.grant_connection_permission(
+                                keycloak_username, target_id
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                "[GUAC-SYNC] Failed to grant READ on %s to %s: %s",
+                                target_id,
+                                keycloak_username,
+                                e,
+                            )
+
                 except Exception as e:
                     logger.error(
                         "[GUAC-SYNC] Failed to setup Guacamole %s for %s/%s: %s",
@@ -892,7 +949,9 @@ class LabInstanceService:
                 final_count,
             )
 
-    def _delete_guacamole_connections(self, instance: LabInstance) -> None:
+    def _delete_guacamole_connections(
+        self, instance: LabInstance, db: Optional[Session] = None
+    ) -> None:
         """Remove every Guacamole connection tracked for this instance."""
         connections_map = self._load_connections_map(instance)
         logger.info(
@@ -900,10 +959,30 @@ class LabInstanceService:
             len(connections_map),
             instance.id,
         )
+
+        # Best-effort revoke of per-user permissions before deletion. Deleting
+        # the connection implicitly removes permissions in Guacamole's schema,
+        # so this is hygiene for shared users.
+        keycloak_username: Optional[str] = None
+        if db is not None:
+            keycloak_username = self._resolve_keycloak_username(db, instance.trainee_id)
+
         deleted = 0
         failed = 0
-        
+
         for key, conn_id in list(connections_map.items()):
+            if keycloak_username:
+                try:
+                    guacamole_service.revoke_connection_permission(
+                        keycloak_username, conn_id
+                    )
+                except Exception as e:
+                    logger.debug(
+                        "[GUAC-DEL] Revoke permission %s/%s failed (non-fatal): %s",
+                        keycloak_username,
+                        conn_id,
+                        e,
+                    )
             try:
                 logger.debug(
                     "[GUAC-DEL] Deleting connection %s (%s)",

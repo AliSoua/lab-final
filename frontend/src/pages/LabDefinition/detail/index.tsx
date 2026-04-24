@@ -24,8 +24,9 @@ export default function LabDetailPage() {
             const instance = await launchLabInstance({
                 lab_definition_id: labId,
             })
-            // Navigate to the running lab instance page
-            navigate(`/lab-instances/${instance.id}`)
+            // Navigate directly into the split-screen Run experience so the
+            // trainee lands on the Guacamole console as soon as it's ready.
+            navigate(`/lab-instances/${instance.id}/run`)
         } catch {
             // Error is already toasted by the hook; no-op here
         }

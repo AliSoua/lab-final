@@ -26,6 +26,7 @@ import {
     Check,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { buildGuacamoleClientUrl } from "@/lib/guacamole"
 import { useLabInstance } from "@/hooks/LabInstance/useLabInstance"
 import type { LabInstance } from "@/types/LabInstance/LabInstance"
 
@@ -68,11 +69,6 @@ function getProtocolFromKey(key: string): string {
 function getSlugFromKey(key: string): string {
     const parts = key.split("_")
     return parts.slice(0, -1).join("_")
-}
-
-function buildGuacamoleUrl(connectionId: string): string {
-    // Adjust this base URL to match your Guacamole deployment
-    return `/guacamole/#/client/${connectionId}`
 }
 
 export default function LabInstanceDetailPage() {
@@ -232,7 +228,7 @@ export default function LabInstanceDetailPage() {
                 protocol,
                 slug,
                 config,
-                url: buildGuacamoleUrl(connId),
+                url: buildGuacamoleClientUrl(connId),
             }
         })
         : []

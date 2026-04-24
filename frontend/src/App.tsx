@@ -27,6 +27,7 @@ import LabConnectionPage from "@/pages/LabDefinition/LabConnectionPage"
 
 // Lab Instances
 import LabInstanceDetailPage from "@/pages/LabInstance/detail/index"
+import RunLabPage from "@/pages/LabInstance/run/RunLabPage"
 
 import TestGuacamolePage from "@/pages/TestGuacamolePage"
 
@@ -129,6 +130,14 @@ function App() {
           element={
             <AuthenticatedRouteGuard>
               <LabInstanceDetailPage />
+            </AuthenticatedRouteGuard>
+          }
+        />
+        <Route
+          path="lab-instances/:instanceId/run"
+          element={
+            <AuthenticatedRouteGuard>
+              <RunLabPage />
             </AuthenticatedRouteGuard>
           }
         />

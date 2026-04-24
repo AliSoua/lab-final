@@ -186,6 +186,125 @@ class GuacamoleService:
         external_base = os.getenv("GUACAMOLE_EXTERNAL_URL", "http://localhost:8081/guacamole")
         return f"{external_base}/#/client/{connection_id}"
 
+    # ------------------------------------------------------------------
+    # User & permission management (for header-auth SSO permissions)
+    # ------------------------------------------------------------------
+
+    def ensure_user(self, username: str) -> None:
+        """
+        Ensure a Guacamole user row exists for `username`.
+        Header-auth provisions on first login, but we pre-create to avoid
+        races with subsequent permission grants.
+        """
+        if not username:
+            logger.warning("ensure_user called with empty username")
+            return
+
+        r = requests.get(
+            f"{GUACAMOLE_API}/session/data/postgresql/users/{username}",
+            params=self._params(),
+            timeout=10,
+        )
+        if r.status_code == 200:
+            logger.debug("Guacamole user %s already exists", username)
+            return
+        if r.status_code != 404:
+            r.raise_for_status()
+
+        payload = {
+            "username": username,
+            "password": "",
+            "attributes": {},
+        }
+        c = requests.post(
+            f"{GUACAMOLE_API}/session/data/postgresql/users",
+            headers=self._headers(),
+            params=self._params(),
+            json=payload,
+            timeout=10,
+        )
+        if c.status_code == 400:
+            logger.debug("Guacamole user %s already exists (400 on create)", username)
+            return
+        c.raise_for_status()
+        logger.info("Created Guacamole user %s", username)
+
+    def grant_connection_permission(
+        self, username: str, connection_id: str
+    ) -> None:
+        """Grant READ permission on a connection to a user. Idempotent."""
+        if not username or not connection_id:
+            logger.warning(
+                "grant_connection_permission skipped (username=%s conn=%s)",
+                username,
+                connection_id,
+            )
+            return
+
+        payload = [
+            {
+                "op": "add",
+                "path": f"/connectionPermissions/{connection_id}",
+                "value": "READ",
+            }
+        ]
+        r = requests.patch(
+            f"{GUACAMOLE_API}/session/data/postgresql/users/{username}/permissions",
+            headers=self._headers(),
+            params=self._params(),
+            json=payload,
+            timeout=10,
+        )
+        if r.status_code == 400:
+            logger.debug(
+                "Permission READ already granted to %s on connection %s",
+                username,
+                connection_id,
+            )
+            return
+        r.raise_for_status()
+        logger.info(
+            "Granted READ on connection %s to Guacamole user %s",
+            connection_id,
+            username,
+        )
+
+    def revoke_connection_permission(
+        self, username: str, connection_id: str
+    ) -> None:
+        """Revoke READ permission on a connection from a user. Idempotent."""
+        if not username or not connection_id:
+            return
+
+        payload = [
+            {
+                "op": "remove",
+                "path": f"/connectionPermissions/{connection_id}",
+                "value": "READ",
+            }
+        ]
+        r = requests.patch(
+            f"{GUACAMOLE_API}/session/data/postgresql/users/{username}/permissions",
+            headers=self._headers(),
+            params=self._params(),
+            json=payload,
+            timeout=10,
+        )
+        if r.status_code in (400, 404):
+            logger.debug(
+                "No permission to revoke for %s on connection %s (status=%s)",
+                username,
+                connection_id,
+                r.status_code,
+            )
+            return
+        r.raise_for_status()
+        logger.info(
+            "Revoked READ on connection %s from Guacamole user %s",
+            connection_id,
+            username,
+        )
+
     def create_sharing_profile(
         self,
         connection_id: str,
