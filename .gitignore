@@ -78,3 +78,6 @@ uploads/
 
 # celery beat schedule files
 celerybeat-schedule*
+
+# guacamole extensions
+guacamole/extensions/

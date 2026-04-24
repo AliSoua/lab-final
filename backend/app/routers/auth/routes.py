@@ -1,5 +1,5 @@
 # app/routers/auth/routes.py
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, HTTPException, status, Depends, Request, Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from keycloak.exceptions import (
     KeycloakAuthenticationError,
@@ -183,6 +183,97 @@ def logout(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error"
+        )
+
+# ------------------------------------------------------------------
+# GUACAMOLE SSO — Nginx auth_request endpoint
+# Validates JWT (header or cookie) and returns X-Remote-User
+# ------------------------------------------------------------------
+@router.get("/guacamole-sso")
+def guacamole_sso(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    """
+    Validates the user's JWT and returns X-Remote-User for Nginx auth_request.
+    Called internally by Nginx before proxying to Guacamole.
+    """
+    token = None
+
+    # DEBUG: Log all incoming headers
+    logger.info(f"Guacamole SSO headers: {dict(request.headers)}")
+    logger.info(f"Guacamole SSO cookies: {request.cookies}")
+
+    # 1. Try Bearer header (Swagger UI / API calls)
+    if credentials and credentials.scheme.lower() == "bearer":
+        token = credentials.credentials
+        logger.info(f"Guacamole SSO: found Bearer token (len={len(token)})")
+
+    # 2. Fallback to access_token cookie (iframe browser requests)
+    if not token:
+        token = request.cookies.get("access_token")
+        if token:
+            logger.info(f"Guacamole SSO: found cookie token (len={len(token)})")
+
+    if not token:
+        logger.info("Guacamole SSO: no token found in header or cookie")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing token"
+        )
+
+    try:
+        kc_openid = get_keycloak_openid()
+
+        # Validate token is active
+        introspect = kc_openid.introspect(token)
+        logger.info(f"Guacamole SSO introspect: active={introspect.get('active')}, sub={introspect.get('sub')}")
+
+        if not introspect.get("active", False):
+            logger.info(f"Guacamole SSO: token inactive")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token is not active"
+            )
+
+        # Get user info to extract username
+        userinfo = kc_openid.userinfo(token)
+        username = userinfo.get("preferred_username")
+        logger.info(f"Guacamole SSO userinfo: preferred_username={username}")
+
+        if not username:
+            logger.info("Guacamole SSO: preferred_username missing in token")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Username not found in token"
+            )
+
+        logger.info(f"Guacamole SSO validated for user: {username}")
+        
+        # Return X-Remote-User header for Nginx auth_request_set
+        response = Response(status_code=status.HTTP_200_OK)
+        response.headers["X-Remote-User"] = username
+        return response
+
+    except KeycloakInvalidTokenError as e:
+        logger.info(f"Guacamole SSO: invalid token - {e}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token"
+        )
+    except KeycloakConnectionError as e:
+        logger.info(f"Guacamole SSO: Keycloak connection error - {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication service unavailable"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.info(f"Guacamole SSO unexpected error: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal error during SSO validation"
         )
 
 # HEALTH CHECK - No auth required

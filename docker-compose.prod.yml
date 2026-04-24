@@ -150,26 +150,16 @@ services:
       POSTGRESQL_USER: ${GUACAMOLE_DB_USER}
       POSTGRESQL_PASSWORD: ${GUACAMOLE_DB_PASS}
 
-      # --- OpenID Connect SSO (Keycloak) ---
-      # Browser-facing URL (user is redirected here)
-      OPENID_AUTHORIZATION_ENDPOINT: http://localhost:8080/realms/lab-orchestration/protocol/openid-connect/auth
-      # Internal Docker DNS for JWKS (Guacamole container fetches keys here)
-      OPENID_JWKS_ENDPOINT: http://keycloak:8080/realms/lab-orchestration/protocol/openid-connect/certs
-      # Must match the 'iss' claim in the token
-      OPENID_ISSUER: http://localhost:8080/realms/lab-orchestration
-      OPENID_CLIENT_ID: guacamole
-      OPENID_REDIRECT_URI: http://localhost:8081/guacamole/
-      OPENID_USERNAME_CLAIM_TYPE: preferred_username
-      OPENID_SCOPE: openid email profile
-      OPENID_LOGOUT_ENDPOINT: http://keycloak:8080/realms/lab-orchestration/protocol/openid-connect/logout
+      # Header auth (for iframe via nginx)
+      HEADER_ENABLED: "true"
+      HTTP_AUTH_HEADER: X-Remote-User
 
-      # Auto-create Guacamole users on first Keycloak login
+      # Priority: header first, then PostgreSQL (for local guacadmin fallback)
+      EXTENSION_PRIORITY: header,postgresql
+
       POSTGRESQL_AUTO_CREATE_ACCOUNTS: "true"
-
-      # Force OpenID first. Use "*,openid" instead if you still need local guacadmin login.
-      EXTENSION_PRIORITY: openid
-    ports:
-      - "127.0.0.1:8081:8080"
+    #ports:
+    #  - "127.0.0.1:8081:8080"
     volumes:
       # Mount the SSO extension JAR
       - ./guacamole/extensions:/etc/guacamole/extensions

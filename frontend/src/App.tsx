@@ -29,6 +29,7 @@ import LabConnectionPage from "@/pages/LabDefinition/LabConnectionPage"
 // Lab Instances
 import LabInstanceDetailPage from "@/pages/LabInstance/detail/index"
 
+import TestGuacamolePage from "@/pages/TestGuacamolePage"
 
 import { Loader2 } from "lucide-react"
 
@@ -113,6 +114,7 @@ function App() {
       {/* Login */}
       <Route path="/login" element={<LoginPage />} />
 
+
       {/* PUBLIC ROUTES */}
       <Route
         path="/"
@@ -131,7 +133,14 @@ function App() {
             </AuthenticatedRouteGuard>
           }
         />
-
+        <Route
+          path="test-guacamole"
+          element={
+            <AuthenticatedRouteGuard>
+              <TestGuacamolePage />
+            </AuthenticatedRouteGuard>
+          }
+        />
         {/* Lab Details */}
         <Route
           path="labs/:slug"

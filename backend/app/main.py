@@ -121,6 +121,7 @@ def custom_openapi():
     # Apply security to specific paths (production routes only)
     paths_to_secure = [
         "/auth/check",
+        "/auth/guacamole-sso",
         "/auth/logout", 
         "/admin/users", 
         "/admin/users/{user_id}/roles",
