@@ -23,9 +23,9 @@ class GuacamoleService:
         self._token: Optional[str] = None
         self._token_source: str = "guacadmin"
 
-    def _auth(self) -> str:
-        """Get admin auth token. Reuses cached token."""
-        if self._token:
+    def _auth(self, force: bool = False) -> str:
+        """Get admin auth token. Reuses cached token unless `force=True`."""
+        if self._token and not force:
             return self._token
 
         r = requests.post(
@@ -39,6 +39,10 @@ class GuacamoleService:
         self._token_source = data.get("username", ADMIN_USER)
         logger.info("Guacamole auth token acquired for %s", self._token_source)
         return self._token
+
+    def _invalidate_token(self) -> None:
+        """Drop the cached admin token so the next _auth() re-logs in."""
+        self._token = None
 
     def _headers(self) -> Dict[str, str]:
         return {
@@ -165,12 +169,17 @@ class GuacamoleService:
         logger.info("Updated Guacamole connection %s", connection_id)
 
     def delete_connection(self, connection_id: str) -> None:
-        """Remove a connection permanently."""
-        r = requests.delete(
-            f"{GUACAMOLE_API}/session/data/postgresql/connections/{connection_id}",
-            params=self._params(),
-            timeout=10,
-        )
+        """Remove a connection permanently. Self-heals a stale admin token."""
+        url = f"{GUACAMOLE_API}/session/data/postgresql/connections/{connection_id}"
+        r = requests.delete(url, params=self._params(), timeout=10)
+        if r.status_code in (401, 403):
+            logger.warning(
+                "Guacamole rejected delete of %s with %s; refreshing admin token and retrying",
+                connection_id,
+                r.status_code,
+            )
+            self._invalidate_token()
+            r = requests.delete(url, params=self._params(), timeout=10)
         if r.status_code == 404:
             logger.warning("Guacamole connection %s already deleted", connection_id)
             return

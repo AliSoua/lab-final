@@ -49,10 +49,15 @@ export default function RunLabPage() {
     const [isInitialLoading, setIsInitialLoading] = useState(true)
     const [activeKey, setActiveKey] = useState<string | null>(null)
     const activeKeyRef = useRef<string | null>(null)
+    const instanceRef = useRef<LabInstance | null>(null)
 
     useEffect(() => {
         activeKeyRef.current = activeKey
     }, [activeKey])
+
+    useEffect(() => {
+        instanceRef.current = instance
+    }, [instance])
 
     // Initial fetch (uses hook so auth errors are toasted)
     useEffect(() => {
@@ -80,23 +85,55 @@ export default function RunLabPage() {
     }, [instanceId, getInstance])
 
     // Poll silently until we have connections or the instance stops.
+    // NOTE: this effect intentionally does NOT depend on `instance` — doing so
+    // would re-register the interval on every setInstance() and, combined with
+    // the immediate `tick()` below, would produce back-to-back refresh calls
+    // at roughly the network round-trip rate. We read the latest state from
+    // `instanceRef` and use `inFlight` to prevent overlapping refreshes that
+    // could race inside `_sync_guacamole_connections` and create duplicate
+    // Guacamole connections for the same slot/protocol.
     useEffect(() => {
-        if (!instanceId || !instance) return
-        if (["terminated", "stopped"].includes(instance.status)) return
-        const hasConnections =
-            !!instance.guacamole_connections &&
-            Object.keys(instance.guacamole_connections).length > 0
-        if (hasConnections && instance.status === "running") return
+        if (!instanceId || isInitialLoading) return
+
+        const isTerminal = (inst: LabInstance | null): boolean => {
+            if (!inst) return false
+            if (["terminated", "stopped"].includes(inst.status)) return true
+            const hasConnections =
+                !!inst.guacamole_connections &&
+                Object.keys(inst.guacamole_connections).length > 0
+            return hasConnections && inst.status === "running"
+        }
+
+        if (isTerminal(instanceRef.current)) return
+
+        let cancelled = false
+        let inFlight = false
+        let intervalId: number | null = null
 
         const tick = async () => {
-            const fresh = await silentRefresh(instanceId)
-            if (fresh) setInstance(fresh)
+            if (cancelled || inFlight) return
+            inFlight = true
+            try {
+                const fresh = await silentRefresh(instanceId)
+                if (cancelled || !fresh) return
+                setInstance(fresh)
+                if (isTerminal(fresh) && intervalId !== null) {
+                    window.clearInterval(intervalId)
+                    intervalId = null
+                }
+            } finally {
+                inFlight = false
+            }
         }
-        const id = window.setInterval(tick, POLL_INTERVAL_MS)
+
+        intervalId = window.setInterval(tick, POLL_INTERVAL_MS)
         // Kick one off immediately so provisioning completes promptly.
         tick()
-        return () => window.clearInterval(id)
-    }, [instanceId, instance])
+        return () => {
+            cancelled = true
+            if (intervalId !== null) window.clearInterval(intervalId)
+        }
+    }, [instanceId, isInitialLoading])
 
     const connectionEntries = useMemo(() => {
         if (!instance?.guacamole_connections) return []

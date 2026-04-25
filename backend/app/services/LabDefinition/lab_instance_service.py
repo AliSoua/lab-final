@@ -359,14 +359,24 @@ class LabInstanceService:
             logger.error("[TERMINATE] Instance %s not found", instance_id)
             raise ValueError("Instance not found")
 
-        # 1. Delete all Guacamole connections first
+        # 1. Mark the instance as 'terminating' and commit immediately so any
+        # concurrent /refresh poller in another DB session sees the new status
+        # and skips Guacamole sync (otherwise it could race with the deletion
+        # below and re-create connections during the slow vCenter destroy).
+        instance.status = "terminating"
+        db.commit()
+        db.refresh(instance)
+
+        # 2. Delete all Guacamole connections and commit the empty map BEFORE
+        # the slow VM destroy, so concurrent readers see the cleared state.
         logger.debug(
             "[TERMINATE] Deleting Guacamole connections for instance %s",
             instance_id,
         )
         self._delete_guacamole_connections(instance, db=db)
+        db.commit()
 
-        # 2. Destroy the VM
+        # 3. Destroy the VM
         if instance.vm_uuid and instance.vcenter_host:
             logger.debug(
                 "[TERMINATE] Destroying VM %s on vCenter %s",
@@ -444,6 +454,16 @@ class LabInstanceService:
         instance = self.get_instance(db, instance_id, trainee_id)
         if not instance:
             logger.error("[REFRESH] Instance %s not found", instance_id)
+            return instance
+
+        # Skip terminal/terminating states so a concurrent poller cannot
+        # re-create Guacamole connections that terminate_instance just removed.
+        if instance.status in ("terminating", "terminated", "stopped"):
+            logger.debug(
+                "[REFRESH] Instance %s is in terminal state '%s'; skipping sync",
+                instance_id,
+                instance.status,
+            )
             return instance
 
         if not instance.vm_uuid or not instance.vcenter_host:
@@ -748,6 +768,17 @@ class LabInstanceService:
         Credentials are pulled from Vault at:
           credentials/lab_connections/{slug}/{protocol}
         """
+        # Defense-in-depth: never sync for an instance that is being torn down.
+        # The router-level refresh path already guards on this, but a stale
+        # in-memory `instance` could still slip through here.
+        if instance.status in ("terminating", "terminated", "stopped"):
+            logger.info(
+                "[GUAC-SYNC] Instance %s is in terminal state '%s'; skipping sync",
+                instance.id,
+                instance.status,
+            )
+            return
+
         slots = getattr(lab, "connection_slots", None) or []
         if not slots:
             logger.info(
@@ -997,11 +1028,12 @@ class LabInstanceService:
                 )
                 deleted += 1
             except Exception as e:
-                logger.warning(
+                logger.error(
                     "[GUAC-DEL] Failed to delete Guacamole connection %s (%s): %s",
                     conn_id,
                     key,
                     e,
+                    exc_info=True,
                 )
                 failed += 1
         
