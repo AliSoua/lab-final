@@ -21,9 +21,18 @@ from app.services.vault.credentials import (
     read_credentials,
     list_admin_vcenters,
 )
-
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 logger = logging.getLogger(__name__)
 
+
+def _call_with_timeout(func, timeout_sec: int, *args, **kwargs):
+    """Run a blocking function in a thread with a timeout. Safe inside Celery ForkPoolWorkers."""
+    with ThreadPoolExecutor(max_workers=1) as ex:
+        future = ex.submit(func, *args, **kwargs)
+        try:
+            return future.result(timeout=timeout_sec)
+        except FutureTimeoutError:
+            raise TimeoutError(f"{func.__name__} timed out after {timeout_sec}s")
 
 class LabInstanceService:
 
@@ -272,7 +281,9 @@ class LabInstanceService:
                         f"Cloning {vm_config.source_vm_id} → {new_vm_name}",
                     )
 
-                    clone_result = client.clone_vm(
+                    clone_result = _call_with_timeout(
+                        client.clone_vm,
+                        180,  # 3 min timeout for clone
                         template_uuid=vm_config.source_vm_id,
                         new_vm_name=new_vm_name,
                     )
@@ -306,12 +317,10 @@ class LabInstanceService:
                     )
 
                 # Re-check status after clone (race with terminate)
-                instance = (
-                    db.query(LabInstance)
-                    .filter(LabInstance.id == instance_id)
-                    .with_for_update()
-                    .first()
-                )
+                # FIX: use refresh() instead of with_for_update() to avoid deadlock
+                # with the HTTP /refresh endpoint that may hold the lock.
+                db.refresh(instance)
+
                 if instance.status in ("terminating", "terminated"):
                     record_event(
                         task_uuid,
@@ -340,7 +349,7 @@ class LabInstanceService:
                     "power_on_started",
                     f"Powering on VM {vm_uuid}",
                 )
-                client.power_on_vm(vm_uuid)
+                _call_with_timeout(client.power_on_vm, 300, vm_uuid)
                 record_event(
                     task_uuid,
                     instance.id,
@@ -349,8 +358,18 @@ class LabInstanceService:
                 )
 
                 # --- IP discovery ---------------------------------------
-                power_state = client.get_vm_power_state(vm_uuid)
-                ip_address = client.get_vm_ip(vm_uuid)
+                record_event(
+                    task_uuid,
+                    instance.id,
+                    "ip_discovery_started",
+                    f"Waiting for IP on {vm_uuid}",
+                )
+                power_state = _call_with_timeout(
+                    client.get_vm_power_state, 60, vm_uuid
+                )
+                ip_address = _call_with_timeout(
+                    client.get_vm_ip, 180, vm_uuid
+                )
 
                 record_event(
                     task_uuid,
@@ -369,9 +388,29 @@ class LabInstanceService:
             finally:
                 client.disconnect()
 
+        except TimeoutError as te:
+            logger.error(
+                "[LAUNCH-WORKER] Timeout for instance %s: %s",
+                instance_id,
+                te,
+            )
+            db.rollback()
+            instance = (
+                db.query(LabInstance)
+                .filter(LabInstance.id == instance_id)
+                .first()
+            )
+            if instance:
+                instance.status = "failed"
+                instance.error_message = str(te)
+                db.commit()
+            finish_task(task_uuid, "failed", str(te))
+            raise
+
         except (ConnectionError, TimeoutError):
             # Transient — let Celery retry.  Do NOT mark failed.
             raise
+
         except Exception as e:
             logger.error(
                 "[LAUNCH-WORKER] Failed for instance %s: %s",
@@ -1102,10 +1141,13 @@ class LabInstanceService:
             instance_id,
             trainee_id,
         )
+
+        # CRITICAL: get_instance() must NOT use with_for_update().
+        # If it does, remove it immediately or this will deadlock with the worker.
         instance = self.get_instance(db, instance_id, trainee_id)
         if not instance:
             logger.error("[REFRESH] Instance %s not found", instance_id)
-            return instance
+            return None
 
         # Skip terminal/terminating states so a concurrent poller cannot
         # re-create Guacamole connections that terminate_instance just removed.
@@ -1132,143 +1174,174 @@ class LabInstanceService:
             )
             return instance
 
-        client = VCenterClient(
-            host=creds["host"],
-            username=creds["username"],
-            password=creds["password"],
-        )
-        if not client.connect():
+        # -----------------------------------------------------------------
+        # vCenter interaction — run in a thread with timeout so the HTTP
+        # request cannot hang forever if vCenter SOAP calls stall.
+        # -----------------------------------------------------------------
+        vm_uuid = instance.vm_uuid
+        vcenter_host = instance.vcenter_host
+
+        def _fetch_vm_state():
+            client = VCenterClient(
+                host=creds["host"],
+                username=creds["username"],
+                password=creds["password"],
+            )
+            if not client.connect():
+                logger.error(
+                    "[REFRESH] Failed to connect to vCenter %s",
+                    creds["host"],
+                )
+                return None, None
+
+            try:
+                power_state = client.get_vm_power_state(vm_uuid)
+                ip_address = client.get_vm_ip(vm_uuid)
+                return power_state, ip_address
+            finally:
+                client.disconnect()
+                logger.debug(
+                    "[REFRESH] Disconnected from vCenter %s",
+                    creds["host"],
+                )
+
+        try:
+            new_power_state, new_ip = _call_with_timeout(_fetch_vm_state, 30)
+        except TimeoutError:
             logger.error(
-                "[REFRESH] Failed to connect to vCenter %s",
-                creds["host"],
+                "[REFRESH] vCenter sync timed out for instance %s on %s",
+                instance_id,
+                vcenter_host,
+            )
+            return instance
+        except Exception as e:
+            logger.error(
+                "[REFRESH] vCenter sync failed for instance %s: %s",
+                instance_id,
+                e,
+                exc_info=True,
             )
             return instance
 
-        try:
-            new_power_state = client.get_vm_power_state(instance.vm_uuid)
-            new_ip = client.get_vm_ip(instance.vm_uuid)
+        if new_power_state is None and new_ip is None:
+            # connect() failed
+            return instance
 
-            logger.debug(
-                "[REFRESH] VM %s state: power=%s ip=%s",
-                instance.vm_uuid,
-                new_power_state,
-                new_ip,
-            )
+        logger.debug(
+            "[REFRESH] VM %s state: power=%s ip=%s",
+            vm_uuid,
+            new_power_state,
+            new_ip,
+        )
 
-            # -----------------------------------------------------------------
-            # IP available — create/update Guacamole connections from lab slots
-            # -----------------------------------------------------------------
-            if new_ip:
-                if not instance.ip_address:
-                    logger.info(
-                        "[REFRESH] IP address newly detected for instance %s: %s. "
-                        "Proceeding to sync Guacamole connections.",
-                        instance_id,
-                        new_ip,
-                    )
-                else:
-                    logger.debug(
-                        "[REFRESH] IP address still available: %s (previous: %s)",
-                        new_ip,
-                        instance.ip_address,
-                    )
-
-                lab = (
-                    db.query(LabDefinition)
-                    .filter(LabDefinition.id == instance.lab_definition_id)
-                    .first()
+        # -----------------------------------------------------------------
+        # IP available — create/update Guacamole connections from lab slots
+        # -----------------------------------------------------------------
+        if new_ip:
+            if not instance.ip_address:
+                logger.info(
+                    "[REFRESH] IP address newly detected for instance %s: %s. "
+                    "Proceeding to sync Guacamole connections.",
+                    instance_id,
+                    new_ip,
                 )
-                if lab:
-                    slots = getattr(lab, "connection_slots", None) or []
-                    if isinstance(slots, str):
-                        try:
-                            slots = json.loads(slots)
-                        except json.JSONDecodeError:
-                            slots = []
-                    
-                    logger.debug(
-                        "[REFRESH] Lab %s has %d connection slot(s) to evaluate",
-                        lab.id,
-                        len(slots),
-                    )
-                    
-                    if slots:
+            else:
+                logger.debug(
+                    "[REFRESH] IP address still available: %s (previous: %s)",
+                    new_ip,
+                    instance.ip_address,
+                )
+
+            lab = (
+                db.query(LabDefinition)
+                .filter(LabDefinition.id == instance.lab_definition_id)
+                .first()
+            )
+            if lab:
+                slots = getattr(lab, "connection_slots", None) or []
+                if isinstance(slots, str):
+                    try:
+                        slots = json.loads(slots)
+                    except json.JSONDecodeError:
+                        slots = []
+                
+                logger.debug(
+                    "[REFRESH] Lab %s has %d connection slot(s) to evaluate",
+                    lab.id,
+                    len(slots),
+                )
+                
+                if slots:
+                    try:
                         self._sync_guacamole_connections(
                             db=db,
                             instance=instance,
                             lab=lab,
                             ip_address=new_ip,
                         )
-                    else:
-                        logger.debug(
-                            "[REFRESH] Lab %s has no connection slots, skipping Guacamole sync",
-                            lab.id,
+                    except Exception as e:
+                        logger.error(
+                            "[REFRESH] Guacamole sync failed for instance %s: %s",
+                            instance_id,
+                            e,
+                            exc_info=True,
                         )
                 else:
-                    logger.warning(
-                        "[REFRESH] Lab definition %s not found for instance %s",
-                        instance.lab_definition_id,
-                        instance_id,
-                    )
-
-                # If we created at least one connection, mark as running
-                conns = self._load_connections_map(instance)
-                if conns and instance.status == "provisioning":
-                    logger.info(
-                        "[REFRESH] Instance %s has %d Guacamole connection(s). "
-                        "Transitioning status from 'provisioning' to 'running'.",
-                        instance_id,
-                        len(conns),
-                    )
-                    instance.status = "running"
-                elif not conns and instance.status == "provisioning":
                     logger.debug(
-                        "[REFRESH] Instance %s still provisioning — "
-                        "IP detected but no Guacamole connections created yet "
-                        "(may need valid connection_slots + Vault credentials).",
-                        instance_id,
+                        "[REFRESH] Lab %s has no connection slots, skipping Guacamole sync",
+                        lab.id,
                     )
             else:
-                if instance.ip_address:
-                    logger.info(
-                        "[REFRESH] IP address lost for instance %s. "
-                        "Previous IP: %s. Guacamole connections remain but may be stale.",
-                        instance_id,
-                        instance.ip_address,
-                    )
-                else:
-                    logger.debug(
-                        "[REFRESH] No IP address available yet for instance %s",
-                        instance_id,
-                    )
+                logger.warning(
+                    "[REFRESH] Lab definition %s not found for instance %s",
+                    instance.lab_definition_id,
+                    instance_id,
+                )
 
-            instance.power_state = new_power_state
-            instance.ip_address = new_ip
-            db.commit()
-            db.refresh(instance)
+            # If we created at least one connection, mark as running
+            conns = self._load_connections_map(instance)
+            if conns and instance.status == "provisioning":
+                logger.info(
+                    "[REFRESH] Instance %s has %d Guacamole connection(s). "
+                    "Transitioning status from 'provisioning' to 'running'.",
+                    instance_id,
+                    len(conns),
+                )
+                instance.status = "running"
+            elif not conns and instance.status == "provisioning":
+                logger.debug(
+                    "[REFRESH] Instance %s still provisioning — "
+                    "IP detected but no Guacamole connections created yet "
+                    "(may need valid connection_slots + Vault credentials).",
+                    instance_id,
+                )
+        else:
+            if instance.ip_address:
+                logger.info(
+                    "[REFRESH] IP address lost for instance %s. "
+                    "Previous IP: %s. Guacamole connections remain but may be stale.",
+                    instance_id,
+                    instance.ip_address,
+                )
+            else:
+                logger.debug(
+                    "[REFRESH] No IP address available yet for instance %s",
+                    instance_id,
+                )
 
-            logger.info(
-                "[REFRESH] Instance %s refreshed: status=%s power=%s ip=%s connections=%s",
-                instance_id,
-                instance.status,
-                instance.power_state,
-                instance.ip_address,
-                len(self._load_connections_map(instance)),
-            )
+        instance.power_state = new_power_state
+        instance.ip_address = new_ip
+        db.commit()
+        db.refresh(instance)
 
-        except Exception as e:
-            logger.error(
-                "[REFRESH] Failed to refresh status for %s: %s",
-                instance_id,
-                e,
-                exc_info=True,
-            )
-        finally:
-            client.disconnect()
-            logger.debug(
-                "[REFRESH] Disconnected from vCenter %s",
-                creds["host"],
-            )
+        logger.info(
+            "[REFRESH] Instance %s refreshed: status=%s power=%s ip=%s connections=%s",
+            instance_id,
+            instance.status,
+            instance.power_state,
+            instance.ip_address,
+            len(self._load_connections_map(instance)),
+        )
 
         return instance
 

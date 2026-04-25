@@ -138,7 +138,7 @@ def get_instance(
 
 @router.post(
     "/{instance_id}/refresh",
-    response_model=LabInstanceResponse,          # CHANGED: was LabInstanceStatusResponse
+    response_model=LabInstanceResponse,
     summary="Refresh instance status from vCenter and sync Guacamole connections",
 )
 def refresh_instance_status(
@@ -156,10 +156,14 @@ def refresh_instance_status(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Instance not found",
             )
-        # Return full instance so frontend gets guacamole_connections + connection_url
         return instance
     except HTTPException:
         raise
+    except TimeoutError:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="Refresh timed out while communicating with vCenter",
+        )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
