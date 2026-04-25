@@ -110,7 +110,7 @@ export default function LabInstanceDetailPage() {
     // Auto-refresh every 15s while active
     useEffect(() => {
         if (!instance) return
-        if (["terminated", "stopped"].includes(instance.status)) return
+        if (["terminated", "stopped", "failed"].includes(instance.status)) return
 
         const interval = setInterval(() => {
             fetchInstance()
@@ -152,8 +152,10 @@ export default function LabInstanceDetailPage() {
             return
         }
         try {
-            await terminateInstance(instanceId)
-            navigate("/labs")
+            const updated = await terminateInstance(instanceId)   // CHANGED: capture return value
+            setInstance(updated)                                   // NEW: flip UI to "terminating" instantly
+            // Navigate after a brief delay so the user sees the state change
+            setTimeout(() => navigate("/labs"), 800)
         } catch {
             // Error handled by hook
         }
@@ -197,6 +199,12 @@ export default function LabInstanceDetailPage() {
                     color: "bg-red-50 text-red-700 border-red-200",
                     icon: XCircle,
                     label: "Terminated",
+                }
+            case "failed":          // NEW
+                return {
+                    color: "bg-red-50 text-red-700 border-red-200",
+                    icon: AlertCircle,
+                    label: "Failed",
                 }
             default:
                 return {
@@ -349,6 +357,22 @@ export default function LabInstanceDetailPage() {
                         )}
                     </div>
                 </div>
+
+                {/* Error banner */}
+                {instance.status === "failed" && instance.error_message && (
+                    <div
+                        role="alert"
+                        className="mb-6 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-red-800"
+                    >
+                        <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-red-600" />
+                        <div className="min-w-0">
+                            <p className="text-[13px] font-semibold">Instance failed</p>
+                            <p className="mt-0.5 text-[12px] text-red-700 break-words">
+                                {instance.error_message}
+                            </p>
+                        </div>
+                    </div>
+                )}
 
                 {/* Action Bar */}
                 <div className="mb-8 flex flex-wrap items-center gap-3 rounded-xl border border-[#e8e8e8] bg-white p-3">

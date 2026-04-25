@@ -1,3 +1,4 @@
+# app/schemas/LabDefinition/lab_instance.py
 import uuid
 from datetime import datetime
 from typing import Optional, List, Dict
@@ -36,6 +37,8 @@ class LabInstanceResponse(BaseModel):
     started_at: Optional[datetime] = None
     stopped_at: Optional[datetime] = None
     expires_at: Optional[datetime] = None
+
+    error_message: Optional[str] = None
 
     class Config:
         from_attributes = True

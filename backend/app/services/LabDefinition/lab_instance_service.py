@@ -2,6 +2,8 @@
 import uuid
 import json
 import logging
+import os
+import socket
 from datetime import datetime, timedelta
 from typing import Optional, List, Tuple, Dict, Any
 
@@ -24,11 +26,643 @@ logger = logging.getLogger(__name__)
 
 
 class LabInstanceService:
+
+    def __init__(self, db: Session = None):
+        self.db = db
+
+    def enqueue_launch(
+        self,
+        db: Session,
+        lab_definition_id: uuid.UUID,
+        trainee_id: str,
+    ) -> LabInstance:
+        """
+        Synchronous enqueue path.
+        Validates, inserts a 'provisioning' row, commits, starts audit,
+        then pushes the Celery task.  If Redis is down the row is flipped
+        to 'failed' and the exception is re-raised so the router can 502.
+        """
+        from app.services.LabDefinition.task_audit import start_task, finish_task
+        from app.tasks.lab_instance_tasks import launch_instance_task
+
+        logger.info(
+            "[ENQUEUE-LAUNCH] lab=%s trainee=%s",
+            lab_definition_id,
+            trainee_id,
+        )
+
+        # 1. Validate lab definition
+        lab = (
+            db.query(LabDefinition)
+            .filter(LabDefinition.id == lab_definition_id)
+            .first()
+        )
+        if not lab:
+            logger.error("[ENQUEUE-LAUNCH] Lab definition %s not found", lab_definition_id)
+            raise ValueError("Lab definition not found")
+
+        if not lab.vms:
+            logger.error("[ENQUEUE-LAUNCH] Lab %s has no VMs", lab_definition_id)
+            raise ValueError("Lab definition has no VMs configured")
+
+        # 2. Duplicate-active guard
+        existing = (
+            db.query(LabInstance)
+            .filter(
+                LabInstance.lab_definition_id == lab_definition_id,
+                LabInstance.trainee_id == trainee_id,
+                LabInstance.status.in_(["provisioning", "running"]),
+            )
+            .with_for_update()
+            .first()
+        )
+        if existing:
+            logger.warning(
+                "[ENQUEUE-LAUNCH] Duplicate active instance %s (status=%s)",
+                existing.id,
+                existing.status,
+            )
+            raise ValueError(
+                "An active instance of this lab already exists. "
+                "Stop or terminate it before launching a new one."
+            )
+
+        # 3. Insert provisioning row (no vm_uuid yet — worker fills it in)
+        instance = LabInstance(
+            lab_definition_id=lab_definition_id,
+            trainee_id=trainee_id,
+            status="provisioning",
+            started_at=datetime.utcnow(),
+            expires_at=datetime.utcnow() + timedelta(hours=4),
+            guacamole_connections={},
+        )
+        db.add(instance)
+        db.commit()
+        db.refresh(instance)
+
+        logger.info(
+            "[ENQUEUE-LAUNCH] Instance %s created in 'provisioning'",
+            instance.id,
+        )
+
+        # 4. Audit row (UUID reused as Celery task_id)
+        task_audit_id = start_task(
+            instance.id,
+            "launch",
+            metadata={
+                "lab_definition_id": str(lab_definition_id),
+                "trainee_id": str(trainee_id),
+            },
+        )
+
+        # 5. Enqueue to Celery
+        try:
+            launch_instance_task.apply_async(
+                args=[str(instance.id), str(trainee_id)],
+                task_id=str(task_audit_id),
+                queue="lab.provisioning",
+            )
+            logger.info(
+                "[ENQUEUE-LAUNCH] Celery task %s enqueued for instance %s",
+                task_audit_id,
+                instance.id,
+            )
+        except Exception as e:
+            logger.error(
+                "[ENQUEUE-LAUNCH] Redis down — failed to enqueue task %s: %s",
+                task_audit_id,
+                e,
+            )
+            instance.status = "failed"
+            instance.error_message = f"Task queue unavailable: {e}"
+            db.commit()
+            finish_task(task_audit_id, "failed", str(e))
+            raise RuntimeError("Task queue unavailable") from e
+
+        return instance
+
     # ------------------------------------------------------------------
-    # Public API
+    # Worker body (called by Celery)
     # ------------------------------------------------------------------
 
+    def _launch_worker(
+        self,
+        instance_id: str,
+        trainee_id: str,
+        task_id: str,
+    ) -> None:
+        """
+        Idempotent launch worker.
+        Re-loads the row, checks vm_uuid to avoid double-clone,
+        then clone → early commit → power-on → IP discovery.
+        Status stays 'provisioning'; the next /refresh poll transitions
+        to 'running' once Guacamole connections are created.
+        """
+        from uuid import UUID
+        from app.services.LabDefinition.task_audit import (
+            mark_running,
+            record_event,
+            finish_task,
+        )
+
+        task_uuid = UUID(task_id)
+
+        # Use the injected session if available, otherwise open our own
+        db = self.db
+        if db is None:
+            from app.utils.db_session import background_session
+            with background_session() as db:
+                self.db = db
+                return self._launch_worker(instance_id, trainee_id, task_id)
+
+        mark_running(
+            task_uuid,
+            worker_pid=os.getpid(),
+            worker_host=socket.gethostname(),
+        )
+
+        instance = (
+            db.query(LabInstance)
+            .filter(LabInstance.id == instance_id)
+            .first()
+        )
+        if not instance:
+            finish_task(task_uuid, "failed", "Instance not found")
+            return
+
+        # Early exit if already terminated
+        if instance.status in ("terminating", "terminated"):
+            finish_task(task_uuid, "completed", "Instance already terminating")
+            return
+
+        vm_config = instance.lab_definition.vms[0] if instance.lab_definition.vms else None
+        if not vm_config:
+            finish_task(task_uuid, "failed", "Lab definition has no VMs")
+            instance.status = "failed"
+            instance.error_message = "Lab definition has no VMs"
+            db.commit()
+            return
+
+        try:
+            # --- vCenter discovery ---------------------------------------
+            if instance.vm_uuid and instance.vcenter_host:
+                # Resuming after a retry — we already know the vCenter
+                vcenter_creds = self._find_vcenter_credentials(instance.vcenter_host)
+                record_event(
+                    task_uuid,
+                    instance.id,
+                    "vcenter_connect",
+                    f"Resuming with vCenter {instance.vcenter_host}",
+                )
+            else:
+                vcenter_creds = self._find_vcenter_for_template(vm_config.source_vm_id)
+                record_event(
+                    task_uuid,
+                    instance.id,
+                    "vcenter_connect",
+                    f"Discovered vCenter for template {vm_config.source_vm_id}",
+                )
+
+            if not vcenter_creds:
+                raise ValueError(
+                    f"No vCenter found hosting template {vm_config.source_vm_id}"
+                )
+
+            client = VCenterClient(
+                host=vcenter_creds["host"],
+                username=vcenter_creds["username"],
+                password=vcenter_creds["password"],
+            )
+            if not client.connect():
+                raise RuntimeError(
+                    f"Failed to connect to vCenter {vcenter_creds['host']}"
+                )
+
+            try:
+                vm_uuid = instance.vm_uuid
+
+                # --- Clone (skipped if idempotent resume) ---------------
+                if not vm_uuid:
+                    new_vm_name = (
+                        f"{instance.lab_definition.slug}-"
+                        f"{str(trainee_id)[:8]}-{uuid.uuid4().hex[:8]}"
+                    )
+
+                    record_event(
+                        task_uuid,
+                        instance.id,
+                        "clone_started",
+                        f"Cloning {vm_config.source_vm_id} → {new_vm_name}",
+                    )
+
+                    clone_result = client.clone_vm(
+                        template_uuid=vm_config.source_vm_id,
+                        new_vm_name=new_vm_name,
+                    )
+                    vm_uuid = clone_result["uuid"]
+
+                    record_event(
+                        task_uuid,
+                        instance.id,
+                        "clone_completed",
+                        f"Clone successful: {vm_uuid}",
+                    )
+
+                    # Early commit so a concurrent terminate sees vm_uuid
+                    instance.vm_uuid = vm_uuid
+                    instance.vm_name = new_vm_name
+                    instance.vcenter_host = vcenter_creds["host"]
+                    db.commit()
+
+                    record_event(
+                        task_uuid,
+                        instance.id,
+                        "vm_uuid_committed",
+                        f"vm_uuid={vm_uuid} committed",
+                    )
+                else:
+                    record_event(
+                        task_uuid,
+                        instance.id,
+                        "clone_skipped",
+                        f"Resuming with existing vm_uuid={vm_uuid}",
+                    )
+
+                # Re-check status after clone (race with terminate)
+                instance = (
+                    db.query(LabInstance)
+                    .filter(LabInstance.id == instance_id)
+                    .with_for_update()
+                    .first()
+                )
+                if instance.status in ("terminating", "terminated"):
+                    record_event(
+                        task_uuid,
+                        instance.id,
+                        "task_aborted",
+                        "Instance marked terminating after clone — self-destructing VM",
+                    )
+                    vm = client.find_vm_by_uuid(vm_uuid)
+                    if vm:
+                        if str(vm.runtime.powerState) == "poweredOn":
+                            task = vm.PowerOffVM_Task()
+                            client._wait_for_task(task)
+                        task = vm.Destroy_Task()
+                        client._wait_for_task(task)
+                    instance.vm_uuid = None
+                    instance.vm_name = None
+                    instance.vcenter_host = None
+                    db.commit()
+                    finish_task(task_uuid, "completed", "Aborted: instance was terminating")
+                    return
+
+                # --- Power on -------------------------------------------
+                record_event(
+                    task_uuid,
+                    instance.id,
+                    "power_on_started",
+                    f"Powering on VM {vm_uuid}",
+                )
+                client.power_on_vm(vm_uuid)
+                record_event(
+                    task_uuid,
+                    instance.id,
+                    "power_on_completed",
+                    f"VM {vm_uuid} powered on",
+                )
+
+                # --- IP discovery ---------------------------------------
+                power_state = client.get_vm_power_state(vm_uuid)
+                ip_address = client.get_vm_ip(vm_uuid)
+
+                record_event(
+                    task_uuid,
+                    instance.id,
+                    "ip_acquired",
+                    f"IP={ip_address}, power_state={power_state}",
+                )
+
+                instance.power_state = power_state
+                instance.ip_address = ip_address
+                # Status stays 'provisioning' — /refresh handles Guacamole → 'running'
+                db.commit()
+
+                finish_task(task_uuid, "completed")
+
+            finally:
+                client.disconnect()
+
+        except (ConnectionError, TimeoutError):
+            # Transient — let Celery retry.  Do NOT mark failed.
+            raise
+        except Exception as e:
+            logger.error(
+                "[LAUNCH-WORKER] Failed for instance %s: %s",
+                instance_id,
+                e,
+                exc_info=True,
+            )
+            db.rollback()
+            instance = (
+                db.query(LabInstance)
+                .filter(LabInstance.id == instance_id)
+                .first()
+            )
+            if instance:
+                instance.status = "failed"
+                instance.error_message = str(e)
+                db.commit()
+            finish_task(task_uuid, "failed", str(e))
+            raise
+
+    # ------------------------------------------------------------------
+    # Terminate — public enqueue (API container)
+    # ------------------------------------------------------------------
+
+    def enqueue_terminate(
+        self,
+        db: Session,
+        instance_id: uuid.UUID,
+        trainee_id: str,
+    ) -> LabInstance:
+        """
+        Synchronous enqueue path.
+        Idempotent: accepts 'failed' rows; no-op if already terminating/terminated.
+        Deletes Guacamole connections immediately, then hands the vCenter destroy
+        to a Celery worker.
+        """
+        from app.services.LabDefinition.task_audit import start_task, finish_task
+        from app.tasks.lab_instance_tasks import terminate_instance_task
+
+        logger.info(
+            "[ENQUEUE-TERMINATE] instance=%s trainee=%s",
+            instance_id,
+            trainee_id,
+        )
+
+        instance = (
+            db.query(LabInstance)
+            .filter(
+                LabInstance.id == instance_id,
+                LabInstance.trainee_id == trainee_id,
+            )
+            .with_for_update()
+            .first()
+        )
+        if not instance:
+            logger.error("[ENQUEUE-TERMINATE] Instance %s not found", instance_id)
+            raise ValueError("Instance not found")
+
+        # Idempotency — already in flight or done
+        if instance.status in ("terminating", "terminated"):
+            logger.info(
+                "[ENQUEUE-TERMINATE] Instance %s already %s, returning as-is",
+                instance_id,
+                instance.status,
+            )
+            return instance
+
+        # Accept failed rows too (user wants to clean up a broken instance)
+        if instance.status not in ("provisioning", "running", "stopped", "failed"):
+            raise ValueError(
+                f"Cannot terminate instance in status '{instance.status}'"
+            )
+
+        # 1. Flip to terminating and commit so concurrent /refresh skips it
+        instance.status = "terminating"
+        db.commit()
+        db.refresh(instance)
+
+        # 2. Delete Guacamole connections synchronously (same as old code)
+        self._delete_guacamole_connections(instance, db=db)
+        db.commit()
+
+        # 3. Audit row
+        task_audit_id = start_task(
+            instance.id,
+            "terminate",
+            metadata={
+                "instance_id": str(instance_id),
+                "trainee_id": str(trainee_id),
+                "previous_status": instance.status,
+            },
+        )
+
+        # 4. Enqueue Celery task
+        try:
+            terminate_instance_task.apply_async(
+                args=[str(instance.id), str(trainee_id)],
+                task_id=str(task_audit_id),
+                queue="lab.cleanup",
+            )
+            logger.info(
+                "[ENQUEUE-TERMINATE] Celery task %s enqueued for instance %s",
+                task_audit_id,
+                instance.id,
+            )
+        except Exception as e:
+            logger.error(
+                "[ENQUEUE-TERMINATE] Redis down — failed to enqueue task %s: %s",
+                task_audit_id,
+                e,
+            )
+            instance.status = "failed"
+            instance.error_message = f"Task queue unavailable: {e}"
+            db.commit()
+            finish_task(task_audit_id, "failed", str(e))
+            raise RuntimeError("Task queue unavailable") from e
+
+        return instance
+
+    # ------------------------------------------------------------------
+    # Terminate — worker body (Celery)
+    # ------------------------------------------------------------------
+
+    def _terminate_worker(
+        self,
+        instance_id: str,
+        trainee_id: str,
+        task_id: str,
+    ) -> None:
+        """
+        Idempotent terminate worker.
+        Re-loads the row, destroys the VM, then marks terminated.
+        Short-circuits if vm_uuid is None (clone hasn't committed yet).
+        """
+        from uuid import UUID
+        from app.services.LabDefinition.task_audit import (
+            mark_running,
+            record_event,
+            finish_task,
+        )
+
+        task_uuid = UUID(task_id)
+
+        db = self.db
+        if db is None:
+            from app.utils.db_session import background_session
+            with background_session() as db:
+                self.db = db
+                return self._terminate_worker(instance_id, trainee_id, task_id)
+
+        mark_running(
+            task_uuid,
+            worker_pid=os.getpid(),
+            worker_host=socket.gethostname(),
+        )
+
+        instance = (
+            db.query(LabInstance)
+            .filter(LabInstance.id == instance_id)
+            .with_for_update()
+            .first()
+        )
+        if not instance:
+            finish_task(task_uuid, "failed", "Instance not found")
+            return
+
+        # Already done (idempotent re-delivery)
+        if instance.status == "terminated":
+            db.commit()
+            finish_task(task_uuid, "completed", "Already terminated")
+            return
+
+        # Short-circuit: launch worker hasn't committed vm_uuid yet
+        if not instance.vm_uuid:
+            record_event(
+                task_uuid,
+                instance.id,
+                "terminate_short_circuit",
+                "vm_uuid is None — clone not yet committed, nothing to destroy",
+            )
+            instance.status = "terminated"
+            instance.stopped_at = datetime.utcnow()
+            db.commit()
+            finish_task(task_uuid, "completed", "Short-circuit: no VM to destroy")
+            return
+
+        try:
+            if instance.vm_uuid and instance.vcenter_host:
+                record_event(
+                    task_uuid,
+                    instance.id,
+                    "vcenter_destroy_started",
+                    f"Destroying VM {instance.vm_uuid} on {instance.vcenter_host}",
+                )
+
+                creds = self._find_vcenter_credentials(instance.vcenter_host)
+                if creds:
+                    client = VCenterClient(
+                        host=creds["host"],
+                        username=creds["username"],
+                        password=creds["password"],
+                    )
+                    if client.connect():
+                        try:
+                            vm = client.find_vm_by_uuid(instance.vm_uuid)
+                            if vm:
+                                if str(vm.runtime.powerState) == "poweredOn":
+                                    try:
+                                        task = vm.PowerOffVM_Task()
+                                        client._wait_for_task(task)
+                                    except Exception as e:
+                                        record_event(
+                                            task_uuid,
+                                            instance.id,
+                                            "power_off_warning",
+                                            f"Power off before destroy failed (non-fatal): {e}",
+                                        )
+
+                                task = vm.Destroy_Task()
+                                client._wait_for_task(task)
+                                record_event(
+                                    task_uuid,
+                                    instance.id,
+                                    "vcenter_destroy_completed",
+                                    f"Destroyed VM {instance.vm_uuid}",
+                                )
+                        except Exception as e:
+                            record_event(
+                                task_uuid,
+                                instance.id,
+                                "vcenter_destroy_failed",
+                                str(e),
+                            )
+                            raise
+                        finally:
+                            client.disconnect()
+                    else:
+                        record_event(
+                            task_uuid,
+                            instance.id,
+                            "vcenter_connect_failed",
+                            f"Could not connect to {instance.vcenter_host}",
+                        )
+                else:
+                    record_event(
+                        task_uuid,
+                        instance.id,
+                        "vcenter_creds_missing",
+                        f"No credentials for {instance.vcenter_host}",
+                    )
+
+            instance.status = "terminated"
+            instance.stopped_at = datetime.utcnow()
+            db.commit()
+
+            finish_task(task_uuid, "completed")
+
+        except Exception as e:
+            logger.error(
+                "[TERMINATE-WORKER] Failed for instance %s: %s",
+                instance_id,
+                e,
+                exc_info=True,
+            )
+            db.rollback()
+            instance = (
+                db.query(LabInstance)
+                .filter(LabInstance.id == instance_id)
+                .first()
+            )
+            if instance:
+                instance.status = "failed"
+                instance.error_message = str(e)
+                db.commit()
+            finish_task(task_uuid, "failed", str(e))
+            raise
+
+    def terminate_instance(
+        self,
+        db: Session,
+        instance_id: uuid.UUID,
+        trainee_id: str,
+    ) -> None:
+        """
+        DEPRECATED — retained for backward compatibility.
+        Use `enqueue_terminate()` for all new code.
+        """
+        logger.warning(
+            "[DEPRECATED] terminate_instance() called — use enqueue_terminate()"
+        )
+        self.enqueue_terminate(db, instance_id, trainee_id)
+
     def launch_instance(
+        self,
+        db: Session,
+        lab_definition_id: uuid.UUID,
+        trainee_id: str,
+    ) -> LabInstance:
+        """
+        DEPRECATED — retained for backward compatibility.
+        Use `enqueue_launch()` for all new code.
+        """
+        logger.warning(
+            "[DEPRECATED] launch_instance() called — use enqueue_launch()"
+        )
+        return self.enqueue_launch(db, lab_definition_id, trainee_id)
+
+    def launch_instance_old(
         self,
         db: Session,
         lab_definition_id: uuid.UUID,
@@ -346,7 +980,7 @@ class LabInstanceService:
         )
         return instance
 
-    def terminate_instance(
+    def terminate_instance_old(
         self, db: Session, instance_id: uuid.UUID, trainee_id: str,
     ) -> None:
         logger.info(

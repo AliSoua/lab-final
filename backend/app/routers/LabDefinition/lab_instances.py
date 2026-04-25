@@ -12,6 +12,16 @@ from app.schemas.LabDefinition.lab_instance import (
     LabInstanceListResponse,
     LabInstanceStatusResponse,
 )
+from app.schemas.LabDefinition.LabInstanceTask import (
+    LabInstanceTaskResponse,
+    LabInstanceTaskListResponse,
+)
+from app.schemas.LabDefinition.LabInstanceEvent import (
+    LabInstanceEventLogResponse,
+    LabInstanceEventLogListResponse,
+)
+from app.models.LabDefinition.LabInstanceTask import LabInstanceTask
+from app.models.LabDefinition.LabInstanceEventLog import LabInstanceEventLog
 from app.dependencies.keycloak.keycloak_roles import require_any_role
 
 require_all = require_any_role(["trainee", "moderator", "admin"])
@@ -54,7 +64,7 @@ def _get_trainee_id(userinfo: dict, db: Session) -> uuid.UUID:
 @router.post(
     "/",
     response_model=LabInstanceResponse,
-    status_code=status.HTTP_201_CREATED,
+    status_code=status.HTTP_202_ACCEPTED,
     summary="Launch a lab instance",
 )
 def launch_lab_instance(
@@ -65,7 +75,7 @@ def launch_lab_instance(
     trainee_id = _get_trainee_id(userinfo, db)
 
     try:
-        instance = lab_instance_service.launch_instance(
+        instance = lab_instance_service.enqueue_launch(
             db=db,
             lab_definition_id=data.lab_definition_id,
             trainee_id=trainee_id,
@@ -185,7 +195,8 @@ def stop_instance(
 
 @router.delete(
     "/{instance_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=LabInstanceResponse,
+    status_code=status.HTTP_202_ACCEPTED,
     summary="Terminate and delete a lab instance",
 )
 def terminate_instance(
@@ -195,15 +206,126 @@ def terminate_instance(
 ):
     trainee_id = _get_trainee_id(userinfo, db)
     try:
-        lab_instance_service.terminate_instance(
+        instance = lab_instance_service.enqueue_terminate(
             db, instance_id, trainee_id
         )
+        return instance
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(e)
+        )
+    except RuntimeError as e:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)
         )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to terminate instance: {str(e)}",
         )
+
+@router.get(
+    "/{instance_id}/tasks",
+    response_model=LabInstanceTaskListResponse,
+    summary="List audit tasks for a lab instance",
+)
+def list_instance_tasks(
+    instance_id: uuid.UUID,
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    userinfo: dict = Depends(require_all),
+):
+    trainee_id = _get_trainee_id(userinfo, db)
+    instance = lab_instance_service.get_instance(db, instance_id, trainee_id)
+    if not instance:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Instance not found",
+        )
+
+    query = db.query(LabInstanceTask).filter(
+        LabInstanceTask.lab_instance_id == instance_id
+    )
+    total = query.count()
+    items = (
+        query.order_by(LabInstanceTask.created_at.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+    return LabInstanceTaskListResponse(
+        items=[LabInstanceTaskResponse.model_validate(t) for t in items],
+        total=total,
+    )
+
+
+@router.get(
+    "/{instance_id}/tasks/{task_id}",
+    response_model=LabInstanceTaskResponse,
+    summary="Get a single audit task",
+)
+def get_instance_task(
+    instance_id: uuid.UUID,
+    task_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    userinfo: dict = Depends(require_all),
+):
+    trainee_id = _get_trainee_id(userinfo, db)
+    instance = lab_instance_service.get_instance(db, instance_id, trainee_id)
+    if not instance:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Instance not found",
+        )
+
+    task = (
+        db.query(LabInstanceTask)
+        .filter(
+            LabInstanceTask.id == task_id,
+            LabInstanceTask.lab_instance_id == instance_id,
+        )
+        .first()
+    )
+    if not task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found",
+        )
+    return task
+
+
+@router.get(
+    "/{instance_id}/events",
+    response_model=LabInstanceEventLogListResponse,
+    summary="List audit events for a lab instance",
+)
+def list_instance_events(
+    instance_id: uuid.UUID,
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    userinfo: dict = Depends(require_all),
+):
+    trainee_id = _get_trainee_id(userinfo, db)
+    instance = lab_instance_service.get_instance(db, instance_id, trainee_id)
+    if not instance:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Instance not found",
+        )
+
+    query = db.query(LabInstanceEventLog).filter(
+        LabInstanceEventLog.lab_instance_id == instance_id
+    )
+    total = query.count()
+    items = (
+        query.order_by(LabInstanceEventLog.created_at.asc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+    return LabInstanceEventLogListResponse(
+        items=[LabInstanceEventLogResponse.model_validate(e) for e in items],
+        total=total,
+    )

@@ -26,6 +26,19 @@ services:
     volumes:
       - pgdata_lab_platform_test:/var/lib/postgresql/data
 
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: always
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   keycloak:
     image: quay.io/keycloak/keycloak:24.0.3
     container_name: keycloak
@@ -72,6 +85,7 @@ services:
     container_name: fastapi-backend
     restart: always
     depends_on:
+      - redis
       - db
       - vault
       - keycloak
@@ -92,6 +106,57 @@ services:
       # Guacamole SSO config (used by setup_keycloak.py)
       - GUACAMOLE_CLIENT_ID=guacamole
       - GUACAMOLE_PUBLIC_URL=http://localhost:8081/guacamole
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    container_name: celery-worker
+    restart: always
+    command: >
+      celery -A app.core.celery worker
+      --loglevel=info
+      -E
+      --queues=lab.provisioning,lab.cleanup,lab.monitoring,default
+      --concurrency=4
+      --hostname=worker@%h
+      --max-tasks-per-child=100
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      - VAULT_ADDR=http://vault:8200
+      - VAULT_TOKEN=root
+      - GUACAMOLE_API_URL=http://guacamole:8080/guacamole/api
+      - GUACAMOLE_ADMIN_USER=guacadmin
+      - GUACAMOLE_ADMIN_PASS=${GUACAMOLE_ADMIN_PASS:-guacadmin}
+      - GUACAMOLE_CLIENT_ID=guacamole
+      - GUACAMOLE_PUBLIC_URL=http://localhost:8081/guacamole
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_started
+
+  flower:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    container_name: flower
+    restart: always
+    command: >
+      celery -A app.core.celery flower
+      --port=5555
+    ports:
+      - "127.0.0.1:5555:5555"
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
 
   frontend:
     build:
@@ -171,3 +236,4 @@ volumes:
   keycloak_data:
   guac-data:
   vault_data:
+  redis-data: 

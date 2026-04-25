@@ -28,6 +28,8 @@ DATABASE_URL = (
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,
+    pool_size=2,          # base connections per process
+    max_overflow=4,       # burst connections per process
     echo=False,
 )
 
@@ -67,6 +69,8 @@ def _import_all_models():
     import app.models.LabDefinition.LabVM
     import app.models.LabDefinition.LabGuide
     import app.models.LabDefinition.LabInstance
+    import app.models.LabDefinition.LabInstanceTask
+    import app.models.LabDefinition.LabInstanceEventLog
     import app.models.user
 
     return Base
@@ -197,6 +201,35 @@ def backup_db_tables(backup_dir: str = "backup-db") -> dict:
 def init_db() -> None:
     """Initialize database on application startup."""
     create_db_tables()
+
+    # ── Idempotent schema migrations (Option A from plan §7.6) ──
+    with engine.begin() as conn:
+        conn.execute(text("""
+            ALTER TABLE lab_instances
+            ADD COLUMN IF NOT EXISTS error_message TEXT;
+        """))
+
+        # Composite indexes for lab_instance_tasks (plan §7.1)
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS ix_lab_instance_tasks_instance_status
+            ON lab_instance_tasks (lab_instance_id, status);
+        """))
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS ix_lab_instance_tasks_status_enqueued
+            ON lab_instance_tasks (status, enqueued_at);
+        """))
+
+        # Composite indexes for lab_instance_event_logs (plan §7.2)
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS ix_lab_instance_event_logs_task_created
+            ON lab_instance_event_logs (task_id, created_at);
+        """))
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS ix_lab_instance_event_logs_instance_created
+            ON lab_instance_event_logs (lab_instance_id, created_at);
+        """))
+
+    logger.info("✅ Database initialized with audit schema.")
 
 
 # ── FastAPI dependency (synchronous) ───────────────────────────────────────────

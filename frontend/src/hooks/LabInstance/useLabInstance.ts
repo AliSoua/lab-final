@@ -16,7 +16,7 @@ interface UseLabInstanceReturn {
     launchLabInstance: (data: LabInstanceCreate) => Promise<LabInstance>
     refreshInstanceStatus: (instanceId: string) => Promise<LabInstanceStatus>
     stopInstance: (instanceId: string) => Promise<LabInstance>
-    terminateInstance: (instanceId: string) => Promise<void>
+    terminateInstance: (instanceId: string) => Promise<LabInstance>
     // Queries
     listMyInstances: (skip?: number, limit?: number) => Promise<LabInstanceListResponse>
     getInstance: (instanceId: string) => Promise<LabInstance>
@@ -431,7 +431,7 @@ export function useLabInstance(): UseLabInstanceReturn {
     // DELETE /lab-instances/{instance_id} — Terminate instance
     // -------------------------------------------------------------------------
     const terminateInstance = useCallback(
-        async (instanceId: string): Promise<void> => {
+        async (instanceId: string): Promise<LabInstance> => {   // CHANGED: void → LabInstance
             setIsLoading(true)
             setError(null)
 
@@ -444,6 +444,7 @@ export function useLabInstance(): UseLabInstanceReturn {
                 const response = await fetch(url, {
                     method: "DELETE",
                     headers: {
+                        Accept: "application/json",              // NEW
                         Authorization: `Bearer ${token}`,
                     },
                 })
@@ -467,14 +468,26 @@ export function useLabInstance(): UseLabInstanceReturn {
                         toast.error(msg)
                         throw new Error(msg)
                     }
+                    if (response.status === 502) {
+                        const errorData = await response.json().catch(() => ({}))
+                        const msg = errorData.detail || "External service error"
+                        toast.error(msg)
+                        throw new Error(msg)
+                    }
                     const msg = `Failed to terminate instance: ${response.statusText}`
                     toast.error(msg)
                     throw new Error(msg)
                 }
 
-                // 204 No Content — nothing to parse
+                // CHANGED: parse the 202 body instead of ignoring it
+                const instance: LabInstance = await response.json()
+
                 toast.dismiss(loadingToast)
-                toast.success("Instance terminated")
+                toast.success("Instance terminating", {
+                    description: instance.vm_name || instance.id,
+                })
+
+                return instance
             } catch (err) {
                 const message =
                     err instanceof Error ? err.message : "Failed to terminate lab instance"
@@ -484,6 +497,7 @@ export function useLabInstance(): UseLabInstanceReturn {
                     message === "Unauthorized. Please log in." ||
                     message === "Forbidden." ||
                     message.includes("Instance not found") ||
+                    message.includes("External service error") ||
                     message.includes("Failed to terminate instance")
 
                 if (!alreadyHandled) {

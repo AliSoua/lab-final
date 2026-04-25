@@ -97,7 +97,7 @@ export default function RunLabPage() {
 
         const isTerminal = (inst: LabInstance | null): boolean => {
             if (!inst) return false
-            if (["terminated", "stopped"].includes(inst.status)) return true
+            if (["terminated", "stopped", "failed"].includes(inst.status)) return true
             const hasConnections =
                 !!inst.guacamole_connections &&
                 Object.keys(inst.guacamole_connections).length > 0
@@ -246,6 +246,22 @@ export default function RunLabPage() {
                     )}
                 </div>
             </div>
+
+            {/* Error banner for failed instances */}
+            {instance.status === "failed" && instance.error_message && (
+                <div
+                    role="alert"
+                    className="mx-6 mt-4 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-red-800"
+                >
+                    <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-red-600" />
+                    <div className="min-w-0">
+                        <p className="text-[13px] font-semibold">Launch failed</p>
+                        <p className="mt-0.5 text-[12px] text-red-700 break-words">
+                            {instance.error_message}
+                        </p>
+                    </div>
+                </div>
+            )}
 
             <div className="flex-1 overflow-hidden">
                 {hasConnections && activeConnectionId ? (

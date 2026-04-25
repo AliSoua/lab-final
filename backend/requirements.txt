@@ -1,40 +1,43 @@
+# Web framework
 fastapi==0.115.6
-uvicorn[standard]>=0.27
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+aiofiles==24.1.0
 
-python-dotenv==1.0.0
+# Settings & env
+python-dotenv==1.0.1
+pydantic[email]==2.10.6
+pydantic-settings==2.7.1  
+
+# Auth & secrets
 hvac==2.4.0
 python-keycloak==7.1.1
+python-jose[cryptography]==3.5.0
+PyJWT==2.10.1
+cryptography==44.0.2
 
-pydantic[email]>=2.7,<3
-
+# HTTP
 requests==2.33.1
-python-jose==3.5.0
-PyJWT>=2.8.0
-cryptography>=41.0.0
 
-pyvmomi>=8.0.0
-Pillow>=10.0.0
-aiofiles>=23.2.1
-python-multipart>=0.0.6
+# VMware
+pyvmomi==8.0.3
 
-# Celery & Task Queue
-celery[redis]>=5.3.0
-redis>=5.0.0
-flower>=2.0.0  # Web UI for Celery monitoring
+# Media
+Pillow==11.1.0
 
-# Async PostgreSQL (for SQLAlchemy async operations)
-asyncpg>=0.29.0
+# Celery & task queue
+celery[redis]==5.4.0
+redis==5.2.1
+flower==2.0.1
 
-# PostgreSQL driver (required by asyncpg)
-psycopg2-binary>=2.9.9
+# Database
+SQLAlchemy==2.0.40
+asyncpg==0.30.0
+psycopg2-binary==2.9.10
 
-# ORM layer
-SQLAlchemy>=2.0.0
+# Utilities
+tenacity==9.0.0
+orjson==3.10.15
 
-# Additional utilities for background tasks
-tenacity>=8.2.0  # Retry logic (alternative to Celery's built-in)
-orjson>=3.9.0    # Fast JSON processing for Celery serialization
-
-
-# Monitoring/Metrics (optional but recommended)
-prometheus-client>=0.19.0  # For metrics export
+# Monitoring
+prometheus-client==0.21.1

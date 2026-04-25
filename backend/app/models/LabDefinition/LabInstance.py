@@ -1,3 +1,4 @@
+# app/models/LabDefinition/LabInstance.py
 import uuid
 from datetime import datetime
 
@@ -55,6 +56,21 @@ class LabInstance(Base):
     # Relationships
     lab_definition = relationship("LabDefinition", back_populates="instances")
     user = relationship("User", back_populates="instances")
+
+    # ── NEW: error_message for terminal failed states ──
+    error_message = Column(Text, nullable=True)
+
+    # ── NEW: audit relationships ──
+    tasks = relationship(
+        "LabInstanceTask",
+        back_populates="lab_instance",
+        cascade="all, delete-orphan",
+    )
+    event_logs = relationship(
+        "LabInstanceEventLog",
+        back_populates="lab_instance",
+        cascade="all, delete-orphan",
+    )
 
     def __repr__(self):
         return (

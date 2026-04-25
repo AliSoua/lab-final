@@ -151,7 +151,6 @@ prints the three queue routes. No import error.
 
 - `docker-compose.prod.yml` — current services and the `backend`
   service env block to copy from.
-- `docker-compose.yml` — dev compose, mirror the same additions.
 - `backend/Dockerfile.prod` — the worker container reuses this
   image with a different `command`.
 - `backend/.env.docker` — add to the worker container's
