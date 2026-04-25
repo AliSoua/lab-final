@@ -7,7 +7,7 @@ import socket
 from datetime import datetime, timedelta
 from typing import Optional, List, Tuple, Dict, Any
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import desc
 
 from app.services.guacamole_service import guacamole_service
@@ -184,6 +184,7 @@ class LabInstanceService:
         instance = (
             db.query(LabInstance)
             .filter(LabInstance.id == instance_id)
+            .options(joinedload(LabInstance.lab_definition).joinedload(LabDefinition.vms))
             .first()
         )
         if not instance:
@@ -208,6 +209,10 @@ class LabInstanceService:
             if instance.vm_uuid and instance.vcenter_host:
                 # Resuming after a retry — we already know the vCenter
                 vcenter_creds = self._find_vcenter_credentials(instance.vcenter_host)
+                logger.info(
+                    "[WORKER] Vcenter credentials are: %s",
+                    vcenter_creds,
+                )
                 record_event(
                     task_uuid,
                     instance.id,
@@ -216,6 +221,10 @@ class LabInstanceService:
                 )
             else:
                 vcenter_creds = self._find_vcenter_for_template(vm_config.source_vm_id)
+                logger.info(
+                    "[WORKER] Vcenter credentials are: %s",
+                    vcenter_creds,
+                )
                 record_event(
                     task_uuid,
                     instance.id,
@@ -239,7 +248,15 @@ class LabInstanceService:
                 )
 
             try:
+                logger.info(
+                    "[WORKER] Instance before modification: %s",
+                    instance,
+                )
                 vm_uuid = instance.vm_uuid
+                logger.info(
+                    "[WORKER] Vcenter VM uuid: %s",
+                    vm_uuid,
+                )
 
                 # --- Clone (skipped if idempotent resume) ---------------
                 if not vm_uuid:

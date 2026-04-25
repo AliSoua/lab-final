@@ -61,7 +61,6 @@ services:
     environment:
       # HARD-CODE the Docker-internal URL here
       - VAULT_ADDR=http://vault:8200
-      - VAULT_TOKEN=root
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
 
   frontend:

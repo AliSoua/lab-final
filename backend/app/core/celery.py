@@ -1,6 +1,8 @@
 # backend/app/core/celery.py
 from celery import Celery
 from app.config.settings import settings
+from app.config.connection.postgres_client import _import_all_models
+_import_all_models()
 
 celery_app = Celery(
     "lab_platform",

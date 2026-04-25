@@ -89,4 +89,12 @@ set -a
 . "$ENV_FILE"
 set +a
 
+
+# ── Load Vault root token from shared volume ──
+if [ -z "${VAULT_TOKEN:-}" ] && [ -r /vault/file/.root-token ]; then
+  VAULT_TOKEN="$(cat /vault/file/.root-token)"
+  export VAULT_TOKEN
+  echo "[INFO] VAULT_TOKEN loaded from /vault/file/.root-token: $VAULT_TOKEN"
+fi
+
 exec uvicorn app.main:app --host 0.0.0.0 --port 8000

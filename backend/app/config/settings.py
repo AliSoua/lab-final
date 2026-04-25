@@ -22,7 +22,6 @@ class Settings(BaseSettings):
 
     # Vault
     VAULT_ADDR: str = "http://vault:8200"
-    VAULT_TOKEN: str = "root"
 
     # Guacamole
     GUACAMOLE_CLIENT_ID: str = "guacamole"
