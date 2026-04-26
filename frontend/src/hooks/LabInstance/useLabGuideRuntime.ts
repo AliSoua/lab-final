@@ -1,13 +1,14 @@
+// src/hooks/LabInstance/useLabGuideRuntime.ts
 import { useState, useEffect, useCallback } from "react"
-import type { LabGuideStep, LabGuideSessionState, GuideVersion, StepExecutionState } from "@/types/LabGuide"
+import type { LabGuideStep, GuideVersion, StepExecutionState } from "@/types/LabGuide"
 import type { LabInstance } from "@/types/LabInstance/LabInstance"
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000"
 
-async function fetchGuideVersion(guideVersionId: string, token: string): Promise<GuideVersion | null> {
+async function fetchInstanceGuideVersion(instanceId: string, token: string): Promise<GuideVersion | null> {
     try {
         const res = await fetch(
-            `${API_BASE_URL}/lab-guides/versions/${guideVersionId}`,
+            `${API_BASE_URL}/lab-instances/${instanceId}/guide-version`,
             { headers: { Authorization: `Bearer ${token}` } }
         )
         if (!res.ok) return null
@@ -40,7 +41,7 @@ export function useLabGuideRuntime(instance: LabInstance | null) {
 
     // Load guide version when instance has guide_version_id
     useEffect(() => {
-        if (!instance?.guide_version_id) {
+        if (!instance?.id || !instance?.guide_version_id) {
             setGuideVersion(null)
             setSteps([])
             setStepStates([])
@@ -57,7 +58,8 @@ export function useLabGuideRuntime(instance: LabInstance | null) {
         setIsLoading(true)
         setError(null)
 
-        fetchGuideVersion(instance.guide_version_id, token).then((version) => {
+        // Use instance-scoped endpoint so backend validates ownership
+        fetchInstanceGuideVersion(instance.id, token).then((version) => {
             if (cancelled) return
             if (!version) {
                 setError("Failed to load guide version")
@@ -84,7 +86,7 @@ export function useLabGuideRuntime(instance: LabInstance | null) {
         return () => {
             cancelled = true
         }
-    }, [instance?.guide_version_id, instance?.session_state, instance?.current_step_index])
+    }, [instance?.id, instance?.guide_version_id, instance?.session_state, instance?.current_step_index])
 
     const handleStepChange = useCallback((index: number) => {
         setCurrentStepIndex(index)

@@ -2,6 +2,7 @@
 """
 Lab Instance Runtime Operations
 POST /lab-instances/{id}/refresh
+GET /lab-instances/{id}/guide-version  <-- NEW
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -11,7 +12,9 @@ import uuid
 from app.config.connection.postgres_client import get_db
 from app.dependencies.keycloak.keycloak_roles import require_any_role
 from app.schemas.LabDefinition.lab_instance import LabInstanceResponse
-from app.services.LabInstance.ManageInstance import refresh_instance_status
+from app.schemas.LabDefinition.LabGuide import GuideVersionResponse
+from app.services.LabInstance.ManageInstance import get_instance, refresh_instance_status
+from app.services.LabGuide.guide_service import get_version
 from .common import get_trainee_id
 
 require_all = require_any_role(["trainee", "moderator", "admin"])
@@ -58,3 +61,43 @@ def refresh_instance(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to refresh status: {str(e)}",
         )
+
+
+# ── NEW: Public endpoint for trainees to fetch their instance's guide version ──
+@router.get(
+    "/{instance_id}/guide-version",
+    response_model=GuideVersionResponse,
+    summary="Get the guide version for a running lab instance",
+)
+def get_instance_guide_version(
+    instance_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    userinfo: dict = Depends(require_all),
+):
+    """
+    Returns the guide version pinned to this instance.
+    Trainees can only access their own instances' guide versions.
+    """
+    trainee_id = get_trainee_id(userinfo, db)
+    
+    instance = get_instance(db, instance_id, trainee_id)
+    if not instance:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Instance not found",
+        )
+    
+    if not instance.guide_version_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No guide version assigned to this instance",
+        )
+    
+    version = get_version(db, instance.guide_version_id)
+    if not version:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Guide version not found",
+        )
+    
+    return version
