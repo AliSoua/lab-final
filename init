@@ -1,6 +1,11 @@
 #!/bin/bash
-
 echo "Initializing .env files..."
+
+# Debug: OS detection
+echo "--- DEBUG ---"
+echo "OSTYPE: $OSTYPE"
+echo "uname: $(uname -s)"
+echo "-------------"
 
 # Root .env
 if [ -f ".env.docker" ]; then
@@ -24,6 +29,64 @@ if [ -f "frontend/.env.docker" ]; then
   echo "Created frontend/.env"
 else
   echo "Missing frontend/.env.docker"
+fi
+
+# Dynamically set VITE_API_BASE_URL to host IP in root .env
+echo "--- DEBUG: detecting IP ---"
+if [[ "$OSTYPE" == "darwin"* ]]; then
+  echo "Detected OS: macOS"
+  HOST_IP=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null)
+
+elif [[ "$OSTYPE" == "msys"* || "$OSTYPE" == "cygwin"* || "$OSTYPE" == "win"* ]]; then
+  echo "Detected OS: Windows (Git Bash / MINGW)"
+
+  ALL_IPS=()
+  while IFS= read -r line; do
+    ip=$(echo "$line" | awk -F': ' '{print $2}' | tr -d '[:space:]\r')
+    [ -n "$ip" ] && ALL_IPS+=("$ip")
+  done < <(ipconfig | grep "IPv4 Address" | grep -v "127.0.0.1")
+
+  if [ ${#ALL_IPS[@]} -eq 0 ]; then
+    echo "Warning: No IPs found"
+    read -p "Enter IP address manually: " HOST_IP
+  elif [ ${#ALL_IPS[@]} -eq 1 ]; then
+    HOST_IP="${ALL_IPS[0]}"
+  else
+    echo ""
+    echo "Multiple network interfaces detected. Pick the one Docker will be reachable on:"
+    for i in "${!ALL_IPS[@]}"; do
+      echo "  [$i] ${ALL_IPS[$i]}"
+    done
+    echo "  [m] Enter manually"
+    echo ""
+    read -p "Enter number [0-$((${#ALL_IPS[@]}-1))] or m: " PICK
+
+    if [[ "$PICK" == "m" || "$PICK" == "M" ]]; then
+      read -p "Enter IP address: " MANUAL_IP
+      HOST_IP="$MANUAL_IP"
+    else
+      HOST_IP="${ALL_IPS[$PICK]}"
+    fi
+  fi
+
+else
+  echo "Detected OS: Linux"
+  HOST_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+  echo "hostname -I raw output: $(hostname -I 2>/dev/null)"
+fi
+
+echo "Resolved HOST_IP: '$HOST_IP'"
+echo "---------------------------"
+
+if [ -z "$HOST_IP" ]; then
+  echo "Warning: Could not detect host IP, VITE_API_BASE_URL not set"
+else
+  if grep -q "VITE_API_BASE_URL" .env; then
+    sed -i "s|VITE_API_BASE_URL=.*|VITE_API_BASE_URL=http://$HOST_IP:8000|" .env
+  else
+    echo "VITE_API_BASE_URL=http://$HOST_IP:8000" >> .env
+  fi
+  echo "Set VITE_API_BASE_URL=http://$HOST_IP:8000"
 fi
 
 echo "Done."
