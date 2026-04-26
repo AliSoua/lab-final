@@ -252,6 +252,15 @@ def _default_port(protocol: str) -> int:
 
 def _load_connections_map(instance: LabInstance) -> Dict[str, str]:
     raw = getattr(instance, "guacamole_connections", None)
+
+    # ── DEFENSIVE: Handle [] or null from DB ─────────────────────────────
+    if raw is None or raw == [] or raw == "{}":
+        logger.debug(
+            "[GUAC] Normalized empty guacamole_connections for instance %s",
+            instance.id,
+        )
+        return {}
+
     if isinstance(raw, dict):
         copied = dict(raw)
         logger.debug(

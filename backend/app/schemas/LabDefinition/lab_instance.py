@@ -2,7 +2,7 @@
 import uuid
 from datetime import datetime
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.LabDefinition.lab_runtime import LabGuideSessionState
 
@@ -63,6 +63,14 @@ class LabInstanceResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+    @field_validator("guacamole_connections", mode="before")
+    @classmethod
+    def normalize_empty_connections(cls, v):
+        """Handle DB returning [] or None instead of {}."""
+        if v is None or v == []:
+            return {}
+        return v
 
 
 class LabInstanceListResponse(BaseModel):

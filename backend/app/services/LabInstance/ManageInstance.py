@@ -185,6 +185,8 @@ def refresh_instance_status(
     May transition status from 'provisioning' → 'running' when the VM is
     powered on and has an IP address.
     """
+    from app.services.LabInstance.utils import _sync_guacamole_connections  # ADD THIS IMPORT
+
     logger.info(
         "[REFRESH] Refreshing status for instance %s (trainee=%s)",
         instance_id,
@@ -263,30 +265,22 @@ def refresh_instance_status(
             runtime_ctx["vm_mappings"] = vm_mappings
             instance.session_state["runtime_context"] = runtime_ctx
 
-        # ── Sync Guacamole connections (best-effort) ──────────────────────
+        # ── Sync Guacamole connections when VM is powered on with IP ─────
         if power_state == "poweredOn" and ip_address:
-            from app.services.guacamole_service import guacamole_service
-
-            # Ensure existing connection entries are still valid
-            existing = instance.guacamole_connections or {}
-            synced = {}
-            for key, conn_id in existing.items():
-                try:
-                    # Lightweight health check via Guacamole API
-                    healthy = guacamole_service.connection_exists(conn_id)
-                    if healthy:
-                        synced[key] = conn_id
-                    else:
-                        logger.debug(
-                            "[REFRESH] Guacamole connection %s stale, removing", conn_id
-                        )
-                except Exception as e:
-                    logger.warning(
-                        "[REFRESH] Guacamole check failed for %s: %s", conn_id, e
-                    )
-                    synced[key] = conn_id  # keep on error to avoid disruption
-
-            instance.guacamole_connections = synced
+            # Import here to avoid circular dependency
+            from app.models.LabDefinition.core import LabDefinition
+            
+            lab = db.query(LabDefinition).filter(
+                LabDefinition.id == instance.lab_definition_id
+            ).first()
+            
+            if lab:
+                _sync_guacamole_connections(db, instance, lab, ip_address)
+            else:
+                logger.warning(
+                    "[REFRESH] Lab definition %s not found for Guacamole sync",
+                    instance.lab_definition_id,
+                )
 
             # ── Transition provisioning → running ─────────────────────────
             if instance.status == "provisioning":
@@ -301,11 +295,12 @@ def refresh_instance_status(
         db.commit()
         db.refresh(instance)
         logger.info(
-            "[REFRESH] Instance %s refreshed: status=%s power=%s ip=%s",
+            "[REFRESH] Instance %s refreshed: status=%s power=%s ip=%s connections=%s",
             instance_id,
             instance.status,
             power_state,
             ip_address,
+            len(instance.guacamole_connections or {}),
         )
 
     except Exception as e:
