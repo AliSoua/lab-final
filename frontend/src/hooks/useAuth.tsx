@@ -5,7 +5,7 @@ import React, {
     useState,
     useEffect,
     useCallback,
-    useRef
+    useRef,
 } from "react"
 
 import type { User, LoginResponse, CheckAuthResponse, TokenResponse } from "@/types"
@@ -13,10 +13,22 @@ import type { User, LoginResponse, CheckAuthResponse, TokenResponse } from "@/ty
 const API_BASE_URL =
     import.meta.env.VITE_API_BASE_URL || "http://localhost:8000"
 
-// Token refresh configuration
-const TOKEN_REFRESH_INTERVAL = 4 * 60 * 1000
-const TOKEN_REFRESH_RETRY_DELAY = 30 * 1000
-const MAX_REFRESH_RETRIES = 3
+const TOKEN_REFRESH_INTERVAL_MS =
+    parseInt(import.meta.env.VITE_TOKEN_REFRESH_INTERVAL_MINUTES || "4", 10) *
+    60 *
+    1000
+
+const MAX_REFRESH_RETRIES = parseInt(
+    import.meta.env.VITE_MAX_REFRESH_RETRIES || "3",
+    10
+)
+
+interface JwtPayload {
+    sub?: string
+    realm_access?: { roles?: string[] }
+    exp?: number
+    iat?: number
+}
 
 interface AuthContextType {
     user: User | null
@@ -24,6 +36,7 @@ interface AuthContextType {
     isAuthenticated: boolean
     login: (username: string, password: string) => Promise<boolean>
     logout: () => Promise<void>
+    getToken: () => string | null
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -42,26 +55,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const [isLoading, setIsLoading] = useState(true)
     const [isAuthenticated, setIsAuthenticated] = useState(false)
 
-    const refreshIntervalRef = useRef<NodeJS.Timeout | null>(null)
+    const refreshIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
     const retryCountRef = useRef(0)
     const isRefreshingRef = useRef(false)
 
-    const decodeToken = (token: string): any => {
+    const decodeToken = useCallback((token: string): JwtPayload | null => {
         try {
             const parts = token.split(".")
             if (parts.length !== 3) return null
             const payload = parts[1]
             const padded = payload + "=".repeat((4 - (payload.length % 4)) % 4)
-            return JSON.parse(atob(padded))
+            return JSON.parse(atob(padded)) as JwtPayload
         } catch {
             return null
         }
-    }
+    }, [])
 
-    const extractRoles = (token: string): string[] => {
-        const payload = decodeToken(token)
-        return payload?.realm_access?.roles || []
-    }
+    const extractRoles = useCallback(
+        (token: string): string[] => {
+            const payload = decodeToken(token)
+            return payload?.realm_access?.roles || []
+        },
+        [decodeToken]
+    )
+
+    const getToken = useCallback((): string | null => {
+        return localStorage.getItem("access_token")
+    }, [])
 
     const performRefresh = useCallback(async (): Promise<boolean> => {
         if (isRefreshingRef.current) return false
@@ -77,9 +97,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
-                    Accept: "application/json"
+                    Accept: "application/json",
                 },
-                body: JSON.stringify({ refresh_token: refreshToken })
+                body: JSON.stringify({ refresh_token: refreshToken }),
             })
 
             if (!response.ok) throw new Error(`Refresh failed: ${response.status}`)
@@ -88,7 +108,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             localStorage.setItem("access_token", data.access_token)
             localStorage.setItem("refresh_token", data.refresh_token)
 
-            // ✅ SYNC COOKIE for nginx iframe auth
+            // Sync cookie for nginx iframe auth
             setAccessTokenCookie(data.access_token, data.expires_in)
 
             retryCountRef.current = 0
@@ -102,10 +122,51 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
     }, [])
 
+    const stopTokenRefresh = useCallback(() => {
+        if (refreshIntervalRef.current) {
+            clearInterval(refreshIntervalRef.current)
+            refreshIntervalRef.current = null
+            console.log("[Auth] Stopped token refresh")
+        }
+    }, [])
+
+    const logout = useCallback(async () => {
+        stopTokenRefresh()
+
+        const token = getToken()
+        const refreshToken = localStorage.getItem("refresh_token")
+
+        if (token) {
+            try {
+                await fetch(`${API_BASE_URL}/auth/logout`, {
+                    method: "POST",
+                    headers: {
+                        Authorization: `Bearer ${token}`,
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({ refresh_token: refreshToken }),
+                })
+            } catch (error) {
+                console.error("Logout error:", error)
+            }
+        }
+
+        localStorage.removeItem("access_token")
+        localStorage.removeItem("refresh_token")
+        clearAccessTokenCookie()
+
+        setUser(null)
+        setIsAuthenticated(false)
+        retryCountRef.current = 0
+    }, [stopTokenRefresh, getToken])
+
     const startTokenRefresh = useCallback(() => {
         if (refreshIntervalRef.current) clearInterval(refreshIntervalRef.current)
 
-        console.log("[Auth] Starting token refresh interval (4 minutes)")
+        console.log(
+            `[Auth] Starting token refresh interval (${TOKEN_REFRESH_INTERVAL_MS / 60000} minutes)`
+        )
+        // Fire one refresh immediately (fire-and-forget is safe; performRefresh catches its own errors)
         performRefresh()
 
         refreshIntervalRef.current = setInterval(async () => {
@@ -120,20 +181,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             } else {
                 retryCountRef.current = 0
             }
-        }, TOKEN_REFRESH_INTERVAL)
-    }, [performRefresh])
-
-    const stopTokenRefresh = useCallback(() => {
-        if (refreshIntervalRef.current) {
-            clearInterval(refreshIntervalRef.current)
-            refreshIntervalRef.current = null
-            console.log("[Auth] Stopped token refresh")
-        }
-    }, [])
+        }, TOKEN_REFRESH_INTERVAL_MS)
+    }, [performRefresh, logout])
 
     useEffect(() => {
         const checkAuth = async () => {
-            const token = localStorage.getItem("access_token")
+            const token = getToken()
             if (!token) {
                 setIsLoading(false)
                 return
@@ -143,8 +196,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 const response = await fetch(`${API_BASE_URL}/auth/check`, {
                     headers: {
                         Authorization: `Bearer ${token}`,
-                        Accept: "application/json"
-                    }
+                        Accept: "application/json",
+                    },
                 })
 
                 if (!response.ok) throw new Error("Invalid token")
@@ -153,7 +206,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 if (data.logged_in) {
                     const roles = extractRoles(token)
                     const primaryRole =
-                        roles.find((r) => ["admin", "moderator", "trainee"].includes(r)) || "trainee"
+                        roles.find((r) =>
+                            ["admin", "moderator", "trainee"].includes(r)
+                        ) || "trainee"
 
                     setUser({
                         id: data.user.sub,
@@ -164,7 +219,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                         firstName: data.user.given_name,
                         lastName: data.user.family_name,
                         role: primaryRole as User["role"],
-                        emailVerified: data.user.email_verified
+                        emailVerified: data.user.email_verified,
                     })
 
                     setIsAuthenticated(true)
@@ -186,14 +241,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         checkAuth()
         return () => stopTokenRefresh()
-    }, [startTokenRefresh, stopTokenRefresh])
+    }, [startTokenRefresh, stopTokenRefresh, getToken, extractRoles])
 
     useEffect(() => {
         const handleVisibilityChange = () => {
             if (!document.hidden && isAuthenticated) performRefresh()
         }
         document.addEventListener("visibilitychange", handleVisibilityChange)
-        return () => document.removeEventListener("visibilitychange", handleVisibilityChange)
+        return () =>
+            document.removeEventListener("visibilitychange", handleVisibilityChange)
     }, [isAuthenticated, performRefresh])
 
     const login = useCallback(
@@ -203,9 +259,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     method: "POST",
                     headers: {
                         "Content-Type": "application/json",
-                        Accept: "application/json"
+                        Accept: "application/json",
                     },
-                    body: JSON.stringify({ username, password })
+                    body: JSON.stringify({ username, password }),
                 })
 
                 if (!response.ok) return false
@@ -214,14 +270,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 localStorage.setItem("access_token", data.access_token)
                 localStorage.setItem("refresh_token", data.refresh_token)
 
-                // ✅ SET COOKIE for nginx iframe auth
+                // Set cookie for nginx iframe auth
                 setAccessTokenCookie(data.access_token, data.expires_in)
 
                 const checkResponse = await fetch(`${API_BASE_URL}/auth/check`, {
                     headers: {
                         Authorization: `Bearer ${data.access_token}`,
-                        Accept: "application/json"
-                    }
+                        Accept: "application/json",
+                    },
                 })
 
                 if (!checkResponse.ok) return false
@@ -229,7 +285,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
                 const roles = extractRoles(data.access_token)
                 const primaryRole =
-                    roles.find((r) => ["admin", "moderator", "trainee"].includes(r)) || "trainee"
+                    roles.find((r) =>
+                        ["admin", "moderator", "trainee"].includes(r)
+                    ) || "trainee"
 
                 setUser({
                     id: userData.user.sub,
@@ -240,7 +298,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     firstName: userData.user.given_name,
                     lastName: userData.user.family_name,
                     role: primaryRole as User["role"],
-                    emailVerified: userData.user.email_verified
+                    emailVerified: userData.user.email_verified,
                 })
 
                 setIsAuthenticated(true)
@@ -251,41 +309,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 return false
             }
         },
-        [startTokenRefresh]
+        [startTokenRefresh, extractRoles]
     )
 
-    const logout = useCallback(async () => {
-        stopTokenRefresh()
-
-        const token = localStorage.getItem("access_token")
-        const refreshToken = localStorage.getItem("refresh_token")
-
-        if (token) {
-            try {
-                await fetch(`${API_BASE_URL}/auth/logout`, {
-                    method: "POST",
-                    headers: {
-                        Authorization: `Bearer ${token}`,
-                        "Content-Type": "application/json"
-                    },
-                    body: JSON.stringify({ refresh_token: refreshToken })
-                })
-            } catch (error) {
-                console.error("Logout error:", error)
-            }
-        }
-
-        localStorage.removeItem("access_token")
-        localStorage.removeItem("refresh_token")
-        clearAccessTokenCookie()
-
-        setUser(null)
-        setIsAuthenticated(false)
-        retryCountRef.current = 0
-    }, [stopTokenRefresh])
-
     return (
-        <AuthContext.Provider value={{ user, isLoading, isAuthenticated, login, logout }}>
+        <AuthContext.Provider
+            value={{ user, isLoading, isAuthenticated, login, logout, getToken }}
+        >
             {children}
         </AuthContext.Provider>
     )

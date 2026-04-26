@@ -1,0 +1,88 @@
+import { useState, useCallback } from "react"
+import { toast } from "sonner"
+import type { LabInstanceListResponse, LabInstance } from "@/types/LabInstance/LabInstance"
+
+const API_BASE_URL =
+    import.meta.env.VITE_API_BASE_URL || "http://localhost:8000"
+
+export function useListLabInstances() {
+    const [instances, setInstances] = useState<LabInstance[]>([])
+    const [total, setTotal] = useState(0)
+    const [isLoading, setIsLoading] = useState(false)
+    const [error, setError] = useState<string | null>(null)
+
+    const getToken = useCallback((): string => {
+        const token = localStorage.getItem("access_token")
+        if (!token) {
+            toast.error("Authentication required")
+            throw new Error("Authentication required")
+        }
+        return token
+    }, [])
+
+    const fetchInstances = useCallback(
+        async (skip = 0, limit = 100) => {
+            setIsLoading(true)
+            setError(null)
+
+            try {
+                const token = getToken()
+                const params = new URLSearchParams()
+                params.append("skip", skip.toString())
+                params.append("limit", limit.toString())
+
+                const url = `${API_BASE_URL}/lab-instances/?${params.toString()}`
+
+                const response = await fetch(url, {
+                    method: "GET",
+                    headers: {
+                        Accept: "application/json",
+                        Authorization: `Bearer ${token}`,
+                    },
+                })
+
+                if (!response.ok) {
+                    if (response.status === 401) {
+                        const msg = "Unauthorized. Please log in."
+                        toast.error(msg)
+                        throw new Error(msg)
+                    }
+                    if (response.status === 403) {
+                        const msg = "Forbidden."
+                        toast.error(msg)
+                        throw new Error(msg)
+                    }
+                    const msg = `Failed to list instances: ${response.statusText}`
+                    toast.error(msg)
+                    throw new Error(msg)
+                }
+
+                const result: LabInstanceListResponse = await response.json()
+                setInstances(result.items)
+                setTotal(result.total)
+                return result
+            } catch (err) {
+                const message =
+                    err instanceof Error ? err.message : "Failed to list lab instances"
+
+                const alreadyHandled =
+                    message === "Authentication required" ||
+                    message === "Unauthorized. Please log in." ||
+                    message === "Forbidden." ||
+                    message.includes("Failed to list instances")
+
+                if (!alreadyHandled) {
+                    toast.error(message)
+                    setError(message)
+                }
+
+                throw new Error(message)
+            } finally {
+                setIsLoading(false)
+            }
+        },
+        [getToken]
+    )
+
+    return { instances, total, isLoading, error, fetchInstances }
+}

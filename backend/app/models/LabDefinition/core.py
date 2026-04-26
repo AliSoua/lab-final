@@ -2,8 +2,8 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Column, String, DateTime, Integer, Text, ARRAY, Boolean, ForeignKey, JSON
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Column, String, DateTime, Integer, Text, ARRAY, Boolean, ForeignKey
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from app.db.base import Base
 
@@ -62,7 +62,9 @@ class LabDefinition(Base):
     )
 
     # Connection Slots (assigned existing connections: slug + protocol flags)
-    connection_slots = Column(JSON, default=list, nullable=False)
+    # CHANGED: JSON -> JSONB for consistency with guacamole_connections and
+    # better PostgreSQL performance/indexing support.
+    connection_slots = Column(JSONB, default=list, nullable=False)
 
     # Relationships
     vms = relationship(

@@ -8,9 +8,9 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-GUACAMOLE_API = os.getenv("GUACAMOLE_API_URL", "http://guacamole:8080/guacamole/api")
-ADMIN_USER = os.getenv("GUACAMOLE_ADMIN_USER", "guacadmin")
-ADMIN_PASS = os.getenv("GUACAMOLE_ADMIN_PASS", "guacadmin")
+GUACAMOLE_API = os.getenv("GUACAMOLE_API_URL")
+ADMIN_USER = os.getenv("GUACAMOLE_ADMIN_USER")
+ADMIN_PASS = os.getenv("GUACAMOLE_ADMIN_PASS")
 
 
 class GuacamoleService:

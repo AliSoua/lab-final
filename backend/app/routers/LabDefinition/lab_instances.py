@@ -23,6 +23,9 @@ from app.schemas.LabDefinition.LabInstanceEvent import (
 from app.models.LabDefinition.LabInstanceTask import LabInstanceTask
 from app.models.LabDefinition.LabInstanceEventLog import LabInstanceEventLog
 from app.dependencies.keycloak.keycloak_roles import require_any_role
+from app.schemas.user import UserSyncRequest
+import logging
+logger = logging.getLogger(__name__)
 
 require_all = require_any_role(["trainee", "moderator", "admin"])
 
@@ -53,10 +56,40 @@ def _get_trainee_id(userinfo: dict, db: Session) -> uuid.UUID:
 
     user = user_service.get_by_keycloak_id(db, keycloak_id)
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User profile not found. Please access /profile/me first to sync your account.",
+        # ── Auto-provision on first access ──────────────────────────────
+        email = userinfo.get("email")
+        username = userinfo.get("preferred_username")
+
+        if not email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid token: missing email claim required for profile sync",
+            )
+
+        # Role extraction (mirrors profile/routes.py logic)
+        roles = userinfo.get("roles", [])
+        if not roles:
+            role = "trainee"
+        elif "admin" in roles:
+            role = "admin"
+        elif "moderator" in roles:
+            role = "moderator"
+        elif "trainee" in roles:
+            role = "trainee"
+        else:
+            role = roles[0]
+
+        sync_data = UserSyncRequest(
+            keycloak_id=keycloak_id,
+            email=email,
+            username=username or email,
+            first_name=userinfo.get("given_name"),
+            last_name=userinfo.get("family_name"),
+            role=role,
         )
+        user = user_service.sync_from_keycloak(db, sync_data)
+        logger.info(f"Auto-provisioned user on first lab access: {keycloak_id}")
+        # ────────────────────────────────────────────────────────────────
 
     return user.id
 

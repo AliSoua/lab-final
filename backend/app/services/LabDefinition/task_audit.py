@@ -8,6 +8,10 @@ from app.utils.db_session import background_session
 from app.models.LabDefinition.LabInstanceTask import LabInstanceTask
 from app.models.LabDefinition.LabInstanceEventLog import LabInstanceEventLog
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 def start_task(
     instance_id: uuid.UUID,
@@ -57,6 +61,8 @@ def mark_running(
             .first()
         )
         if not task:
+            # ── FIX: Log warning instead of silent fail ─────────────────────
+            logger.warning("mark_running: Task %s not found", task_id)
             return
 
         task.status = "running"
@@ -107,6 +113,13 @@ def finish_task(
     Called when the worker finishes (success or failure).
     Updates the task row and records a terminal event.
     """
+    # ── FIX: Validate status to prevent invalid DB values ─────────────────
+    valid_statuses = {"completed", "failed"}
+    if status not in valid_statuses:
+        raise ValueError(
+            f"Invalid task status '{status}'. Must be one of: {valid_statuses}"
+        )
+
     with background_session() as db:
         task = (
             db.query(LabInstanceTask)
@@ -114,6 +127,7 @@ def finish_task(
             .first()
         )
         if not task:
+            logger.warning("finish_task: Task %s not found", task_id)
             return
 
         task.status = status

@@ -60,7 +60,7 @@ export function useLabInstance(): UseLabInstanceReturn {
 
             try {
                 const token = getToken()
-                const url = `${API_BASE_URL}/lab-definitions/lab-instances/`
+                const url = `${API_BASE_URL}/lab-instances/`
 
                 const response = await fetch(url, {
                     method: "POST",
@@ -150,7 +150,7 @@ export function useLabInstance(): UseLabInstanceReturn {
                 params.append("skip", skip.toString())
                 params.append("limit", limit.toString())
 
-                const url = `${API_BASE_URL}/lab-definitions/lab-instances/?${params.toString()}`
+                const url = `${API_BASE_URL}/lab-instances/?${params.toString()}`
 
                 const response = await fetch(url, {
                     method: "GET",
@@ -211,7 +211,7 @@ export function useLabInstance(): UseLabInstanceReturn {
 
             try {
                 const token = getToken()
-                const url = `${API_BASE_URL}/lab-definitions/lab-instances/${instanceId}`
+                const url = `${API_BASE_URL}/lab-instances/${instanceId}`
 
                 const response = await fetch(url, {
                     method: "GET",
@@ -281,7 +281,7 @@ export function useLabInstance(): UseLabInstanceReturn {
 
             try {
                 const token = getToken()
-                const url = `${API_BASE_URL}/lab-definitions/lab-instances/${instanceId}/refresh`
+                const url = `${API_BASE_URL}/lab-instances/${instanceId}/refresh`
 
                 const response = await fetch(url, {
                     method: "POST",
@@ -360,7 +360,7 @@ export function useLabInstance(): UseLabInstanceReturn {
 
             try {
                 const token = getToken()
-                const url = `${API_BASE_URL}/lab-definitions/lab-instances/${instanceId}/stop`
+                const url = `${API_BASE_URL}/lab-instances/${instanceId}/stop`
 
                 const response = await fetch(url, {
                     method: "POST",
@@ -439,7 +439,7 @@ export function useLabInstance(): UseLabInstanceReturn {
 
             try {
                 const token = getToken()
-                const url = `${API_BASE_URL}/lab-definitions/lab-instances/${instanceId}`
+                const url = `${API_BASE_URL}/lab-instances/${instanceId}`
 
                 const response = await fetch(url, {
                     method: "DELETE",

@@ -27,6 +27,16 @@ class LabInstance(Base):
         index=True,
     )
 
+    # ── NEW: Snapshot the guide version at launch time ─────────────────────
+    # If the lab definition's guide_version changes later, this instance
+    # remains pinned to the version that was current at launch.
+    guide_version_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("guide_versions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     vm_uuid = Column(String(255), nullable=True)
     vm_name = Column(String(255), nullable=True)
     vcenter_host = Column(String(255), nullable=True)
@@ -48,6 +58,24 @@ class LabInstance(Base):
         server_default="{}",
     )
 
+    # ── NEW: Runtime session state (step progress, scores, command results) ─
+    # Mirrors frontend LabGuideSessionState structure.
+    # Stores: { step_states: [...], total_score: 0, max_score: 0, status: "active" }
+    session_state = Column(
+        JSONB,
+        default=lambda: {
+            "step_states": [],
+            "total_score": 0,
+            "max_score": 0,
+            "status": "active",
+        },
+        nullable=False,
+        server_default='{"step_states": [], "total_score": 0, "max_score": 0, "status": "active"}',
+    )
+
+    # ── NEW: Current step index for the trainee's active session ────────────
+    current_step_index = Column(Integer, default=0, nullable=False, server_default="0")
+
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     started_at = Column(DateTime(timezone=True))
     stopped_at = Column(DateTime(timezone=True))
@@ -56,6 +84,9 @@ class LabInstance(Base):
     # Relationships
     lab_definition = relationship("LabDefinition", back_populates="instances")
     user = relationship("User", back_populates="instances")
+
+    # ── NEW: Relationship to the pinned guide version ───────────────────────
+    guide_version = relationship("GuideVersion", back_populates="instances")
 
     # ── NEW: error_message for terminal failed states ──
     error_message = Column(Text, nullable=True)
@@ -75,5 +106,6 @@ class LabInstance(Base):
     def __repr__(self):
         return (
             f"<LabInstance(id={self.id}, lab={self.lab_definition_id}, "
-            f"trainee={self.trainee_id}, status={self.status})>"
+            f"trainee={self.trainee_id}, status={self.status}, "
+            f"guide_version={self.guide_version_id})>"
         )

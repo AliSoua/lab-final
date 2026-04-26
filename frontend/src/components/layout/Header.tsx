@@ -1,3 +1,4 @@
+// src/components/layout/Header.tsx
 import { Bell, Search, Menu, User, LogOut, Settings, ChevronDown, FlaskConical } from "lucide-react"
 import { Link, useNavigate } from "react-router-dom"
 import { Button } from "@/components/ui/button"
@@ -38,7 +39,6 @@ export function Header({ onMenuToggle, user, onLogout }: HeaderProps) {
     .toUpperCase()
     .slice(0, 2) ?? "U"
 
-  // Check if user is admin or moderator (hide logo and search for these roles)
   const isStaff = user?.role === "admin" || user?.role === "moderator"
   const showLogoAndSearch = !isStaff
   const navigate = useNavigate()
@@ -53,7 +53,6 @@ export function Header({ onMenuToggle, user, onLogout }: HeaderProps) {
         {/* LEFT SECTION: Logo + Mobile Toggle (hidden for admin/moderator) */}
         {showLogoAndSearch ? (
           <div className="flex items-center gap-3 shrink-0">
-            {/* Mobile menu toggle */}
             <button
               onClick={onMenuToggle}
               className="md:hidden flex h-9 w-9 items-center justify-center rounded-lg text-[#727373] transition-colors hover:bg-[#f5f5f5] hover:text-[#3a3a3a]"
@@ -62,7 +61,6 @@ export function Header({ onMenuToggle, user, onLogout }: HeaderProps) {
               <Menu className="h-5 w-5" />
             </button>
 
-            {/* Logo */}
             <Link to="/" className="flex items-center gap-2.5">
               <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#1ca9b1]">
                 <FlaskConical className="h-4 w-4 text-white" />
@@ -78,7 +76,6 @@ export function Header({ onMenuToggle, user, onLogout }: HeaderProps) {
             </Link>
           </div>
         ) : (
-          /* For admin/moderator: Only show mobile toggle on left */
           <div className="flex items-center gap-3 shrink-0 md:hidden">
             <button
               onClick={onMenuToggle}
@@ -181,6 +178,18 @@ export function Header({ onMenuToggle, user, onLogout }: HeaderProps) {
                     <User className="h-[15px] w-[15px] text-[#727373]" />
                     Profile
                   </DropdownMenuItem>
+
+                  {/* TRAINEE ONLY: My Lab Instances */}
+                  {user.role === "trainee" && (
+                    <DropdownMenuItem
+                      onClick={() => navigate("/lab-instances")}
+                      className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] text-[#3a3a3a] cursor-pointer focus:bg-[#f5f5f5] focus:text-[#3a3a3a]"
+                    >
+                      <FlaskConical className="h-[15px] w-[15px] text-[#727373]" />
+                      My Lab Instances
+                    </DropdownMenuItem>
+                  )}
+
                   <DropdownMenuItem className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] text-[#3a3a3a] cursor-pointer focus:bg-[#f5f5f5] focus:text-[#3a3a3a]">
                     <Settings className="h-[15px] w-[15px] text-[#727373]" />
                     Settings

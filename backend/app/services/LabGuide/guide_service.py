@@ -6,6 +6,7 @@ from sqlalchemy import asc, func
 from fastapi import HTTPException, status
 import logging
 from datetime import datetime
+
 from app.models.LabDefinition.LabGuide import LabGuide, GuideVersion
 from app.models.LabDefinition.core import LabDefinition
 from app.schemas.LabDefinition.LabGuide import (
@@ -118,10 +119,13 @@ def publish_version(db: Session, guide_id: UUID, version_id: UUID, user_id: str)
     if not version:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Version not found")
 
+    guide = db.query(LabGuide).filter(LabGuide.id == guide_id).first()
+    if not guide:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Guide not found")
+
     version.is_published = True
     version.published_at = datetime.utcnow()
 
-    guide = db.query(LabGuide).filter(LabGuide.id == guide_id).first()
     guide.current_version_id = version.id
     guide.updated_by = user_id
     guide.updated_at = datetime.utcnow()
@@ -160,7 +164,14 @@ def get_guide(db: Session, guide_id: UUID) -> Optional[LabGuide]:
 
 
 def get_guide_with_current_version(db: Session, guide_id: UUID) -> Optional[LabGuide]:
-    return db.query(LabGuide).filter(LabGuide.id == guide_id).first()
+    """Load guide with current_version eagerly via joinedload."""
+    from sqlalchemy.orm import joinedload
+    return (
+        db.query(LabGuide)
+        .options(joinedload(LabGuide.current_version))
+        .filter(LabGuide.id == guide_id)
+        .first()
+    )
 
 
 def get_version(db: Session, version_id: UUID) -> Optional[GuideVersion]:
@@ -231,16 +242,17 @@ def delete_guide(db: Session, guide_id: UUID) -> None:
     versions = db.query(GuideVersion).filter(GuideVersion.guide_id == guide_id).all()
     version_ids = [v.id for v in versions]
 
-    assigned_labs = db.query(LabDefinition).filter(
-        LabDefinition.guide_version_id.in_(version_ids)
-    ).all()
+    if version_ids:
+        assigned_labs = db.query(LabDefinition).filter(
+            LabDefinition.guide_version_id.in_(version_ids)
+        ).all()
 
-    if assigned_labs:
-        names = ", ".join([lab.name for lab in assigned_labs[:3]])
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Guide versions assigned to labs: {names}. Unassign before deleting.",
-        )
+        if assigned_labs:
+            names = ", ".join([lab.name for lab in assigned_labs[:3]])
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Guide versions assigned to labs: {names}. Unassign before deleting.",
+            )
 
     db.delete(guide)
     db.commit()
@@ -263,6 +275,9 @@ def delete_version(db: Session, guide_id: UUID, version_id: UUID) -> None:
         )
 
     guide = db.query(LabGuide).filter(LabGuide.id == guide_id).first()
+    if not guide:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Guide not found")
+
     was_current = guide.current_version_id == version_id
 
     db.delete(version)

@@ -14,7 +14,7 @@ from app.routers.LabDefinition.FeatureLabDefinition import router as feature_rou
 from app.routers.LabDefinition.LabConnection import router as connection_router
 
 # Import lab instances router
-from app.routers.LabDefinition.lab_instances import router as lab_instances_router
+# from app.routers.LabDefinition.lab_instances import router as lab_instances_router
 
 # Main router with prefix and tags
 router = APIRouter(
@@ -37,4 +37,4 @@ router.include_router(feature_router)        # /{lab_id}/feature, /{lab_id}/unfe
 router.include_router(connection_router)     # /{lab_id}/connection
 
 
-router.include_router(lab_instances_router)  # /{lab_id}/instances/*
+#router.include_router(lab_instances_router)  # /{lab_id}/instances/*

@@ -72,7 +72,15 @@ class GuideVersion(Base):
 
     # Relationships
     guide = relationship("LabGuide", back_populates="versions", foreign_keys=[guide_id])
+    
+    # CHANGED: Added back_populates to match the new relationship on LabInstance
     assigned_labs = relationship("LabDefinition", back_populates="guide_version")
+    
+    # NEW: Running instances pinned to this version
+    instances = relationship(
+        "LabInstance",
+        back_populates="guide_version",
+    )
 
     __table_args__ = (
         UniqueConstraint("guide_id", "version_number", name="uq_guide_version_number"),

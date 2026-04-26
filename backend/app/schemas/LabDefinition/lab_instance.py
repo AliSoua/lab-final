@@ -1,8 +1,10 @@
 # app/schemas/LabDefinition/lab_instance.py
 import uuid
 from datetime import datetime
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
+
+from app.schemas.LabDefinition.lab_runtime import LabGuideSessionState
 
 
 class LabInstanceCreate(BaseModel):
@@ -15,9 +17,17 @@ class LabInstanceResponse(BaseModel):
     id: uuid.UUID
     lab_definition_id: uuid.UUID
     trainee_id: uuid.UUID
+
+    # ── NEW: Snapshot of the guide version active at launch time ────────────
+    guide_version_id: Optional[uuid.UUID] = Field(
+        None,
+        description="Pinned guide version. Copied from LabDefinition at launch.",
+    )
+
     vm_uuid: Optional[str] = None
     vm_name: Optional[str] = None
     vcenter_host: Optional[str] = None
+
     status: str
     power_state: Optional[str] = None
     ip_address: Optional[str] = None
@@ -26,11 +36,22 @@ class LabInstanceResponse(BaseModel):
     connection_url: Optional[str] = None
     guacamole_connection_id: Optional[str] = None
 
-    # NEW: Mapping of all active Guacamole connections
-    # Keys are "{slug}_{protocol}", values are Guacamole connection IDs
+    # Mapping of all active Guacamole connections
     guacamole_connections: Optional[Dict[str, str]] = Field(
         default_factory=dict,
         description="All Guacamole connections keyed as 'slug_protocol'",
+    )
+
+    # ── NEW: Runtime session state (step progress, scores, results) ─────────
+    session_state: Optional[LabGuideSessionState] = Field(
+        default=None,
+        description="Mutable runtime state: step completions, command results, scores.",
+    )
+
+    # ── NEW: Current step index persisted server-side ───────────────────────
+    current_step_index: int = Field(
+        default=0,
+        description="Trainee's current position in the guide (0-based).",
     )
 
     created_at: Optional[datetime] = None
@@ -55,3 +76,10 @@ class LabInstanceStatusResponse(BaseModel):
     power_state: Optional[str] = None
     ip_address: Optional[str] = None
     vm_name: Optional[str] = None
+
+    # ── NEW: Lightweight runtime fields for polling ─────────────────────────
+    current_step_index: int = Field(default=0)
+    session_state_status: Optional[str] = Field(
+        None,
+        description="Derived from session_state.status for quick polling.",
+    )

@@ -30,6 +30,7 @@ from app.models.LabDefinition.LabInstanceTask import LabInstanceTask
 from app.models.LabDefinition.LabInstance import LabInstance
 from app.models.LabDefinition.LabInstanceEventLog import LabInstanceEventLog
 from app.routers.database import router as db_admin_router
+from app.routers.LabInstance import router as LabInstance_router
 
 
 def _reap_unsent_tasks() -> None:
@@ -147,6 +148,7 @@ app.include_router(lab_definition_router)
 app.include_router(profile_router.router)
 app.include_router(guides_router)
 app.include_router(db_admin_router)
+app.include_router(LabInstance_router)
 
 
 @app.get("/")

@@ -469,6 +469,9 @@ class LabInstanceService:
                 f"Cannot terminate instance in status '{instance.status}'"
             )
 
+        # FIX #4: Capture the REAL previous status before mutating it
+        previous_status = instance.status
+
         instance.status = "terminating"
         db.commit()
         db.refresh(instance)
@@ -482,7 +485,7 @@ class LabInstanceService:
             metadata={
                 "instance_id": str(instance_id),
                 "trainee_id": str(trainee_id),
-                "previous_status": instance.status,
+                "previous_status": previous_status,
             },
         )
 
@@ -577,6 +580,8 @@ class LabInstanceService:
             return
 
         try:
+            vm_destroyed = False
+
             if instance.vm_uuid and instance.vcenter_host:
                 record_event(
                     task_uuid,
@@ -586,66 +591,75 @@ class LabInstanceService:
                 )
 
                 creds = self._find_vcenter_credentials(instance.vcenter_host)
-                if creds:
-                    client = VCenterClient(
-                        host=creds["host"],
-                        username=creds["username"],
-                        password=creds["password"],
+                if not creds:
+                    raise RuntimeError(
+                        f"No vCenter credentials found for {instance.vcenter_host}"
                     )
-                    if client.connect():
-                        try:
-                            vm = client.find_vm_by_uuid(instance.vm_uuid)
-                            if vm:
-                                if str(vm.runtime.powerState) == "poweredOn":
-                                    try:
-                                        task = vm.PowerOffVM_Task()
-                                        client._wait_for_task(task)
-                                    except Exception as e:
-                                        record_event(
-                                            task_uuid,
-                                            instance.id,
-                                            "power_off_warning",
-                                            f"Power off before destroy failed (non-fatal): {e}",
-                                        )
 
-                                task = vm.Destroy_Task()
-                                client._wait_for_task(task)
+                client = VCenterClient(
+                    host=creds["host"],
+                    username=creds["username"],
+                    password=creds["password"],
+                )
+                if not client.connect():
+                    raise RuntimeError(
+                        f"Failed to connect to vCenter {creds['host']}"
+                    )
+
+                try:
+                    vm = client.find_vm_by_uuid(instance.vm_uuid)
+                    if vm:
+                        if str(vm.runtime.powerState) == "poweredOn":
+                            try:
+                                task = vm.PowerOffVM_Task()
+                                # FIX #3: timeout wrapper prevents infinite hang
+                                _call_with_timeout(client._wait_for_task, 120, task)
+                            except Exception as e:
                                 record_event(
                                     task_uuid,
                                     instance.id,
-                                    "vcenter_destroy_completed",
-                                    f"Destroyed VM {instance.vm_uuid}",
+                                    "power_off_warning",
+                                    f"Power off before destroy failed (non-fatal): {e}",
                                 )
-                        except Exception as e:
-                            record_event(
-                                task_uuid,
-                                instance.id,
-                                "vcenter_destroy_failed",
-                                str(e),
-                            )
-                            raise
-                        finally:
-                            client.disconnect()
-                    else:
+
+                        task = vm.Destroy_Task()
+                        _call_with_timeout(client._wait_for_task, 180, task)
                         record_event(
                             task_uuid,
                             instance.id,
-                            "vcenter_connect_failed",
-                            f"Could not connect to {instance.vcenter_host}",
+                            "vcenter_destroy_completed",
+                            f"Destroyed VM {instance.vm_uuid}",
                         )
-                else:
+                    else:
+                        # VM not found in vCenter — probably already deleted manually
+                        record_event(
+                            task_uuid,
+                            instance.id,
+                            "vcenter_vm_not_found",
+                            f"VM {instance.vm_uuid} not found in vCenter — assuming already destroyed",
+                        )
+
+                    vm_destroyed = True
+
+                except Exception as e:
                     record_event(
                         task_uuid,
                         instance.id,
-                        "vcenter_creds_missing",
-                        f"No credentials for {instance.vcenter_host}",
+                        "vcenter_destroy_failed",
+                        str(e),
                     )
+                    raise
+                finally:
+                    client.disconnect()
 
-            instance.status = "terminated"
-            instance.stopped_at = datetime.utcnow()
-            db.commit()
-
-            finish_task(task_uuid, "completed")
+            if vm_destroyed or not instance.vm_uuid:
+                instance.status = "terminated"
+                instance.stopped_at = datetime.utcnow()
+                db.commit()
+                finish_task(task_uuid, "completed")
+            else:
+                # Should never reach here, but defensive
+                raise RuntimeError("VM destroy was not confirmed")
 
         except Exception as e:
             logger.error(
