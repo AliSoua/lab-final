@@ -2,8 +2,7 @@ import { useState, useCallback } from "react"
 import { toast } from "sonner"
 import type { LabInstanceListResponse, LabInstance } from "@/types/LabInstance/LabInstance"
 
-const API_BASE_URL =
-    import.meta.env.VITE_API_BASE_URL
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
 
 export function useListLabInstances() {
     const [instances, setInstances] = useState<LabInstance[]>([])

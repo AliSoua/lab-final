@@ -9,8 +9,7 @@ import type {
 import { toFullCreateRequest } from "@/types/LabDefinition/CreateFullLabDefinition"
 import type { LabDefinition } from "@/types/LabDefinition/ListLabs"
 
-const API_BASE_URL =
-    import.meta.env.VITE_API_BASE_URL
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
 
 interface UseCreateFullLabsReturn {
     createFullLab: (data: CreateFullLabDefinitionFormData) => Promise<LabDefinition>

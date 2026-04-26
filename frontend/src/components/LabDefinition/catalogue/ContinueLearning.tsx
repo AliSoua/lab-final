@@ -4,8 +4,8 @@ import { Clock, RotateCcw, ChevronRight, Trophy } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { PublicLabDefinition } from "@/types/LabDefinition"
 
-const API_BASE_URL =
-    import.meta.env.VITE_API_BASE_URL
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
 
 interface LabProgress {
     lab: PublicLabDefinition
@@ -50,7 +50,7 @@ export function ContinueLearning({ inProgressLabs }: ContinueLearningProps) {
                         <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-lg bg-[#f8f8f8]">
                             {lab.thumbnail_url ? (
                                 <img
-                                    src={`${API_BASE_URL}{lab.thumbnail_url}`}
+                                    src={`${API_BASE_URL}${lab.thumbnail_url}`}
                                     alt={lab.name}
                                     className="h-full w-full object-cover"
                                     onError={(e) => {

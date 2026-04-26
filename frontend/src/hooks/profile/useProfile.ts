@@ -2,8 +2,7 @@
 import { useState, useCallback } from "react"
 import type { UserProfile, UserStats, UpdateProfileRequest } from "@/types/profile/user"
 
-const API_BASE_URL =
-    import.meta.env.VITE_API_BASE_URL
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
 
 interface UseProfileReturn {
     profile: UserProfile | null

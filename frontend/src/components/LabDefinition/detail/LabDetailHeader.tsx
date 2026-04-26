@@ -13,8 +13,7 @@ import { cn } from "@/lib/utils"
 import type { LabDetail } from "@/types/LabDefinition/LabDetail"
 
 
-const API_BASE_URL =
-    import.meta.env.VITE_API_BASE_URL
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
 
 interface LabDetailHeaderProps {
     lab: LabDetail
