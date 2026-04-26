@@ -3,7 +3,7 @@ import { useState, useCallback } from "react"
 import type { LabDefinition } from "@/types/LabDefinition/ListLabs"
 
 const API_BASE_URL =
-    import.meta.env.VITE_API_BASE_URL || "http://localhost:8000"
+    import.meta.env.VITE_API_BASE_URL
 
 interface UsePublishLabReturn {
     publishLab: (labId: string) => Promise<LabDefinition>

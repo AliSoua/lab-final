@@ -13,7 +13,7 @@ import { toast } from "sonner"
 
 export default function ListGuidePage() {
     const navigate = useNavigate()
-    const { guides, isLoading, refetch, deleteGuide, assignGuideVersion } = useLabGuides()
+    const { guides, isLoading, refetch, deleteGuide } = useLabGuides()
     const { createVersion } = useGuideVersions()
 
     const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)

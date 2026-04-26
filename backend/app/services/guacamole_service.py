@@ -192,7 +192,7 @@ class GuacamoleService:
         User must be authenticated to Guacamole (via shared cookie or SSO).
         """
         # External URL should come from env in production
-        external_base = os.getenv("GUACAMOLE_EXTERNAL_URL", "http://localhost:8081/guacamole")
+        external_base = os.getenv("GUACAMOLE_EXTERNAL_URL")
         return f"{external_base}/#/client/{connection_id}"
 
     # ------------------------------------------------------------------

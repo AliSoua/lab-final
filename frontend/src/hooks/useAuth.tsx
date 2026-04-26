@@ -11,7 +11,7 @@ import React, {
 import type { User, LoginResponse, CheckAuthResponse, TokenResponse } from "@/types"
 
 const API_BASE_URL =
-    import.meta.env.VITE_API_BASE_URL || "http://localhost:8000"
+    import.meta.env.VITE_API_BASE_URL
 
 const TOKEN_REFRESH_INTERVAL_MS =
     parseInt(import.meta.env.VITE_TOKEN_REFRESH_INTERVAL_MINUTES || "4", 10) *

@@ -3,7 +3,7 @@ import { toast } from "sonner"
 import type { LabInstanceListResponse, LabInstance } from "@/types/LabInstance/LabInstance"
 
 const API_BASE_URL =
-    import.meta.env.VITE_API_BASE_URL || "http://localhost:8000"
+    import.meta.env.VITE_API_BASE_URL
 
 export function useListLabInstances() {
     const [instances, setInstances] = useState<LabInstance[]>([])

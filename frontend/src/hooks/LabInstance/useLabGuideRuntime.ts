@@ -3,7 +3,7 @@ import { useState, useEffect, useCallback } from "react"
 import type { LabGuideStep, GuideVersion, StepExecutionState } from "@/types/LabGuide"
 import type { LabInstance } from "@/types/LabInstance/LabInstance"
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000"
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
 
 async function fetchInstanceGuideVersion(instanceId: string, token: string): Promise<GuideVersion | null> {
     try {

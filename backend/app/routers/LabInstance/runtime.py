@@ -2,7 +2,7 @@
 """
 Lab Instance Runtime Operations
 POST /lab-instances/{id}/refresh
-GET /lab-instances/{id}/guide-version  <-- NEW
+GET /lab-instances/{id}/guide-version
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status

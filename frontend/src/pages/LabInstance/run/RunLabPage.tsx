@@ -17,7 +17,7 @@ import { LabGuidePanel } from "@/components/LabInstance/run/LabGuidePanel"
 import { VMConsolePanel } from "@/components/LabInstance/run/VMConsolePanel"
 import type { LabInstance } from "@/types/LabInstance/LabInstance"
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000"
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
 const POLL_INTERVAL_MS = 30_000
 
 async function silentRefresh(instanceId: string): Promise<LabInstance | null> {

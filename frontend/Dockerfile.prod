@@ -1,18 +1,25 @@
-# frontend/Dockerfile.prod
 # ---------- Build stage ----------
 FROM node:20-alpine AS builder
-
 WORKDIR /app
 
-# 1. Install dependencies
+# 1. Declare build args BEFORE they're needed
+ARG VITE_API_BASE_URL
+ARG VITE_TOKEN_REFRESH_INTERVAL_MINUTES
+ARG VITE_MAX_REFRESH_RETRIES
+
+# 2. Expose them as env vars so Vite can read them during build
+ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
+ENV VITE_TOKEN_REFRESH_INTERVAL_MINUTES=$VITE_TOKEN_REFRESH_INTERVAL_MINUTES
+ENV VITE_MAX_REFRESH_RETRIES=$VITE_MAX_REFRESH_RETRIES
+
+# 3. Install dependencies
 COPY package*.json ./
 RUN npm ci
 
-# 2. Copy source
+# 4. Copy source
 COPY . .
 
-# 3. Fix TS 5.6+ deprecation errors for baseUrl + moduleResolution node10
-#    (TypeScript 7.0 will remove these; official workaround is ignoreDeprecations)
+# 5. Fix TS 5.6+ deprecation errors
 RUN node -e "\
   const fs = require('fs'); \
   const ts = JSON.parse(fs.readFileSync('tsconfig.json', 'utf8')); \
@@ -20,7 +27,7 @@ RUN node -e "\
   fs.writeFileSync('tsconfig.json', JSON.stringify(ts, null, 2)); \
 "
 
-# 4. Build
+# 6. Build (Vite reads VITE_* env vars here and bakes them into the bundle)
 RUN npm run build
 
 # ---------- Serve stage ----------

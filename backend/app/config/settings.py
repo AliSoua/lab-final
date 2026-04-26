@@ -1,9 +1,27 @@
 from pydantic_settings import BaseSettings
+import socket
+
+def get_host_ip():
+    """Obtient l'IP de la machine physique (pas localhost ou 127.x.x.x)."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("[IP_ADDRESS]", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        import logging
+        logging.warning("Impossible de récupérer l'IP hôte, utilisation de localhost")
+        return "localhost"
 
 class Settings(BaseSettings):
+
+    # Host IP
+    HOST_IP: str = get_host_ip()
+
     # Celery
-    CELERY_BROKER_URL: str = "redis://localhost:6379/0"
-    CELERY_RESULT_BACKEND: str = "redis://localhost:6379/0"
+    CELERY_BROKER_URL: str = f"redis://{HOST_IP}:6379/0"
+    CELERY_RESULT_BACKEND: str = f"redis://{HOST_IP}:6379/0"
 
     # PostgreSQL
     POSTGRES_HOST: str = "db"
@@ -25,7 +43,7 @@ class Settings(BaseSettings):
 
     # Guacamole
     GUACAMOLE_CLIENT_ID: str = "guacamole"
-    GUACAMOLE_PUBLIC_URL: str = "http://localhost:8081/guacamole"
+    GUACAMOLE_PUBLIC_URL: str = f"http://{HOST_IP}:8081/guacamole"
 
     model_config = {
         "env_file": ".env",

@@ -105,7 +105,7 @@ services:
       - GUACAMOLE_ADMIN_PASS=${GUACAMOLE_ADMIN_PASS:-guacadmin}
       # Guacamole SSO config (used by setup_keycloak.py)
       - GUACAMOLE_CLIENT_ID=guacamole
-      - GUACAMOLE_PUBLIC_URL=http://localhost:8081/guacamole
+      - GUACAMOLE_PUBLIC_URL=${GUACAMOLE_PUBLIC_URL}
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
 
@@ -128,7 +128,7 @@ services:
       - GUACAMOLE_ADMIN_USER=guacadmin
       - GUACAMOLE_ADMIN_PASS=${GUACAMOLE_ADMIN_PASS:-guacadmin}
       - GUACAMOLE_CLIENT_ID=guacamole
-      - GUACAMOLE_PUBLIC_URL=http://localhost:8081/guacamole
+      - GUACAMOLE_PUBLIC_URL=${GUACAMOLE_PUBLIC_URL}
     depends_on:
       - redis
       - db
@@ -158,12 +158,20 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile.prod
+      args:
+        - VITE_API_BASE_URL=${VITE_API_BASE_URL}
+        - VITE_TOKEN_REFRESH_INTERVAL_MINUTES=${VITE_TOKEN_REFRESH_INTERVAL_MINUTES}
+        - VITE_MAX_REFRESH_RETRIES=${VITE_MAX_REFRESH_RETRIES}
     container_name: react-frontend
     restart: always
     depends_on:
       - backend
     ports:
       - "80:80"
+    environment:
+      - VITE_API_BASE_URL=${VITE_API_BASE_URL}
+      - VITE_TOKEN_REFRESH_INTERVAL_MINUTES=${VITE_TOKEN_REFRESH_INTERVAL_MINUTES}
+      - VITE_MAX_REFRESH_RETRIES=${VITE_MAX_REFRESH_RETRIES}
 
   # -------------------------------------------------------------------------
   # Guacamole Stack (isolated database)

@@ -24,6 +24,10 @@ interface HeroSectionProps {
     onBrowseLabs: () => void
 }
 
+
+const API_BASE_URL =
+    import.meta.env.VITE_API_BASE_URL
+
 export function HeroSection({
     featuredLabs,
     totalLabs,
@@ -199,7 +203,7 @@ export function HeroSection({
                             <div className="relative aspect-video w-full overflow-hidden">
                                 {currentLab.thumbnail_url ? (
                                     <img
-                                        src={`http://localhost:8000${currentLab.thumbnail_url}`}
+                                        src={`${API_BASE_URL}${currentLab.thumbnail_url}`}
                                         alt={currentLab.name}
                                         className="h-full w-full object-cover"
                                     />

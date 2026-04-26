@@ -13,11 +13,11 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 # ── Read settings from environment ────────────────────────────────────────────
-POSTGRES_HOST     = os.getenv("POSTGRES_HOST", "localhost")
-POSTGRES_PORT     = os.getenv("POSTGRES_PORT", "5432")
-POSTGRES_DB       = os.getenv("POSTGRES_DB", "lab_platform")
-POSTGRES_USER     = os.getenv("POSTGRES_USER", "postgres")
-POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "postgres")
+POSTGRES_HOST     = os.getenv("POSTGRES_HOST")
+POSTGRES_PORT     = os.getenv("POSTGRES_PORT")
+POSTGRES_DB       = os.getenv("POSTGRES_DB")
+POSTGRES_USER     = os.getenv("POSTGRES_USER")
+POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD")
 
 # ── Synchronous (for FastAPI, existing code) ───────────────────────────────────
 DATABASE_URL = (

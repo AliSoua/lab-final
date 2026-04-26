@@ -12,6 +12,10 @@ import {
 import { cn } from "@/lib/utils"
 import type { LabDetail } from "@/types/LabDefinition/LabDetail"
 
+
+const API_BASE_URL =
+    import.meta.env.VITE_API_BASE_URL
+
 interface LabDetailHeaderProps {
     lab: LabDetail
     onStartLab?: (labId: string) => void
@@ -125,7 +129,7 @@ export function LabDetailHeader({ lab, onStartLab }: LabDetailHeaderProps) {
                             <div className="relative aspect-video w-full overflow-hidden">
                                 {lab.thumbnail_url ? (
                                     <img
-                                        src={`http://localhost:8000${lab.thumbnail_url}`}
+                                        src={`${API_BASE_URL}${lab.thumbnail_url}`}
                                         alt={lab.name}
                                         className="h-full w-full object-cover"
                                     />

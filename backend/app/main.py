@@ -31,7 +31,7 @@ from app.models.LabDefinition.LabInstance import LabInstance
 from app.models.LabDefinition.LabInstanceEventLog import LabInstanceEventLog
 from app.routers.database import router as db_admin_router
 from app.routers.LabInstance import router as LabInstance_router
-
+from app.config.settings import settings
 
 def _reap_unsent_tasks() -> None:
     """
@@ -110,11 +110,15 @@ security = HTTPBearer(auto_error=False)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost",
+        f"http://{settings.HOST_IP}",
+        f"http://{settings.HOST_IP}:80",
+        f"http://{settings.HOST_IP}:5173",
+        "http://localhost:8080",
         "http://localhost:80",
         "http://localhost:5173",
-        "http://localhost:3000",
-        "http://127.0.0.1:5173",
+        "http://guacamole:8080/guacamole",
+        "http://guacamole-web:8080/guacamole",
+        "http://guacamole-web:8081/guacamole",
     ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],

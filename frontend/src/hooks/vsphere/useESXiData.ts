@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from "react"
 import { toast } from "sonner"
 import type { ESXiHost, VMTemplate, VirtualMachine } from "@/types/infrastructure"
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000"
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
 
 // Backend API envelope structure
 interface ESXiApiEnvelope<T> {
