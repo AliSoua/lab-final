@@ -9,7 +9,7 @@ export interface LabInstanceEventLog {
     lab_instance_id: string
     event_type: string
     message: string
-    metadata: Record<string, unknown>
+    metadata?: Record<string, unknown> | null
     created_at: string | null
 }
 

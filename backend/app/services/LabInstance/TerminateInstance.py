@@ -369,11 +369,14 @@ def run_terminate_worker(
 
             instance.status = "terminated"
             instance.stopped_at = datetime.utcnow()
-            instance.vm_uuid = None
-            instance.vm_name = None
-            instance.vcenter_host = None
-            instance.ip_address = None
-            instance.power_state = None
+            # ── PRESERVE VM METADATA FOR ADMIN AUDIT ─────────────────────
+            # DO NOT null these out — the admin dashboard needs them for
+            # historical reference (what VM was assigned, which vCenter, etc.)
+            # instance.vm_uuid = None      # REMOVED
+            # instance.vm_name = None      # REMOVED
+            # instance.vcenter_host = None # REMOVED
+            # instance.ip_address = None   # REMOVED
+            # instance.power_state = None  # REMOVED
             _mark_session_abandoned(instance)
 
             db.commit()

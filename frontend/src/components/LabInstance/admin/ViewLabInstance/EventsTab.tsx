@@ -38,7 +38,11 @@ function formatDate(dateStr: string | null): string {
     })
 }
 
-function MetadataPreview({ metadata }: { metadata: Record<string, unknown> }) {
+function MetadataPreview({ metadata }: { metadata: Record<string, unknown> | null | undefined }) {
+    if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+        return null
+    }
+
     const entries = Object.entries(metadata)
     if (entries.length === 0) return null
 
