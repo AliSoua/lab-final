@@ -9,7 +9,7 @@ import os
 import socket
 import logging
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict, Any
 
 from sqlalchemy.orm import Session
 
@@ -139,7 +139,7 @@ def run_terminate_worker(
     instance_id: str,
     trainee_id: str,
     task_id: str,
-) -> None:
+) -> Dict[str, Any]:
     """
     Idempotent terminate worker.
 
@@ -380,7 +380,24 @@ def run_terminate_worker(
             finish_task(task_uuid, "completed", db=db)
             task_logger.info("Worker completed successfully")
 
-    return
+            return {
+                "instance_id": str(instance_uuid),
+                "status": instance.status,
+                "vm_uuid": instance.vm_uuid,
+                "vm_name": instance.vm_name,
+                "vcenter_host": instance.vcenter_host,
+                "task_id": str(task_uuid),
+                "trainee_id": trainee_id,
+                "destroyed": True,
+            }
+
+    # Should never reach here, but defensive
+    return {
+        "instance_id": str(instance_uuid),
+        "status": "error",
+        "message": "VM destroy was not confirmed",
+        "task_id": str(task_uuid),
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

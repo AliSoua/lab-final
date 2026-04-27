@@ -15,6 +15,7 @@ interface NavItem {
 
 const allNavItems: NavItem[] = [
   { to: "/admin/lab-definitions", label: "Lab Management" },
+  { to: "/admin/lab-instances", label: "Lab Instances" },
   { to: "/admin/infrastructure", label: "Infrastructure" },
   { to: "/admin/credentials", label: "Host Credentials" },
   { to: "/admin/vcenter-credentials", label: "vCenter Credentials", adminOnly: true },

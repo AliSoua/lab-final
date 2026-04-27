@@ -30,6 +30,10 @@ import LabInstanceListPage from "@/pages/LabInstance/list/index"
 import LabInstanceDetailPage from "@/pages/LabInstance/detail/index"
 import RunLabPage from "@/pages/LabInstance/run/RunLabPage"
 
+// Instances (Admin)
+import ListLabInstancePage from "@/pages/LabInstance/admin/ListLabInstancePage"
+import ViewLabInstancePage from "@/pages/LabInstance/admin/ViewLabInstancePage"
+
 import TestGuacamolePage from "@/pages/TestGuacamolePage"
 
 import { Loader2 } from "lucide-react"
@@ -214,6 +218,10 @@ function App() {
         <Route path="lab-guides/create" element={<CreateGuidePage />} />
         <Route path="lab-guides/:guideId/preview" element={<PreviewGuidePage />} />
         <Route path="lab-connections" element={<LabConnectionPage />} />
+
+        {/* Instances (Admin) */}
+        <Route path="instances" element={<ListLabInstancePage />} />
+        <Route path="instances/:instanceId" element={<ViewLabInstancePage />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

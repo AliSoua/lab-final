@@ -9,7 +9,7 @@ import os
 import socket
 import logging
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, Dict, Any
 
 from sqlalchemy.orm import Session, joinedload
 
@@ -183,7 +183,7 @@ def run_launch_worker(
     instance_id: str,
     trainee_id: str,
     task_id: str,
-) -> None:
+) -> Dict[str, Any]:
     """
     Idempotent launch worker.
 
@@ -476,7 +476,20 @@ def run_launch_worker(
         finish_task(task_uuid, "completed", db=db)
         task_logger.info("Worker completed successfully")
 
-    return
+        # Return the final state for Celery result backend
+        return {
+            "instance_id": str(instance_uuid),
+            "status": instance.status,
+            "vm_uuid": instance.vm_uuid,
+            "vm_name": instance.vm_name,
+            "ip_address": instance.ip_address,
+            "power_state": instance.power_state,
+            "vcenter_host": instance.vcenter_host,
+            "task_id": str(task_uuid),
+            "trainee_id": trainee_id,
+        }
+
+    return {"status": "error", "message": "Worker exited without result"}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

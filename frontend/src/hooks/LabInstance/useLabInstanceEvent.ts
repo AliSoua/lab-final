@@ -1,12 +1,12 @@
-// src/hooks/LabInstance/useListLabInstances.ts
+// src/hooks/LabInstance/useLabInstanceEvent.ts
 import { useState, useCallback } from "react"
 import { toast } from "sonner"
-import type { LabInstanceListResponse, LabInstance } from "@/types/LabInstance/LabInstance"
+import type { LabInstanceEventLog, LabInstanceEventLogList } from "@/types/LabInstance/LabInstanceEvent"
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
 
-export function useListLabInstances() {
-    const [instances, setInstances] = useState<LabInstance[]>([])
+export function useLabInstanceEvent() {
+    const [events, setEvents] = useState<LabInstanceEventLog[]>([])
     const [total, setTotal] = useState(0)
     const [isLoading, setIsLoading] = useState(false)
     const [error, setError] = useState<string | null>(null)
@@ -20,8 +20,8 @@ export function useListLabInstances() {
         return token
     }, [])
 
-    const fetchInstances = useCallback(
-        async (skip = 0, limit = 100) => {
+    const fetchEvents = useCallback(
+        async (instanceId: string, skip = 0, limit = 100) => {
             setIsLoading(true)
             setError(null)
 
@@ -31,7 +31,7 @@ export function useListLabInstances() {
                 params.append("skip", skip.toString())
                 params.append("limit", limit.toString())
 
-                const url = `${API_BASE_URL}/lab-instances/?${params.toString()}`
+                const url = `${API_BASE_URL}/lab-instances/${instanceId}/events?${params.toString()}`
 
                 const response = await fetch(url, {
                     method: "GET",
@@ -52,24 +52,30 @@ export function useListLabInstances() {
                         toast.error(msg)
                         throw new Error(msg)
                     }
-                    const msg = `Failed to list instances: ${response.statusText}`
+                    if (response.status === 404) {
+                        const msg = "Instance or events not found."
+                        toast.error(msg)
+                        throw new Error(msg)
+                    }
+                    const msg = `Failed to list events: ${response.statusText}`
                     toast.error(msg)
                     throw new Error(msg)
                 }
 
-                const result: LabInstanceListResponse = await response.json()
-                setInstances(result.items)
+                const result: LabInstanceEventLogList = await response.json()
+                setEvents(result.items)
                 setTotal(result.total)
                 return result
             } catch (err) {
                 const message =
-                    err instanceof Error ? err.message : "Failed to list lab instances"
+                    err instanceof Error ? err.message : "Failed to list events"
 
                 const alreadyHandled =
                     message === "Authentication required" ||
                     message === "Unauthorized. Please log in." ||
                     message === "Forbidden." ||
-                    message.includes("Failed to list instances")
+                    message === "Instance or events not found." ||
+                    message.includes("Failed to list events")
 
                 if (!alreadyHandled) {
                     toast.error(message)
@@ -84,5 +90,5 @@ export function useListLabInstances() {
         [getToken]
     )
 
-    return { instances, total, isLoading, error, fetchInstances }
+    return { events, total, isLoading, error, fetchEvents }
 }
