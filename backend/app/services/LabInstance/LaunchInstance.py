@@ -1,4 +1,4 @@
-# app/services/LabInstance/LaunchInstance.py
+# backend/app/services/LabInstance/LaunchInstance.py
 """
 Lab Instance Launch Service
 Handles enqueueing launch requests and the Celery worker launch body.
@@ -10,13 +10,12 @@ import socket
 import logging
 from datetime import datetime, timedelta
 from typing import Optional
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 
 from sqlalchemy.orm import Session, joinedload
 
+from app.core.logging import log_task
 from app.models.LabDefinition.core import LabDefinition
 from app.models.LabDefinition.LabInstance import LabInstance
-from app.models.LabDefinition.LabGuide import GuideVersion
 from app.config.connection.vcenter_client import VCenterClient
 from app.services.vault.credentials import read_credentials, list_admin_vcenters
 from app.services.LabDefinition.task_audit import (
@@ -137,6 +136,7 @@ def enqueue_launch(
     )
 
     # 5. Audit row (UUID reused as Celery task_id)
+    # API path: no shared session, so let start_task open its own
     task_audit_id = start_task(
         instance.id,
         "launch",
@@ -168,6 +168,7 @@ def enqueue_launch(
         instance.status = "failed"
         instance.error_message = f"Task queue unavailable: {e}"
         db.commit()
+        # API path: no shared session, let finish_task open its own
         finish_task(task_audit_id, "failed", str(e))
         raise RuntimeError("Task queue unavailable") from e
 
@@ -185,263 +186,375 @@ def run_launch_worker(
 ) -> None:
     """
     Idempotent launch worker.
-    Re-loads the row, checks vm_uuid to avoid double-clone,
-    then clone → early commit → power-on → IP discovery.
+
+    Re-loads the row with row-level locking, checks vm_uuid to avoid double-clone,
+    then clone → power-on → IP discovery.
+
+    CRITICAL DESIGN: DB session is NOT held across vCenter I/O.
+    The session is opened for read/write operations and closed before
+    any network call to vCenter. This prevents connection pool exhaustion.
+
     Status stays 'provisioning'; the next /refresh poll transitions
     to 'running' once Guacamole connections are created.
     """
     from uuid import UUID as PyUUID
     from app.utils.db_session import background_session
+    from sqlalchemy import inspect as sa_inspect
 
     task_uuid = PyUUID(task_id)
+    instance_uuid = PyUUID(instance_id)
 
+    # Structured logger with task context
+    task_logger = log_task(
+        logger,
+        task_id=task_id,
+        instance_id=instance_id,
+        trainee_id=trainee_id,
+    )
+
+    task_logger.info("Worker started")
+
+    # ═══════════════════════════════════════════════════════════════════════
+    #  PHASE 1: Load instance with row lock, validate, mark task running
+    # ═══════════════════════════════════════════════════════════════════════
     with background_session() as db:
         mark_running(
             task_uuid,
             worker_pid=os.getpid(),
             worker_host=socket.gethostname(),
+            db=db,
         )
 
         instance = (
             db.query(LabInstance)
-            .filter(LabInstance.id == instance_id)
+            .filter(LabInstance.id == instance_uuid)
             .options(
                 joinedload(LabInstance.lab_definition).joinedload(LabDefinition.vms)
             )
+            .with_for_update()  # ← ROW LOCK: prevents concurrent terminate/modify
             .first()
         )
+
         if not instance:
-            logger.error("[LAUNCH-WORKER] Instance %s not found", instance_id)
-            finish_task(task_uuid, "failed", "Instance not found")
+            task_logger.error("Instance not found in database")
+            finish_task(task_uuid, "failed", "Instance not found", db=db)
             return
 
         if instance.status in ("terminating", "terminated"):
-            finish_task(task_uuid, "completed", "Instance already terminating")
+            task_logger.info("Instance already terminating — nothing to do")
+            finish_task(task_uuid, "completed", "Instance already terminating", db=db)
             return
 
         vm_config = (
             instance.lab_definition.vms[0] if instance.lab_definition.vms else None
         )
         if not vm_config:
-            finish_task(task_uuid, "failed", "Lab definition has no VMs")
+            task_logger.error("Lab definition has no VMs configured")
             instance.status = "failed"
             instance.error_message = "Lab definition has no VMs"
-            db.commit()
+            finish_task(task_uuid, "failed", "Lab definition has no VMs", db=db)
             return
 
-        try:
-            # --- vCenter discovery ---------------------------------------
-            if instance.vm_uuid and instance.vcenter_host:
-                vcenter_creds = _find_vcenter_credentials(instance.vcenter_host)
-                logger.info("[WORKER] Vcenter credentials are: %s", vcenter_creds)
-                record_event(
-                    task_uuid,
-                    instance.id,
-                    "vcenter_connect",
-                    f"Resuming with vCenter {instance.vcenter_host}",
-                )
-            else:
-                vcenter_creds = _find_vcenter_for_template(vm_config.source_vm_id)
-                logger.info("[WORKER] Vcenter credentials are: %s", vcenter_creds)
-                record_event(
-                    task_uuid,
-                    instance.id,
-                    "vcenter_connect",
-                    f"Discovered vCenter for template {vm_config.source_vm_id}",
-                )
+        # Capture values we need outside the session
+        source_vm_id = vm_config.source_vm_id
+        lab_slug = instance.lab_definition.slug
+        existing_vm_uuid = instance.vm_uuid
+        existing_vcenter_host = instance.vcenter_host
 
-            if not vcenter_creds:
-                raise ValueError(
-                    f"No vCenter found hosting template {vm_config.source_vm_id}"
-                )
+        # Commit to release row lock before vCenter I/O
+        db.commit()
+        task_logger.info(
+            "Instance validated | vm_uuid=%s vcenter=%s",
+            existing_vm_uuid or "None",
+            existing_vcenter_host or "None",
+        )
 
-            client = VCenterClient(
-                host=vcenter_creds["host"],
-                username=vcenter_creds["username"],
-                password=vcenter_creds["password"],
+    # ═══════════════════════════════════════════════════════════════════════
+    #  PHASE 2: vCenter discovery (NO DB session held)
+    # ═══════════════════════════════════════════════════════════════════════
+    if existing_vm_uuid and existing_vcenter_host:
+        vcenter_creds = _find_vcenter_credentials(existing_vcenter_host)
+        task_logger.info(
+            "Resuming with vCenter %s",
+            existing_vcenter_host,
+        )
+    else:
+        vcenter_creds = _find_vcenter_for_template(source_vm_id)
+        task_logger.info(
+            "Discovered vCenter for template %s",
+            source_vm_id,
+        )
+
+    if not vcenter_creds:
+        _fail_instance(
+            instance_uuid,
+            task_uuid,
+            f"No vCenter found hosting template {source_vm_id}",
+        )
+        return
+
+    # ═══════════════════════════════════════════════════════════════════════
+    #  PHASE 3: vCenter connect + clone (NO DB session held)
+    # ═══════════════════════════════════════════════════════════════════════
+    client = VCenterClient(
+        host=vcenter_creds["host"],
+        username=vcenter_creds["username"],
+        password=vcenter_creds["password"],
+    )
+    if not client.connect():
+        _fail_instance(
+            instance_uuid,
+            task_uuid,
+            f"Failed to connect to vCenter {vcenter_creds['host']}",
+        )
+        return
+
+    try:
+        task_logger.info(
+            "vCenter connected | host=%s",
+            vcenter_creds["host"],
+        )
+
+        # --- Clone (skipped if idempotent resume) -----------------------
+        if not existing_vm_uuid:
+            new_vm_name = (
+                f"{lab_slug}-{str(trainee_id)[:8]}-{uuid.uuid4().hex[:8]}"
             )
-            if not client.connect():
-                raise RuntimeError(
-                    f"Failed to connect to vCenter {vcenter_creds['host']}"
+
+            task_logger.info(
+                "Cloning VM | template=%s name=%s",
+                source_vm_id,
+                new_vm_name,
+            )
+
+            clone_result = _call_with_timeout(
+                client.clone_vm,
+                220,
+                template_uuid=source_vm_id,
+                new_vm_name=new_vm_name,
+            )
+            vm_uuid = clone_result["uuid"]
+
+            task_logger.info(
+                "Clone completed | vm_uuid=%s",
+                vm_uuid,
+            )
+
+            # ═══════════════════════════════════════════════════════════════
+            #  PHASE 4: Persist clone result (fresh session, short-lived)
+            # ═══════════════════════════════════════════════════════════════
+            with background_session() as db:
+                record_event(
+                    task_uuid,
+                    instance_uuid,
+                    "clone_completed",
+                    f"Clone successful: {vm_uuid}",
+                    db=db,
                 )
 
-            try:
-                logger.info("[WORKER] Instance before modification: %s", instance)
-                vm_uuid = instance.vm_uuid
-                logger.info("[WORKER] Vcenter VM uuid: %s", vm_uuid)
+                instance = (
+                    db.query(LabInstance)
+                    .filter(LabInstance.id == instance_uuid)
+                    .with_for_update()
+                    .first()
+                )
 
-                # --- Clone (skipped if idempotent resume) ---------------
-                if not vm_uuid:
-                    new_vm_name = (
-                        f"{instance.lab_definition.slug}-"
-                        f"{str(trainee_id)[:8]}-{uuid.uuid4().hex[:8]}"
-                    )
+                if not instance:
+                    task_logger.error("Instance disappeared during clone")
+                    finish_task(task_uuid, "failed", "Instance disappeared during clone", db=db)
+                    return
 
-                    record_event(
-                        task_uuid,
-                        instance.id,
-                        "clone_started",
-                        f"Cloning {vm_config.source_vm_id} → {new_vm_name}",
-                    )
-
-                    clone_result = _call_with_timeout(
-                        client.clone_vm,
-                        220,
-                        template_uuid=vm_config.source_vm_id,
-                        new_vm_name=new_vm_name,
-                    )
-                    vm_uuid = clone_result["uuid"]
-
-                    record_event(
-                        task_uuid,
-                        instance.id,
-                        "clone_completed",
-                        f"Clone successful: {vm_uuid}",
-                    )
-
-                    instance.vm_uuid = vm_uuid
-                    instance.vm_name = new_vm_name
-                    instance.vcenter_host = vcenter_creds["host"]
-                    db.commit()
-
-                    record_event(
-                        task_uuid,
-                        instance.id,
-                        "vm_uuid_committed",
-                        f"vm_uuid={vm_uuid} committed",
-                    )
-                else:
-                    record_event(
-                        task_uuid,
-                        instance.id,
-                        "clone_skipped",
-                        f"Resuming with existing vm_uuid={vm_uuid}",
-                    )
-
-                # Re-check status after clone (race with terminate)
-                db.refresh(instance)
-
+                # Race check: was terminate requested while we were cloning?
                 if instance.status in ("terminating", "terminated"):
-                    record_event(
-                        task_uuid,
-                        instance.id,
-                        "task_aborted",
-                        "Instance marked terminating after clone — self-destructing VM",
-                    )
-                    vm = client.find_vm_by_uuid(vm_uuid)
-                    if vm:
-                        if str(vm.runtime.powerState) == "poweredOn":
-                            task = vm.PowerOffVM_Task()
-                            client._wait_for_task(task)
-                        task = vm.Destroy_Task()
-                        client._wait_for_task(task)
-                    instance.vm_uuid = None
-                    instance.vm_name = None
-                    instance.vcenter_host = None
-                    db.commit()
-                    finish_task(
-                        task_uuid, "completed", "Aborted: instance was terminating"
+                    _abort_after_race(
+                        db, instance, vm_uuid, client, task_uuid, task_logger
                     )
                     return
 
-                # --- Power on -------------------------------------------
-                record_event(
-                    task_uuid,
-                    instance.id,
-                    "power_on_started",
-                    f"Powering on VM {vm_uuid}",
-                )
-                _call_with_timeout(client.power_on_vm, 120, vm_uuid)
-                record_event(
-                    task_uuid,
-                    instance.id,
-                    "power_on_completed",
-                    f"VM {vm_uuid} powered on",
-                )
-
-                # --- IP discovery ---------------------------------------
-                record_event(
-                    task_uuid,
-                    instance.id,
-                    "ip_discovery_started",
-                    f"Waiting for IP on {vm_uuid}",
-                )
-                power_state = _call_with_timeout(
-                    client.get_vm_power_state, 40, vm_uuid
-                )
-                ip_address = _call_with_timeout(client.get_vm_ip, 120, vm_uuid)
-
-                record_event(
-                    task_uuid,
-                    instance.id,
-                    "ip_acquired",
-                    f"IP={ip_address}, power_state={power_state}",
-                )
-
-                instance.power_state = power_state
-                instance.ip_address = ip_address
-
-                # ── NEW: Update session_state with VM mapping ───────────
-                if instance.session_state:
-                    vm_mapping = {
-                        "vm_name": instance.vm_name or "lab-vm",
-                        "instance_id": vm_uuid,
-                        "ip_address": ip_address,
-                        "hostname": None,
-                        "status": (
-                            "running"
-                            if power_state == "poweredOn"
-                            else power_state
-                        ),
-                    }
-                    instance.session_state["runtime_context"]["vm_mappings"] = [
-                        vm_mapping
-                    ]
-                    instance.session_state["runtime_context"]["default_vm"] = (
-                        instance.vm_name
-                    )
-
+                instance.vm_uuid = vm_uuid
+                instance.vm_name = new_vm_name
+                instance.vcenter_host = vcenter_creds["host"]
                 db.commit()
-                finish_task(task_uuid, "completed")
 
-            finally:
-                client.disconnect()
+                record_event(
+                    task_uuid,
+                    instance_uuid,
+                    "vm_uuid_committed",
+                    f"vm_uuid={vm_uuid} committed",
+                    db=db,
+                )
 
-        except TimeoutError as te:
-            logger.error(
-                "[LAUNCH-WORKER] Timeout for instance %s: %s",
-                instance_id,
-                te,
+            existing_vm_uuid = vm_uuid  # for subsequent phases
+        else:
+            task_logger.info(
+                "Clone skipped | resuming with vm_uuid=%s",
+                existing_vm_uuid,
             )
-            db.rollback()
-            instance = (
-                db.query(LabInstance)
-                .filter(LabInstance.id == instance_id)
-                .first()
-            )
-            if instance:
-                instance.status = "failed"
-                instance.error_message = str(te)
-                db.commit()
-            finish_task(task_uuid, "failed", str(te))
-            raise
 
-        except Exception as e:
-            logger.error(
-                "[LAUNCH-WORKER] Failed for instance %s: %s",
-                instance_id,
-                e,
-                exc_info=True,
+        # ═══════════════════════════════════════════════════════════════════
+        #  PHASE 5: Power on (NO DB session held)
+        # ═══════════════════════════════════════════════════════════════════
+        task_logger.info("Powering on VM | vm_uuid=%s", existing_vm_uuid)
+        _call_with_timeout(client.power_on_vm, 120, existing_vm_uuid)
+        task_logger.info("VM powered on | vm_uuid=%s", existing_vm_uuid)
+
+        # ═══════════════════════════════════════════════════════════════════
+        #  PHASE 6: IP discovery (NO DB session held)
+        # ═══════════════════════════════════════════════════════════════════
+        task_logger.info("Waiting for IP | vm_uuid=%s", existing_vm_uuid)
+        power_state = _call_with_timeout(
+            client.get_vm_power_state, 40, existing_vm_uuid
+        )
+        ip_address = _call_with_timeout(
+            client.get_vm_ip, 120, existing_vm_uuid
+        )
+        task_logger.info(
+            "IP acquired | ip=%s power_state=%s",
+            ip_address,
+            power_state,
+        )
+
+    finally:
+        client.disconnect()
+
+    # ═══════════════════════════════════════════════════════════════════════
+    #  PHASE 7: Final state persistence (fresh session, atomic commit)
+    # ═══════════════════════════════════════════════════════════════════════
+    with background_session() as db:
+        instance = (
+            db.query(LabInstance)
+            .filter(LabInstance.id == instance_uuid)
+            .with_for_update()
+            .first()
+        )
+
+        if not instance:
+            task_logger.error("Instance disappeared before final commit")
+            finish_task(task_uuid, "failed", "Instance disappeared before final commit", db=db)
+            return
+
+        # Final race check
+        if instance.status in ("terminating", "terminated"):
+            _abort_after_race(
+                db, instance, existing_vm_uuid, client, task_uuid, task_logger
             )
-            db.rollback()
-            instance = (
-                db.query(LabInstance)
-                .filter(LabInstance.id == instance_id)
-                .first()
-            )
-            if instance:
-                instance.status = "failed"
-                instance.error_message = str(e)
-                db.commit()
-            finish_task(task_uuid, "failed", str(e))
-            raise
+            return
+
+        instance.power_state = power_state
+        instance.ip_address = ip_address
+
+        # Update session_state with VM mapping
+        if instance.session_state:
+            # Ensure SQLAlchemy detects the mutation
+            session_state = dict(instance.session_state)
+            runtime = dict(session_state.get("runtime_context", {}))
+
+            vm_mapping = {
+                "vm_name": instance.vm_name or "lab-vm",
+                "instance_id": existing_vm_uuid,
+                "ip_address": ip_address,
+                "hostname": None,
+                "status": "running" if power_state == "poweredOn" else power_state,
+            }
+            runtime["vm_mappings"] = [vm_mapping]
+            runtime["default_vm"] = instance.vm_name
+
+            session_state["runtime_context"] = runtime
+            instance.session_state = session_state  # ← triggers change detection
+
+        record_event(
+            task_uuid,
+            instance_uuid,
+            "ip_acquired",
+            f"IP={ip_address}, power_state={power_state}",
+            db=db,
+        )
+
+        db.commit()
+        finish_task(task_uuid, "completed", db=db)
+        task_logger.info("Worker completed successfully")
+
+    return
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  HELPERS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _fail_instance(
+    instance_id: uuid.UUID,
+    task_id: uuid.UUID,
+    error_message: str,
+) -> None:
+    """
+    Mark an instance as failed and finish the audit task.
+    Opens its own session since this is called from exception handlers
+    or early-exit paths where no session is active.
+    """
+    from app.utils.db_session import background_session
+
+    with background_session() as db:
+        instance = (
+            db.query(LabInstance)
+            .filter(LabInstance.id == instance_id)
+            .first()
+        )
+        if instance:
+            instance.status = "failed"
+            instance.error_message = error_message
+            db.commit()
+
+        finish_task(task_id, "failed", error_message, db=db)
+
+
+def _abort_after_race(
+    db: Session,
+    instance: LabInstance,
+    vm_uuid: str,
+    client: VCenterClient,
+    task_uuid: uuid.UUID,
+    task_logger: logging.LoggerAdapter,
+) -> None:
+    """
+    Called when a terminate request raced with our provisioning.
+    Destroys the VM we just created and cleans up the instance row.
+    """
+    task_logger.warning(
+        "Race detected: instance marked terminating — self-destructing VM | vm_uuid=%s",
+        vm_uuid,
+    )
+
+    record_event(
+        task_uuid,
+        instance.id,
+        "task_aborted",
+        "Instance marked terminating after clone — self-destructing VM",
+        db=db,
+    )
+
+    # Destroy VM (reconnect if needed — client was disconnected in finally)
+    try:
+        if not client._connected:  # or however you check connection state
+            client.connect()
+        vm = client.find_vm_by_uuid(vm_uuid)
+        if vm:
+            if str(vm.runtime.powerState) == "poweredOn":
+                task = vm.PowerOffVM_Task()
+                client._wait_for_task(task)
+            task = vm.Destroy_Task()
+            client._wait_for_task(task)
+    except Exception as e:
+        task_logger.error("Failed to destroy raced VM: %s", e)
+        # Continue to cleanup DB state regardless
+
+    instance.vm_uuid = None
+    instance.vm_name = None
+    instance.vcenter_host = None
+    db.commit()
+
+    finish_task(
+        task_uuid,
+        "completed",
+        "Aborted: instance was terminating",
+        db=db,
+    )

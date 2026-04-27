@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 
 from sqlalchemy.orm import Session
 
+from app.core.logging import log_task
 from app.models.LabDefinition.LabInstance import LabInstance
 from app.models.LabDefinition.LabGuide import GuideVersion
 from app.config.connection.vcenter_client import VCenterClient
@@ -28,7 +29,10 @@ logger = logging.getLogger(__name__)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _call_with_timeout(func, timeout_sec: int, *args, **kwargs):
-    """Run a blocking function in a thread with a timeout. Safe inside Celery ForkPoolWorkers."""
+    """
+    Run a blocking function in a thread with a timeout.
+    Safe inside Celery ForkPoolWorkers.
+    """
     with ThreadPoolExecutor(max_workers=1) as ex:
         future = ex.submit(func, *args, **kwargs)
         try:
@@ -78,13 +82,21 @@ def _build_initial_session_state(
 
 
 def _mark_session_abandoned(instance: LabInstance) -> None:
-    """Update session_state to reflect that the lab was abandoned/terminated."""
+    """
+    Update session_state to reflect that the lab was abandoned/terminated.
+
+    NOTE: This mutates instance.session_state in-place. Callers must ensure
+    SQLAlchemy detects the change (either by reassigning the dict or by
+    using MutableDict if configured on the model).
+    """
     if instance.session_state:
-        instance.session_state["status"] = "abandoned"
-        if instance.session_state.get("runtime_context"):
-            instance.session_state["runtime_context"]["expires_at"] = (
-                datetime.utcnow().isoformat()
-            )
+        # Defensive copy to trigger SQLAlchemy change detection
+        state = dict(instance.session_state)
+        state["status"] = "abandoned"
+        if state.get("runtime_context"):
+            state["runtime_context"] = dict(state["runtime_context"])
+            state["runtime_context"]["expires_at"] = datetime.utcnow().isoformat()
+        instance.session_state = state
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -94,37 +106,24 @@ def _mark_session_abandoned(instance: LabInstance) -> None:
 def _list_all_admin_ids() -> List[str]:
     try:
         ids = VaultClient().list_secrets("credentials/admin")
-        logger.info(
-            "[VCENTER] Listed %d admin ID(s) from Vault",
-            len(ids),
-        )
+        logger.info("Listed %d admin ID(s) from Vault", len(ids))
         return ids
     except RuntimeError as e:
-        logger.error(
-            "[VCENTER] Failed to list admin IDs from Vault: %s",
-            e,
-        )
+        logger.error("Failed to list admin IDs from Vault: %s", e)
         return []
 
 
 def _find_vcenter_for_template(source_vm_id: str) -> Optional[Dict[str, str]]:
-    logger.info(
-        "[VCENTER] Searching for template %s across all vCenters",
-        source_vm_id,
-    )
+    logger.info("Searching for template %s across all vCenters", source_vm_id)
     admin_ids = _list_all_admin_ids()
     if not admin_ids:
-        logger.warning("[VCENTER] No admin IDs found in Vault")
+        logger.warning("No admin IDs found in Vault")
         return None
 
     for admin_id in admin_ids:
         try:
             hosts = list_admin_vcenters(admin_id)
-            logger.info(
-                "[VCENTER] Admin %s has %d vCenter(s)",
-                admin_id,
-                len(hosts),
-            )
+            logger.info("Admin %s has %d vCenter(s)", admin_id, len(hosts))
             for host in hosts:
                 path = f"credentials/admin/{admin_id}/{host}"
                 try:
@@ -136,7 +135,7 @@ def _find_vcenter_for_template(source_vm_id: str) -> Optional[Dict[str, str]]:
                         continue
 
                     logger.info(
-                        "[VCENTER] Checking vCenter %s for template %s",
+                        "Checking vCenter %s for template %s",
                         host_value,
                         source_vm_id,
                     )
@@ -150,7 +149,7 @@ def _find_vcenter_for_template(source_vm_id: str) -> Optional[Dict[str, str]]:
                             vm = client.find_vm_by_uuid(source_vm_id)
                             if vm:
                                 logger.info(
-                                    "[VCENTER] Found template %s on vCenter %s (admin=%s)",
+                                    "Found template %s on vCenter %s (admin=%s)",
                                     source_vm_id,
                                     host_value,
                                     admin_id,
@@ -164,28 +163,22 @@ def _find_vcenter_for_template(source_vm_id: str) -> Optional[Dict[str, str]]:
                             client.disconnect()
                 except Exception as e:
                     logger.info(
-                        "[VCENTER] Skip vCenter %s for admin %s: %s",
+                        "Skip vCenter %s for admin %s: %s",
                         host,
                         admin_id,
                         e,
                     )
                     continue
         except Exception as e:
-            logger.info("[VCENTER] Skip admin %s: %s", admin_id, e)
+            logger.info("Skip admin %s: %s", admin_id, e)
             continue
 
-    logger.error(
-        "[VCENTER] Template %s not found on any vCenter",
-        source_vm_id,
-    )
+    logger.error("Template %s not found on any vCenter", source_vm_id)
     return None
 
 
 def _find_vcenter_credentials(vcenter_host: str) -> Optional[Dict[str, str]]:
-    logger.info(
-        "[VCENTER] Looking up credentials for vCenter host %s",
-        vcenter_host,
-    )
+    logger.info("Looking up credentials for vCenter host %s", vcenter_host)
     admin_ids = _list_all_admin_ids()
     target = vcenter_host.strip().lower()
 
@@ -198,7 +191,7 @@ def _find_vcenter_credentials(vcenter_host: str) -> Optional[Dict[str, str]]:
                     creds = read_credentials(path)
                     if creds.get("host", "").strip().lower() == target:
                         logger.info(
-                            "[VCENTER] Found credentials for %s under admin %s",
+                            "Found credentials for %s under admin %s",
                             target,
                             admin_id,
                         )
@@ -212,10 +205,7 @@ def _find_vcenter_credentials(vcenter_host: str) -> Optional[Dict[str, str]]:
         except Exception:
             continue
 
-    logger.warning(
-        "[VCENTER] No credentials found for vCenter host %s",
-        vcenter_host,
-    )
+    logger.warning("No credentials found for vCenter host %s", vcenter_host)
     return None
 
 
@@ -230,14 +220,14 @@ def _resolve_keycloak_username(db: Session, trainee_id: uuid.UUID) -> Optional[s
         user = user_service.get_by_id(db, trainee_id)
     except Exception as e:
         logger.warning(
-            "[GUAC] Failed to load user %s for Guacamole permission sync: %s",
+            "Failed to load user %s for Guacamole permission sync: %s",
             trainee_id,
             e,
         )
         return None
     if not user or not user.username:
         logger.warning(
-            "[GUAC] No username found for trainee %s — skipping permission sync",
+            "No username found for trainee %s — skipping permission sync",
             trainee_id,
         )
         return None
@@ -246,7 +236,7 @@ def _resolve_keycloak_username(db: Session, trainee_id: uuid.UUID) -> Optional[s
 
 def _default_port(protocol: str) -> int:
     port = {"ssh": 22, "rdp": 3389, "vnc": 5901}.get(protocol.lower(), 22)
-    logger.info("[GUAC] Default port for %s = %d", protocol, port)
+    logger.info("Default port for %s = %d", protocol, port)
     return port
 
 
@@ -256,7 +246,7 @@ def _load_connections_map(instance: LabInstance) -> Dict[str, str]:
     # ── DEFENSIVE: Handle [] or null from DB ─────────────────────────────
     if raw is None or raw == [] or raw == "{}":
         logger.info(
-            "[GUAC] Normalized empty guacamole_connections for instance %s",
+            "Normalized empty guacamole_connections for instance %s",
             instance.id,
         )
         return {}
@@ -264,7 +254,7 @@ def _load_connections_map(instance: LabInstance) -> Dict[str, str]:
     if isinstance(raw, dict):
         copied = dict(raw)
         logger.info(
-            "[GUAC] Loaded connections map for instance %s: %d entries",
+            "Loaded connections map for instance %s: %d entries",
             instance.id,
             len(copied),
         )
@@ -273,20 +263,20 @@ def _load_connections_map(instance: LabInstance) -> Dict[str, str]:
         try:
             parsed = json.loads(raw)
             logger.info(
-                "[GUAC] Parsed connections JSON string for instance %s: %d entries",
+                "Parsed connections JSON string for instance %s: %d entries",
                 instance.id,
                 len(parsed),
             )
             return parsed
         except json.JSONDecodeError:
             logger.warning(
-                "[GUAC] Failed to parse guacamole_connections JSON for instance %s. Raw: %s",
+                "Failed to parse guacamole_connections JSON for instance %s. Raw: %s",
                 instance.id,
                 raw,
             )
             return {}
     logger.info(
-        "[GUAC] No connections map found for instance %s (raw type=%s)",
+        "No connections map found for instance %s (raw type=%s)",
         instance.id,
         type(raw).__name__,
     )
@@ -296,9 +286,10 @@ def _load_connections_map(instance: LabInstance) -> Dict[str, str]:
 def _save_connections_map(instance: LabInstance, mapping: Dict[str, str]) -> None:
     from app.services.guacamole_service import guacamole_service
 
+    # Defensive copy to trigger SQLAlchemy change detection
     instance.guacamole_connections = dict(mapping)
     logger.info(
-        "[GUAC] Saved connections map for instance %s: %s",
+        "Saved connections map for instance %s: %s",
         instance.id,
         mapping,
     )
@@ -307,7 +298,7 @@ def _save_connections_map(instance: LabInstance, mapping: Dict[str, str]) -> Non
         instance.guacamole_connection_id = mapping[first_key]
         instance.connection_url = guacamole_service.get_connection_url(mapping[first_key])
         logger.info(
-            "[GUAC] Legacy fields updated for instance %s: conn_id=%s url=%s",
+            "Legacy fields updated for instance %s: conn_id=%s url=%s",
             instance.id,
             instance.guacamole_connection_id,
             instance.connection_url,
@@ -316,17 +307,14 @@ def _save_connections_map(instance: LabInstance, mapping: Dict[str, str]) -> Non
         instance.guacamole_connection_id = None
         instance.connection_url = None
         logger.info(
-            "[GUAC] Legacy fields cleared for instance %s (empty mapping)",
+            "Legacy fields cleared for instance %s (empty mapping)",
             instance.id,
         )
 
 
 def _read_lab_connection_creds(slug: str, protocol: str) -> Optional[Dict[str, Any]]:
     vault_path = f"credentials/lab_connections/{slug}/{protocol}"
-    logger.info(
-        "[GUAC] Reading credentials from Vault: %s",
-        vault_path,
-    )
+    logger.info("Reading credentials from Vault: %s", vault_path)
     try:
         creds = read_credentials(vault_path)
         result = {
@@ -335,7 +323,7 @@ def _read_lab_connection_creds(slug: str, protocol: str) -> Optional[Dict[str, A
             "port": int(creds.get("port", _default_port(protocol))),
         }
         logger.info(
-            "[GUAC] Successfully read credentials from Vault: %s (user=%s, port=%s)",
+            "Successfully read credentials from Vault: %s (user=%s, port=%s)",
             vault_path,
             result["username"],
             result["port"],
@@ -343,7 +331,7 @@ def _read_lab_connection_creds(slug: str, protocol: str) -> Optional[Dict[str, A
         return result
     except Exception as e:
         logger.error(
-            "[GUAC] Failed to read lab connection credentials from %s: %s",
+            "Failed to read lab connection credentials from %s: %s",
             vault_path,
             e,
         )
@@ -360,7 +348,7 @@ def _sync_guacamole_connections(
 
     if instance.status in ("terminating", "terminated", "stopped"):
         logger.info(
-            "[GUAC-SYNC] Instance %s is in terminal state '%s'; skipping sync",
+            "Instance %s is in terminal state '%s'; skipping sync",
             instance.id,
             instance.status,
         )
@@ -369,7 +357,7 @@ def _sync_guacamole_connections(
     slots = getattr(lab, "connection_slots", None) or []
     if not slots:
         logger.info(
-            "[GUAC-SYNC] Lab %s has no connection_slots, nothing to sync",
+            "Lab %s has no connection_slots, nothing to sync",
             lab.id,
         )
         return
@@ -378,12 +366,12 @@ def _sync_guacamole_connections(
         try:
             slots = json.loads(slots)
             logger.info(
-                "[GUAC-SYNC] Parsed connection_slots JSON string for lab %s",
+                "Parsed connection_slots JSON string for lab %s",
                 lab.id,
             )
         except json.JSONDecodeError:
             logger.error(
-                "[GUAC-SYNC] Invalid connection_slots JSON on lab %s",
+                "Invalid connection_slots JSON on lab %s",
                 lab.id,
             )
             return
@@ -391,8 +379,7 @@ def _sync_guacamole_connections(
     connections_map = _load_connections_map(instance)
     initial_count = len(connections_map)
     logger.info(
-        "[GUAC-SYNC] Starting sync for instance %s (lab=%s, ip=%s). "
-        "Existing connections: %d",
+        "Starting sync for instance %s (lab=%s, ip=%s). Existing connections: %d",
         instance.id,
         lab.id,
         ip_address,
@@ -405,7 +392,7 @@ def _sync_guacamole_connections(
             guacamole_service.ensure_user(keycloak_username)
         except Exception as e:
             logger.warning(
-                "[GUAC-SYNC] Failed to ensure Guacamole user %s: %s",
+                "Failed to ensure Guacamole user %s: %s",
                 keycloak_username,
                 e,
             )
@@ -413,7 +400,7 @@ def _sync_guacamole_connections(
     for slot in slots:
         if not isinstance(slot, dict):
             logger.warning(
-                "[GUAC-SYNC] Skipping non-dict slot: %s (type=%s)",
+                "Skipping non-dict slot: %s (type=%s)",
                 slot,
                 type(slot).__name__,
             )
@@ -422,13 +409,13 @@ def _sync_guacamole_connections(
         slug = slot.get("slug")
         if not slug:
             logger.warning(
-                "[GUAC-SYNC] Skipping slot with missing slug: %s",
+                "Skipping slot with missing slug: %s",
                 slot,
             )
             continue
 
         logger.info(
-            "[GUAC-SYNC] Processing slot: slug=%s ssh=%s rdp=%s vnc=%s",
+            "Processing slot: slug=%s ssh=%s rdp=%s vnc=%s",
             slug,
             slot.get("ssh", False),
             slot.get("rdp", False),
@@ -438,7 +425,7 @@ def _sync_guacamole_connections(
         for protocol in ("ssh", "rdp", "vnc"):
             if not slot.get(protocol):
                 logger.info(
-                    "[GUAC-SYNC] Protocol %s not enabled for slot '%s', skipping",
+                    "Protocol %s not enabled for slot '%s', skipping",
                     protocol,
                     slug,
                 )
@@ -447,7 +434,7 @@ def _sync_guacamole_connections(
             creds = _read_lab_connection_creds(slug, protocol)
             if not creds:
                 logger.warning(
-                    "[GUAC-SYNC] Skipping %s/%s — no credentials in Vault. "
+                    "Skipping %s/%s — no credentials in Vault. "
                     "Ensure credentials exist at credentials/lab_connections/%s/%s",
                     slug,
                     protocol,
@@ -462,7 +449,7 @@ def _sync_guacamole_connections(
             try:
                 if existing_id:
                     logger.info(
-                        "[GUAC-SYNC] Updating existing %s connection %s for %s/%s "
+                        "Updating existing %s connection %s for %s/%s "
                         "(ip=%s, port=%s, user=%s)",
                         protocol,
                         existing_id,
@@ -480,7 +467,7 @@ def _sync_guacamole_connections(
                         password=creds["password"],
                     )
                     logger.info(
-                        "[GUAC-SYNC] Updated Guacamole %s connection %s",
+                        "Updated Guacamole %s connection %s",
                         protocol,
                         existing_id,
                     )
@@ -489,7 +476,7 @@ def _sync_guacamole_connections(
                         f"{lab.slug}-{slug}-{protocol}-{str(instance.id)[:8]}"
                     )
                     logger.info(
-                        "[GUAC-SYNC] Creating new %s connection '%s' for %s/%s "
+                        "Creating new %s connection '%s' for %s/%s "
                         "(ip=%s, port=%s, user=%s)",
                         protocol,
                         conn_name,
@@ -509,7 +496,7 @@ def _sync_guacamole_connections(
                     )
                     connections_map[conn_key] = conn_id
                     logger.info(
-                        "[GUAC-SYNC] Created Guacamole %s connection %s for %s/%s",
+                        "Created Guacamole %s connection %s for %s/%s",
                         protocol,
                         conn_id,
                         slug,
@@ -524,7 +511,7 @@ def _sync_guacamole_connections(
                         )
                     except Exception as e:
                         logger.warning(
-                            "[GUAC-SYNC] Failed to grant READ on %s to %s: %s",
+                            "Failed to grant READ on %s to %s: %s",
                             target_id,
                             keycloak_username,
                             e,
@@ -532,7 +519,7 @@ def _sync_guacamole_connections(
 
             except Exception as e:
                 logger.error(
-                    "[GUAC-SYNC] Failed to setup Guacamole %s for %s/%s: %s",
+                    "Failed to setup Guacamole %s for %s/%s: %s",
                     protocol,
                     slug,
                     instance.id,
@@ -540,26 +527,20 @@ def _sync_guacamole_connections(
                     exc_info=True,
                 )
 
-    logger.info(">>> DEBUG: connections_map = %s", connections_map)
-    logger.info(">>> DEBUG: instance.guacamole_connections BEFORE save = %s", instance.guacamole_connections)
     _save_connections_map(instance, connections_map)
-    logger.info(">>> DEBUG: instance.guacamole_connections AFTER save = %s", instance.guacamole_connections)
     db.commit()
-    logger.info(">>> DEBUG: instance.guacamole_connections AFTER commit = %s", instance.guacamole_connections)
 
     final_count = len(connections_map)
     if final_count > initial_count:
         logger.info(
-            "[GUAC-SYNC] Sync complete for instance %s. "
-            "Created %d new connection(s). Total: %d",
+            "Sync complete for instance %s. Created %d new connection(s). Total: %d",
             instance.id,
             final_count - initial_count,
             final_count,
         )
     else:
         logger.info(
-            "[GUAC-SYNC] Sync complete for instance %s. "
-            "Connections unchanged. Total: %d",
+            "Sync complete for instance %s. Connections unchanged. Total: %d",
             instance.id,
             final_count,
         )
@@ -573,7 +554,7 @@ def _delete_guacamole_connections(
 
     connections_map = _load_connections_map(instance)
     logger.info(
-        "[GUAC-DEL] Deleting %d Guacamole connection(s) for instance %s",
+        "Deleting %d Guacamole connection(s) for instance %s",
         len(connections_map),
         instance.id,
     )
@@ -593,27 +574,27 @@ def _delete_guacamole_connections(
                 )
             except Exception as e:
                 logger.info(
-                    "[GUAC-DEL] Revoke permission %s/%s failed (non-fatal): %s",
+                    "Revoke permission %s/%s failed (non-fatal): %s",
                     keycloak_username,
                     conn_id,
                     e,
                 )
         try:
             logger.info(
-                "[GUAC-DEL] Deleting connection %s (%s)",
+                "Deleting connection %s (%s)",
                 conn_id,
                 key,
             )
             guacamole_service.delete_connection(conn_id)
             logger.info(
-                "[GUAC-DEL] Deleted Guacamole connection %s (%s)",
+                "Deleted Guacamole connection %s (%s)",
                 conn_id,
                 key,
             )
             deleted += 1
         except Exception as e:
             logger.error(
-                "[GUAC-DEL] Failed to delete Guacamole connection %s (%s): %s",
+                "Failed to delete Guacamole connection %s (%s): %s",
                 conn_id,
                 key,
                 e,
@@ -623,7 +604,7 @@ def _delete_guacamole_connections(
 
     _save_connections_map(instance, {})
     logger.info(
-        "[GUAC-DEL] Cleanup complete for instance %s: %d deleted, %d failed",
+        "Cleanup complete for instance %s: %d deleted, %d failed",
         instance.id,
         deleted,
         failed,

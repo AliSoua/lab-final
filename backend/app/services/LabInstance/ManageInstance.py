@@ -1,4 +1,4 @@
-# app/services/LabInstance/ManageInstance.py
+# backend/app/services/LabInstance/ManageInstance.py
 """
 Lab Instance Management Service
 Synchronous CRUD and lifecycle operations: get, list, stop, refresh.
@@ -12,9 +12,15 @@ from typing import Optional, List, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 
+from app.core.logging import log_task
+from app.models.LabDefinition.core import LabDefinition
 from app.models.LabDefinition.LabInstance import LabInstance
 from app.config.connection.vcenter_client import VCenterClient
-from app.services.LabInstance.utils import _call_with_timeout, _find_vcenter_credentials
+from app.services.LabInstance.utils import (
+    _call_with_timeout,
+    _find_vcenter_credentials,
+    _sync_guacamole_connections,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,14 +44,14 @@ def get_instance(
     )
     if instance:
         logger.info(
-            "[GET] Instance %s found for trainee %s (status=%s)",
+            "Instance found | instance_id=%s trainee_id=%s status=%s",
             instance_id,
             trainee_id,
             instance.status,
         )
     else:
         logger.info(
-            "[GET] Instance %s not found for trainee %s",
+            "Instance not found | instance_id=%s trainee_id=%s",
             instance_id,
             trainee_id,
         )
@@ -59,7 +65,7 @@ def list_instances(
     limit: int = 100,
 ) -> Tuple[List[LabInstance], int]:
     logger.info(
-        "[LIST] Listing instances for trainee %s (skip=%s, limit=%s)",
+        "Listing instances | trainee_id=%s skip=%s limit=%s",
         trainee_id,
         skip,
         limit,
@@ -72,7 +78,11 @@ def list_instances(
         .limit(limit)
         .all()
     )
-    logger.info("[LIST] Found %d instances (total=%d)", len(items), total)
+    logger.info(
+        "Instances listed | count=%d total=%d",
+        len(items),
+        total,
+    )
     return items, total
 
 
@@ -86,26 +96,27 @@ def stop_instance(
     trainee_id: uuid.UUID,
 ) -> LabInstance:
     logger.info(
-        "[STOP] Stopping instance %s for trainee %s",
+        "Stopping instance | instance_id=%s trainee_id=%s",
         instance_id,
         trainee_id,
     )
     instance = get_instance(db, instance_id, trainee_id)
     if not instance:
-        logger.error("[STOP] Instance %s not found", instance_id)
+        logger.error("Instance not found | instance_id=%s", instance_id)
         raise ValueError("Instance not found")
 
     if instance.status in ("terminated", "stopped"):
         logger.info(
-            "[STOP] Instance %s already %s, returning as-is",
+            "Instance already stopped | instance_id=%s status=%s",
             instance_id,
             instance.status,
         )
         return instance
 
+    # ── vCenter power-off (DB session NOT held during I/O) ──────────────
     if instance.vm_uuid and instance.vcenter_host:
         logger.info(
-            "[STOP] Connecting to vCenter %s to power off VM %s",
+            "Connecting to vCenter | host=%s vm_uuid=%s",
             instance.vcenter_host,
             instance.vm_uuid,
         )
@@ -121,19 +132,19 @@ def stop_instance(
                     vm = client.find_vm_by_uuid(instance.vm_uuid)
                     if vm and str(vm.runtime.powerState) == "poweredOn":
                         logger.info(
-                            "[STOP] Powering off VM %s",
+                            "Powering off VM | vm_uuid=%s",
                             instance.vm_uuid,
                         )
                         task = vm.PowerOffVM_Task()
                         client._wait_for_task(task)
                         logger.info(
-                            "[STOP] VM %s powered off successfully",
+                            "VM powered off | vm_uuid=%s",
                             instance.vm_uuid,
                         )
                     instance.power_state = "poweredOff"
                 except Exception as e:
                     logger.warning(
-                        "[STOP] Failed to power off VM %s: %s",
+                        "Failed to power off VM | vm_uuid=%s error=%s",
                         instance.vm_uuid,
                         e,
                     )
@@ -141,29 +152,37 @@ def stop_instance(
                     client.disconnect()
             else:
                 logger.warning(
-                    "[STOP] Could not connect to vCenter %s",
+                    "Could not connect to vCenter | host=%s",
                     instance.vcenter_host,
                 )
         else:
             logger.warning(
-                "[STOP] No credentials found for vCenter %s",
+                "No credentials found for vCenter | host=%s",
                 instance.vcenter_host,
             )
 
+    # ── Update DB state ─────────────────────────────────────────────────
     instance.status = "stopped"
     instance.stopped_at = datetime.utcnow()
 
-    # ── Pause session state if runtime data exists ──────────────────────────
+    # Pause session state if runtime data exists
     if instance.session_state:
-        instance.session_state["status"] = "paused"
-        for mapping in instance.session_state.get("runtime_context", {}).get("vm_mappings", []):
+        state = dict(instance.session_state)
+        state["status"] = "paused"
+        runtime = dict(state.get("runtime_context", {}))
+        vm_mappings = list(runtime.get("vm_mappings", []))
+        for mapping in vm_mappings:
             if mapping.get("vm_name") == instance.vm_name:
+                mapping = dict(mapping)
                 mapping["status"] = "stopped"
+        runtime["vm_mappings"] = vm_mappings
+        state["runtime_context"] = runtime
+        instance.session_state = state
 
     db.commit()
     db.refresh(instance)
     logger.info(
-        "[STOP] Instance %s stopped at %s",
+        "Instance stopped | instance_id=%s stopped_at=%s",
         instance_id,
         instance.stopped_at,
     )
@@ -182,24 +201,22 @@ def refresh_instance_status(
     """
     Refresh VM state from vCenter and sync Guacamole connections.
     Wraps vCenter calls in a thread timeout so the HTTP request cannot hang.
-    May transition status from 'provisioning' → 'running' when the VM is
+    May transition status from 'provisioning' -> 'running' when the VM is
     powered on and has an IP address.
     """
-    from app.services.LabInstance.utils import _sync_guacamole_connections  # ADD THIS IMPORT
-
     logger.info(
-        "[REFRESH] Refreshing status for instance %s (trainee=%s)",
+        "Refreshing instance | instance_id=%s trainee_id=%s",
         instance_id,
         trainee_id,
     )
     instance = get_instance(db, instance_id, trainee_id)
     if not instance:
-        logger.error("[REFRESH] Instance %s not found", instance_id)
+        logger.error("Instance not found | instance_id=%s", instance_id)
         return None
 
     if instance.status in ("terminating", "terminated", "stopped"):
         logger.info(
-            "[REFRESH] Instance %s is in terminal state '%s'; skipping sync",
+            "Instance in terminal state, skipping refresh | instance_id=%s status=%s",
             instance_id,
             instance.status,
         )
@@ -207,15 +224,16 @@ def refresh_instance_status(
 
     if not instance.vm_uuid or not instance.vcenter_host:
         logger.warning(
-            "[REFRESH] Instance %s missing vm_uuid or vcenter_host, skipping refresh",
+            "Instance missing vm_uuid or vcenter_host, skipping refresh | instance_id=%s",
             instance_id,
         )
         return instance
 
+    # ── vCenter I/O (NO DB session held) ────────────────────────────────
     creds = _find_vcenter_credentials(instance.vcenter_host)
     if not creds:
         logger.error(
-            "[REFRESH] No vCenter credentials found for host %s",
+            "No vCenter credentials found | host=%s",
             instance.vcenter_host,
         )
         return instance
@@ -227,7 +245,7 @@ def refresh_instance_status(
     )
     if not client.connect():
         logger.error(
-            "[REFRESH] Failed to connect to vCenter %s",
+            "Failed to connect to vCenter | host=%s",
             instance.vcenter_host,
         )
         return instance
@@ -236,12 +254,12 @@ def refresh_instance_status(
         vm = client.find_vm_by_uuid(instance.vm_uuid)
         if not vm:
             logger.warning(
-                "[REFRESH] VM %s not found in vCenter",
+                "VM not found in vCenter | vm_uuid=%s",
                 instance.vm_uuid,
             )
             return instance
 
-        # ── Refresh power state & IP ──────────────────────────────────────
+        # Refresh power state & IP
         power_state = _call_with_timeout(
             client.get_vm_power_state, 40, instance.vm_uuid
         )
@@ -249,53 +267,56 @@ def refresh_instance_status(
             client.get_vm_ip, 120, instance.vm_uuid
         )
 
+        # ── Update DB state (re-acquire instance within session) ──────────
         instance.power_state = power_state
         instance.ip_address = ip_address
 
-        # ── Update session_state VM mapping ───────────────────────────────
+        # Update session_state VM mapping
         if instance.session_state:
-            runtime_ctx = instance.session_state.get("runtime_context", {})
-            vm_mappings = runtime_ctx.get("vm_mappings", [])
+            state = dict(instance.session_state)
+            runtime = dict(state.get("runtime_context", {}))
+            vm_mappings = list(runtime.get("vm_mappings", []))
             for mapping in vm_mappings:
                 if mapping.get("vm_name") == instance.vm_name:
+                    mapping = dict(mapping)
                     mapping["ip_address"] = ip_address
                     mapping["status"] = (
                         "running" if power_state == "poweredOn" else "stopped"
                     )
-            runtime_ctx["vm_mappings"] = vm_mappings
-            instance.session_state["runtime_context"] = runtime_ctx
+            runtime["vm_mappings"] = vm_mappings
+            state["runtime_context"] = runtime
+            instance.session_state = state
 
-        # ── Sync Guacamole connections when VM is powered on with IP ─────
+        # Sync Guacamole connections when VM is powered on with IP
         if power_state == "poweredOn" and ip_address:
-            # Import here to avoid circular dependency
-            from app.models.LabDefinition.core import LabDefinition
-            
             lab = db.query(LabDefinition).filter(
                 LabDefinition.id == instance.lab_definition_id
             ).first()
-            
+
             if lab:
                 _sync_guacamole_connections(db, instance, lab, ip_address)
             else:
                 logger.warning(
-                    "[REFRESH] Lab definition %s not found for Guacamole sync",
+                    "Lab definition not found for Guacamole sync | lab_id=%s",
                     instance.lab_definition_id,
                 )
 
-            # ── Transition provisioning → running ─────────────────────────
+            # Transition provisioning -> running
             if instance.status == "provisioning":
                 instance.status = "running"
                 if instance.session_state:
-                    instance.session_state["status"] = "active"
+                    state = dict(instance.session_state)
+                    state["status"] = "active"
+                    instance.session_state = state
                 logger.info(
-                    "[REFRESH] Instance %s transitioned provisioning → running",
+                    "Instance transitioned provisioning -> running | instance_id=%s",
                     instance_id,
                 )
 
         db.commit()
         db.refresh(instance)
         logger.info(
-            "[REFRESH] Instance %s refreshed: status=%s power=%s ip=%s connections=%s",
+            "Instance refreshed | instance_id=%s status=%s power=%s ip=%s connections=%d",
             instance_id,
             instance.status,
             power_state,
@@ -305,7 +326,7 @@ def refresh_instance_status(
 
     except Exception as e:
         logger.error(
-            "[REFRESH] Error refreshing instance %s: %s",
+            "Error refreshing instance | instance_id=%s error=%s",
             instance_id,
             e,
             exc_info=True,
