@@ -10,6 +10,7 @@ import uuid
 
 from app.config.connection.postgres_client import get_db
 from app.dependencies.keycloak.keycloak_roles import require_any_role
+from app.models.LabDefinition.LabInstance import LabInstance
 from app.schemas.LabDefinition.lab_instance import (
     LabInstanceResponse,
     LabInstanceListResponse,
@@ -29,6 +30,55 @@ router = APIRouter(
     }
 )
 
+@router.get(
+    "/{instance_id}/admin",
+    response_model=LabInstanceResponse,
+    summary="Get any lab instance details (admin/moderator)",
+    responses={
+        401: {"description": "Unauthorized"},
+        403: {"description": "Forbidden"},
+        404: {"description": "Instance not found"},
+    },
+)
+def get_instance_admin(
+    instance_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    userinfo: dict = Depends(require_any_role(["moderator", "admin"])),
+):
+    """
+    Fetch a single instance without trainee ownership check.
+    """
+    instance = db.query(LabInstance).filter(LabInstance.id == instance_id).first()
+    if not instance:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Instance not found",
+        )
+    return instance
+
+@router.get(
+    "/all",
+    response_model=LabInstanceListResponse,
+    summary="List all lab instances (admin/moderator)",
+    responses={
+        401: {"description": "Unauthorized - Invalid or missing token"},
+        403: {"description": "Forbidden - Admin or moderator access required"},
+    },
+)
+def list_all_instances_admin(
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    userinfo: dict = Depends(require_any_role(["moderator", "admin"])),
+):
+    """
+    Returns every lab instance in the system, ordered by most recent first.
+    Restricted to moderators and admins.
+    """
+    from app.services.LabInstance.ManageInstance import list_all_instances
+
+    items, total = list_all_instances(db, skip, limit)
+    return LabInstanceListResponse(items=items, total=total)
 
 @router.get(
     "/",

@@ -1,7 +1,7 @@
 // src/pages/LabInstance/admin/ViewLabInstancePage.tsx
 import { useState, useEffect, useCallback } from "react"
 import { useParams, useNavigate } from "react-router-dom"
-import { useLabInstance } from "@/hooks/LabInstance/useLabInstance"
+import { useAdminLabInstance } from "@/hooks/LabInstance/useAdminLabInstance"
 import { useLabInstanceTask } from "@/hooks/LabInstance/useLabInstanceTask"
 import { useLabInstanceEvent } from "@/hooks/LabInstance/useLabInstanceEvent"
 import { InstanceHeader } from "@/components/LabInstance/admin/ViewLabInstance/InstanceHeader"
@@ -18,7 +18,7 @@ export default function ViewLabInstancePage() {
     const [activeTab, setActiveTab] = useState<TabId>("overview")
     const [instance, setInstance] = useState<LabInstance | null>(null)
 
-    const { getInstance, isLoading: instanceLoading } = useLabInstance()
+    const { getInstanceAdmin, isLoading: instanceLoading } = useAdminLabInstance()
     const {
         tasks,
         total: tasksTotal,
@@ -37,12 +37,12 @@ export default function ViewLabInstancePage() {
     useEffect(() => {
         if (!id) return
 
-        getInstance(id)
+        getInstanceAdmin(id)
             .then(setInstance)
             .catch(() => {
                 // Error toast handled by hook
             })
-    }, [id, getInstance])
+    }, [id, getInstanceAdmin])
 
     const handleBack = useCallback(() => {
         navigate("/admin/lab-instances")

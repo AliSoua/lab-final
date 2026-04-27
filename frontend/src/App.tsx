@@ -220,8 +220,8 @@ function App() {
         <Route path="lab-connections" element={<LabConnectionPage />} />
 
         {/* Instances (Admin) */}
-        <Route path="instances" element={<ListLabInstancePage />} />
-        <Route path="instances/:instanceId" element={<ViewLabInstancePage />} />
+        <Route path="lab-instances" element={<ListLabInstancePage />} />
+        <Route path="lab-instances/:id" element={<ViewLabInstancePage />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

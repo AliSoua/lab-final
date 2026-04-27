@@ -28,6 +28,34 @@ logger = logging.getLogger(__name__)
 # ═══════════════════════════════════════════════════════════════════════════════
 #  GET & LIST
 # ═══════════════════════════════════════════════════════════════════════════════
+def list_all_instances(
+    db: Session,
+    skip: int = 0,
+    limit: int = 100,
+) -> Tuple[List[LabInstance], int]:
+    """
+    List ALL lab instances across all trainees.
+    Intended for moderator / admin dashboards.
+    """
+    logger.info(
+        "Listing all instances | skip=%s limit=%s",
+        skip,
+        limit,
+    )
+    query = db.query(LabInstance)
+    total = query.count()
+    items = (
+        query.order_by(desc(LabInstance.created_at))
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+    logger.info(
+        "All instances listed | count=%d total=%d",
+        len(items),
+        total,
+    )
+    return items, total
 
 def get_instance(
     db: Session,

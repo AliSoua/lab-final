@@ -31,7 +31,7 @@ export function useLabInstanceEvent() {
                 params.append("skip", skip.toString())
                 params.append("limit", limit.toString())
 
-                const url = `${API_BASE_URL}/lab-instances/${instanceId}/events?${params.toString()}`
+                const url = `${API_BASE_URL}/lab-instances/${instanceId}/events/admin?${params.toString()}`
 
                 const response = await fetch(url, {
                     method: "GET",

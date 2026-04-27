@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from "react"
 import { useNavigate } from "react-router-dom"
 import { cn } from "@/lib/utils"
 import { Monitor, RefreshCw, AlertTriangle } from "lucide-react"
+import { useAdminLabInstance } from "@/hooks/LabInstance/useAdminLabInstance"
 import { useLabInstance } from "@/hooks/LabInstance/useLabInstance"
 import { InstanceTable } from "@/components/LabInstance/admin/ListLabInstance/InstanceTable"
 import type { LabInstance } from "@/types/LabInstance/LabInstance"
@@ -10,16 +11,16 @@ import type { LabInstance } from "@/types/LabInstance/LabInstance"
 export default function ListLabInstancePage() {
     const navigate = useNavigate()
 
-    // ── Use the single hook that has everything ───────────────────────────
+    // ── Admin list (no trainee filter) ────────────────────────────────────
+    const { listAllInstances, isLoading, error } = useAdminLabInstance()
+
+    // ── Mutations (stop / terminate) ──────────────────────────────────────
     const {
-        listMyInstances,
         stopInstance,
         terminateInstance,
-        isLoading,
-        error,
+        isLoading: isMutating,
     } = useLabInstance()
 
-    // Local state for the list (listMyInstances returns data, doesn't hold it)
     const [instances, setInstances] = useState<LabInstance[]>([])
     const [total, setTotal] = useState(0)
 
@@ -28,12 +29,12 @@ export default function ListLabInstancePage() {
 
     const fetchInstances = useCallback(
         async (skip = 0, limit = 100) => {
-            const result = await listMyInstances(skip, limit)
+            const result = await listAllInstances(skip, limit)
             setInstances(result.items)
             setTotal(result.total)
             return result
         },
-        [listMyInstances]
+        [listAllInstances]
     )
 
     useEffect(() => {
@@ -44,14 +45,11 @@ export default function ListLabInstancePage() {
         fetchInstances(0, 100)
     }, [fetchInstances])
 
-    // Navigate straight to detail; detail page can fetch its own data
     const handleView = useCallback(
         (instance: LabInstance) => {
-            // TODO: wire up when detail page exists
-            // navigate(`/admin/lab-instances/${instance.id}`)
-            console.log("View instance:", instance.id)
+            navigate(`/admin/lab-instances/${instance.id}`)
         },
-        []
+        [navigate]
     )
 
     const handleStop = useCallback((instance: LabInstance) => {
@@ -65,7 +63,7 @@ export default function ListLabInstancePage() {
                 setStopConfirm(null)
                 fetchInstances(0, 100)
             } catch {
-                // Error toast handled by hook
+                // Error toast handled by mutation hook
             }
         },
         [stopInstance, fetchInstances]
@@ -82,7 +80,7 @@ export default function ListLabInstancePage() {
                 setTerminateConfirm(null)
                 fetchInstances(0, 100)
             } catch {
-                // Error toast handled by hook
+                // Error toast handled by mutation hook
             }
         },
         [terminateInstance, fetchInstances]
@@ -139,7 +137,9 @@ export default function ListLabInstancePage() {
                         <div className="flex items-start gap-3 p-4 bg-red-50 border border-red-200 rounded-lg">
                             <AlertTriangle className="h-5 w-5 text-red-600 shrink-0 mt-0.5" />
                             <div>
-                                <p className="text-sm font-medium text-red-800">Failed to load instances</p>
+                                <p className="text-sm font-medium text-red-800">
+                                    Failed to load instances
+                                </p>
                                 <p className="text-xs text-red-600 mt-0.5">{error}</p>
                             </div>
                         </div>
@@ -148,7 +148,7 @@ export default function ListLabInstancePage() {
                     <InstanceTable
                         instances={instances}
                         isLoading={isLoading}
-                        isSubmitting={isLoading}
+                        isSubmitting={isMutating}
                         onView={handleView}
                         onStop={handleStop}
                         onTerminate={handleTerminate}
@@ -183,14 +183,14 @@ export default function ListLabInstancePage() {
                             </button>
                             <button
                                 onClick={() => confirmStop(stopConfirm)}
-                                disabled={isLoading}
+                                disabled={isMutating}
                                 className={cn(
                                     "px-4 py-2 rounded-lg text-sm font-medium",
                                     "bg-amber-500 text-white hover:bg-amber-600",
                                     "transition-colors disabled:opacity-60"
                                 )}
                             >
-                                {isLoading ? "Stopping..." : "Stop Instance"}
+                                {isMutating ? "Stopping..." : "Stop Instance"}
                             </button>
                         </div>
                     </div>
@@ -224,14 +224,14 @@ export default function ListLabInstancePage() {
                             </button>
                             <button
                                 onClick={() => confirmTerminate(terminateConfirm)}
-                                disabled={isLoading}
+                                disabled={isMutating}
                                 className={cn(
                                     "px-4 py-2 rounded-lg text-sm font-medium",
                                     "bg-red-500 text-white hover:bg-red-600",
                                     "transition-colors disabled:opacity-60"
                                 )}
                             >
-                                {isLoading ? "Terminating..." : "Terminate"}
+                                {isMutating ? "Terminating..." : "Terminate"}
                             </button>
                         </div>
                     </div>
