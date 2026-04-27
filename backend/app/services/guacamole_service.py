@@ -12,6 +12,12 @@ GUACAMOLE_API = os.getenv("GUACAMOLE_API_URL")
 ADMIN_USER = os.getenv("GUACAMOLE_ADMIN_USER")
 ADMIN_PASS = os.getenv("GUACAMOLE_ADMIN_PASS")
 
+if not GUACAMOLE_API:
+    raise ValueError("GUACAMOLE_API_URL environment variable is not set")
+if not ADMIN_USER:
+    raise ValueError("GUACAMOLE_ADMIN_USER environment variable is not set")
+if not ADMIN_PASS:
+    raise ValueError("GUACAMOLE_ADMIN_PASS environment variable is not set")
 
 class GuacamoleService:
     """
@@ -31,7 +37,7 @@ class GuacamoleService:
         r = requests.post(
             f"{GUACAMOLE_API}/tokens",
             data={"username": ADMIN_USER, "password": ADMIN_PASS},
-            timeout=10,
+            timeout=30,
         )
         r.raise_for_status()
         data = r.json()
@@ -67,6 +73,9 @@ class GuacamoleService:
         """
         Create a Guacamole connection and return its identifier.
         """
+
+        logger.info(f"Creating Guacamole connection for name:{name} | protocol:{protocol} | hostname:{hostname} | port:{port} | username:{username} | password:{password} | width:{width} | height:{height} | dpi:{dpi}")
+
         payload: Dict[str, Any] = {
             "parentIdentifier": "ROOT",
             "name": name,
@@ -114,6 +123,12 @@ class GuacamoleService:
             json=payload,
             timeout=10,
         )
+        if r.status_code == 400:
+            logger.error(
+                "Guacamole 400 on create_connection. Payload=%s | Response=%s",
+                payload,
+                r.text,
+            )   
         r.raise_for_status()
         conn_id = r.json()["identifier"]
         logger.info("Created Guacamole connection %s for %s", conn_id, name)
