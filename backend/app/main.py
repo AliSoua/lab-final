@@ -12,7 +12,10 @@ from dotenv import load_dotenv
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
-load_dotenv()
+from app.core.logging import configure_logging
+
+# ── Configure logging BEFORE any other imports that might use logging ──
+configure_logging()
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +35,7 @@ from app.models.LabDefinition.LabInstanceEventLog import LabInstanceEventLog
 from app.routers.database import router as db_admin_router
 from app.routers.LabInstance import router as LabInstance_router
 from app.config.settings import settings
+
 
 def _reap_unsent_tasks() -> None:
     """
@@ -71,13 +75,13 @@ def _reap_unsent_tasks() -> None:
                 metadata_={},
             )
             db.add(event)
-            db.commit()
 
-            logger.warning(
-                "[REAPER] Marked stuck task %s (instance %s) as failed",
-                task.id,
-                task.lab_instance_id,
-            )
+        db.commit()
+
+        logger.warning(
+            "Marked %d stuck task(s) as failed (never published to Redis)",
+            len(stuck),
+        )
 
 
 @asynccontextmanager

@@ -225,13 +225,11 @@ def run_launch_worker(
             db=db,
         )
 
+        # Query 1: Lock the instance row (NO joinedload)
         instance = (
             db.query(LabInstance)
             .filter(LabInstance.id == instance_uuid)
-            .options(
-                joinedload(LabInstance.lab_definition).joinedload(LabDefinition.vms)
-            )
-            .with_for_update()  # ← ROW LOCK: prevents concurrent terminate/modify
+            .with_for_update()
             .first()
         )
 
@@ -245,9 +243,13 @@ def run_launch_worker(
             finish_task(task_uuid, "completed", "Instance already terminating", db=db)
             return
 
-        vm_config = (
-            instance.lab_definition.vms[0] if instance.lab_definition.vms else None
-        )
+        # Query 2: Load related data separately (NO lock needed)
+        db.refresh(instance, ["lab_definition"])
+        lab_definition = instance.lab_definition
+        if lab_definition:
+            db.refresh(lab_definition, ["vms"])
+
+        vm_config = lab_definition.vms[0] if lab_definition and lab_definition.vms else None
         if not vm_config:
             task_logger.error("Lab definition has no VMs configured")
             instance.status = "failed"
@@ -255,9 +257,9 @@ def run_launch_worker(
             finish_task(task_uuid, "failed", "Lab definition has no VMs", db=db)
             return
 
-        # Capture values we need outside the session
+        # Capture values needed outside the session
         source_vm_id = vm_config.source_vm_id
-        lab_slug = instance.lab_definition.slug
+        lab_slug = lab_definition.slug
         existing_vm_uuid = instance.vm_uuid
         existing_vcenter_host = instance.vcenter_host
 
