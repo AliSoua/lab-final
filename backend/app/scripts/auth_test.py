@@ -57,7 +57,7 @@ def decode_jwt_payload(token: str) -> Optional[Dict]:
         decoded = base64.urlsafe_b64decode(payload)
         return json.loads(decoded)
     except Exception as e:
-        logger.debug(f"JWT decode error: {e}")
+        logger.info(f"JWT decode error: {e}")
         return None
 
 

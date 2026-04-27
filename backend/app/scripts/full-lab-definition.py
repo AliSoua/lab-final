@@ -119,7 +119,7 @@ class LabAPIClient:
                 headers=self._get_headers()
             )
             
-            logger.debug(f"Request payload: {json.dumps(lab_data, indent=2)}")
+            logger.info(f"Request payload: {json.dumps(lab_data, indent=2)}")
             
             if response.status_code == 201:
                 data = response.json()

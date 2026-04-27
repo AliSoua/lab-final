@@ -215,7 +215,7 @@ class GuacamoleService:
             timeout=10,
         )
         if r.status_code == 200:
-            logger.debug("Guacamole user %s already exists", username)
+            logger.info("Guacamole user %s already exists", username)
             return
         if r.status_code != 404:
             r.raise_for_status()
@@ -233,7 +233,7 @@ class GuacamoleService:
             timeout=10,
         )
         if c.status_code == 400:
-            logger.debug("Guacamole user %s already exists (400 on create)", username)
+            logger.info("Guacamole user %s already exists (400 on create)", username)
             return
         c.raise_for_status()
         logger.info("Created Guacamole user %s", username)
@@ -265,7 +265,7 @@ class GuacamoleService:
             timeout=10,
         )
         if r.status_code == 400:
-            logger.debug(
+            logger.info(
                 "Permission READ already granted to %s on connection %s",
                 username,
                 connection_id,
@@ -300,7 +300,7 @@ class GuacamoleService:
             timeout=10,
         )
         if r.status_code in (400, 404):
-            logger.debug(
+            logger.info(
                 "No permission to revoke for %s on connection %s (status=%s)",
                 username,
                 connection_id,

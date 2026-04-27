@@ -103,7 +103,7 @@ class LabAPIClient:
         }
         if auth and self.access_token:
             headers["Authorization"] = f"Bearer {self.access_token}"
-            logger.debug("Added Authorization header")
+            logger.info("Added Authorization header")
         return headers
     
     def login(self, username: str, password: str) -> bool:
@@ -126,8 +126,8 @@ class LabAPIClient:
         }
         
         try:
-            logger.debug(f"POST {url}")
-            logger.debug(f"Payload: {json.dumps(payload, indent=2)}")
+            logger.info(f"POST {url}")
+            logger.info(f"Payload: {json.dumps(payload, indent=2)}")
             
             response = self.session.post(
                 url,
@@ -135,8 +135,8 @@ class LabAPIClient:
                 headers=self._get_headers(auth=False)
             )
             
-            logger.debug(f"Response Status: {response.status_code}")
-            logger.debug(f"Response Headers: {dict(response.headers)}")
+            logger.info(f"Response Status: {response.status_code}")
+            logger.info(f"Response Headers: {dict(response.headers)}")
             
             if response.status_code == 200:
                 data = response.json()
@@ -182,13 +182,13 @@ class LabAPIClient:
         url = self._get_url("/auth/check")
         
         try:
-            logger.debug(f"GET {url}")
+            logger.info(f"GET {url}")
             response = self.session.get(
                 url,
                 headers=self._get_headers()
             )
             
-            logger.debug(f"Response Status: {response.status_code}")
+            logger.info(f"Response Status: {response.status_code}")
             
             if response.status_code == 200:
                 logger.info("✓ Auth check successful - Token is valid")
@@ -222,7 +222,7 @@ class LabAPIClient:
         } if self.refresh_token else {}
         
         try:
-            logger.debug(f"POST {url}")
+            logger.info(f"POST {url}")
             response = self.session.post(
                 url,
                 json=payload,
@@ -260,8 +260,8 @@ class LabAPIClient:
         url = self._get_url("/lab-definitions/")
         
         try:
-            logger.debug(f"POST {url}")
-            logger.debug(f"Payload: {json.dumps(lab_data, indent=2)}")
+            logger.info(f"POST {url}")
+            logger.info(f"Payload: {json.dumps(lab_data, indent=2)}")
             
             response = self.session.post(
                 url,
@@ -269,7 +269,7 @@ class LabAPIClient:
                 headers=self._get_headers()
             )
             
-            logger.debug(f"Response Status: {response.status_code}")
+            logger.info(f"Response Status: {response.status_code}")
             
             if response.status_code == 201:
                 data = response.json()
@@ -310,8 +310,8 @@ class LabAPIClient:
         params.update(filters)
         
         try:
-            logger.debug(f"GET {url}")
-            logger.debug(f"Params: {params}")
+            logger.info(f"GET {url}")
+            logger.info(f"Params: {params}")
             
             response = self.session.get(
                 url,
@@ -319,7 +319,7 @@ class LabAPIClient:
                 headers=self._get_headers()
             )
             
-            logger.debug(f"Response Status: {response.status_code}")
+            logger.info(f"Response Status: {response.status_code}")
             
             if response.status_code == 200:
                 data = response.json()
@@ -353,7 +353,7 @@ class LabAPIClient:
         url = self._get_url(f"/lab-definitions/{lab_id}")
         
         try:
-            logger.debug(f"GET {url}")
+            logger.info(f"GET {url}")
             response = self.session.get(
                 url,
                 headers=self._get_headers()
@@ -392,8 +392,8 @@ class LabAPIClient:
         url = self._get_url(f"/lab-definitions/{lab_id}/guide-blocks")
         
         try:
-            logger.debug(f"POST {url}")
-            logger.debug(f"Payload: {json.dumps(block_data, indent=2)}")
+            logger.info(f"POST {url}")
+            logger.info(f"Payload: {json.dumps(block_data, indent=2)}")
             
             response = self.session.post(
                 url,
@@ -401,7 +401,7 @@ class LabAPIClient:
                 headers=self._get_headers()
             )
             
-            logger.debug(f"Response Status: {response.status_code}")
+            logger.info(f"Response Status: {response.status_code}")
             
             if response.status_code == 201:
                 data = response.json()
@@ -433,13 +433,13 @@ class LabAPIClient:
         url = self._get_url(f"/lab-definitions/{lab_id}/publish")
         
         try:
-            logger.debug(f"POST {url}")
+            logger.info(f"POST {url}")
             response = self.session.post(
                 url,
                 headers=self._get_headers()
             )
             
-            logger.debug(f"Response Status: {response.status_code}")
+            logger.info(f"Response Status: {response.status_code}")
             
             if response.status_code == 200:
                 data = response.json()
@@ -473,7 +473,7 @@ class LabAPIClient:
         url = self._get_url(f"/lab-definitions/{lab_id}/guide-blocks/reorder")
         
         try:
-            logger.debug(f"POST {url}")
+            logger.info(f"POST {url}")
             response = self.session.post(
                 url,
                 json=block_ids,

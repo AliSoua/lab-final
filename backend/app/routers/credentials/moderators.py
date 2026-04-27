@@ -447,7 +447,7 @@ def get_all_vcenter_templates(
 
                     if not host_value or host_value in seen_hosts:
                         if host_value:
-                            logger.debug(
+                            logger.info(
                                 "Skipping duplicate vCenter host: %s (admin=%s)",
                                 host_value,
                                 admin_id,

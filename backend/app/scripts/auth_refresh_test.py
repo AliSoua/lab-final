@@ -89,7 +89,7 @@ def get_token_info(token: str) -> Dict:
 
 def test_access_token(base_url: str, token: str, label: str) -> Tuple[bool, int]:
     """Test if access token is valid. Returns (is_valid, http_status)"""
-    logger.debug(f"Testing {label}...")
+    logger.info(f"Testing {label}...")
     
     try:
         resp = requests.get(
@@ -99,7 +99,7 @@ def test_access_token(base_url: str, token: str, label: str) -> Tuple[bool, int]
         )
         
         is_valid = resp.status_code == 200 and resp.json().get("logged_in")
-        logger.debug(f"{label}: HTTP {resp.status_code}, logged_in={resp.json().get('logged_in')}")
+        logger.info(f"{label}: HTTP {resp.status_code}, logged_in={resp.json().get('logged_in')}")
         return is_valid, resp.status_code
         
     except Exception as e:
@@ -154,7 +154,7 @@ def main():
     logger.info("STEP 1: LOGIN (T+0:00)")
     logger.info("=" * 70)
     
-    logger.debug(f"Sending login request for {TEST_USER['username']}...")
+    logger.info(f"Sending login request for {TEST_USER['username']}...")
     resp = requests.post(
         f"{BASE_URL}/auth/login",
         json=TEST_USER,
@@ -177,7 +177,7 @@ def main():
     logger.info(f"   Refresh Token 1: {token1_refresh[:40]}...")
     logger.info(f"   Expires at:      {token1_info['expires_at']}")
     logger.info(f"   Time remaining:  {format_time_remaining(token1_exp)}")
-    logger.debug(f"   Full token info: {json.dumps(token1_info, indent=2)}")
+    logger.info(f"   Full token info: {json.dumps(token1_info, indent=2)}")
     
     # Quick validation
     valid, status = test_access_token(BASE_URL, token1_access, "Token 1 (initial)")
@@ -211,7 +211,7 @@ def main():
     logger.info("STEP 3: REFRESH TOKEN (T+4:00)")
     logger.info("=" * 70)
     
-    logger.debug("Sending refresh request with Token 1's refresh token...")
+    logger.info("Sending refresh request with Token 1's refresh token...")
     resp = requests.post(
         f"{BASE_URL}/auth/refresh",
         json={"refresh_token": token1_refresh},
@@ -238,7 +238,7 @@ def main():
     logger.info(f"   Expires at:      {token2_info['expires_at']}")
     logger.info(f"   Time remaining:  {format_time_remaining(token2_exp)}")
     logger.info(f"   Token rotation:  {'ENABLED' if rotation else 'DISABLED'}")
-    logger.debug(f"   Full token info: {json.dumps(token2_info, indent=2)}")
+    logger.info(f"   Full token info: {json.dumps(token2_info, indent=2)}")
     
     # Validate new token works
     valid, status = test_access_token(BASE_URL, token2_access, "Token 2 (initial)")

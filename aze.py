@@ -419,269 +419,6 @@ class LabInstanceService:
             raise
 
     # ------------------------------------------------------------------
-    # Terminate — public enqueue (API container)
-    # ------------------------------------------------------------------
-
-    def enqueue_terminate(
-        self,
-        db: Session,
-        instance_id: uuid.UUID,
-        trainee_id: str,
-    ) -> LabInstance:
-        """
-        Synchronous enqueue path.
-        Idempotent: accepts 'failed' rows; no-op if already terminating/terminated.
-        Deletes Guacamole connections immediately, then hands the vCenter destroy
-        to a Celery worker.
-        """
-        from app.services.LabDefinition.task_audit import start_task, finish_task
-        from app.tasks.lab_instance_tasks import terminate_instance_task
-
-        logger.info(
-            "[ENQUEUE-TERMINATE] instance=%s trainee=%s",
-            instance_id,
-            trainee_id,
-        )
-
-        instance = (
-            db.query(LabInstance)
-            .filter(
-                LabInstance.id == instance_id,
-                LabInstance.trainee_id == trainee_id,
-            )
-            .with_for_update()
-            .first()
-        )
-        if not instance:
-            logger.error("[ENQUEUE-TERMINATE] Instance %s not found", instance_id)
-            raise ValueError("Instance not found")
-
-        if instance.status in ("terminating", "terminated"):
-            logger.info(
-                "[ENQUEUE-TERMINATE] Instance %s already %s, returning as-is",
-                instance_id,
-                instance.status,
-            )
-            return instance
-
-        if instance.status not in ("provisioning", "running", "stopped", "failed"):
-            raise ValueError(
-                f"Cannot terminate instance in status '{instance.status}'"
-            )
-
-        # FIX #4: Capture the REAL previous status before mutating it
-        previous_status = instance.status
-
-        instance.status = "terminating"
-        db.commit()
-        db.refresh(instance)
-
-        self._delete_guacamole_connections(instance, db=db)
-        db.commit()
-
-        task_audit_id = start_task(
-            instance.id,
-            "terminate",
-            metadata={
-                "instance_id": str(instance_id),
-                "trainee_id": str(trainee_id),
-                "previous_status": previous_status,
-            },
-        )
-
-        try:
-            terminate_instance_task.apply_async(
-                args=[str(instance.id), str(trainee_id)],
-                task_id=str(task_audit_id),
-                queue="lab.cleanup",
-            )
-            logger.info(
-                "[ENQUEUE-TERMINATE] Celery task %s enqueued for instance %s",
-                task_audit_id,
-                instance.id,
-            )
-        except Exception as e:
-            logger.error(
-                "[ENQUEUE-TERMINATE] Redis down — failed to enqueue task %s: %s",
-                task_audit_id,
-                e,
-            )
-            instance.status = "failed"
-            instance.error_message = f"Task queue unavailable: {e}"
-            db.commit()
-            finish_task(task_audit_id, "failed", str(e))
-            raise RuntimeError("Task queue unavailable") from e
-
-        return instance
-
-    # ------------------------------------------------------------------
-    # Terminate — worker body (Celery)
-    # ------------------------------------------------------------------
-
-    def _terminate_worker(
-        self,
-        instance_id: str,
-        trainee_id: str,
-        task_id: str,
-    ) -> None:
-        """
-        Idempotent terminate worker.
-        Re-loads the row, destroys the VM, then marks terminated.
-        Short-circuits if vm_uuid is None (clone hasn't committed yet).
-        """
-        from uuid import UUID
-        from app.services.LabDefinition.task_audit import (
-            mark_running,
-            record_event,
-            finish_task,
-        )
-
-        task_uuid = UUID(task_id)
-
-        db = self.db
-        if db is None:
-            from app.utils.db_session import background_session
-            with background_session() as db:
-                self.db = db
-                return self._terminate_worker(instance_id, trainee_id, task_id)
-
-        mark_running(
-            task_uuid,
-            worker_pid=os.getpid(),
-            worker_host=socket.gethostname(),
-        )
-
-        instance = (
-            db.query(LabInstance)
-            .filter(LabInstance.id == instance_id)
-            .with_for_update()
-            .first()
-        )
-        if not instance:
-            finish_task(task_uuid, "failed", "Instance not found")
-            return
-
-        if instance.status == "terminated":
-            db.commit()
-            finish_task(task_uuid, "completed", "Already terminated")
-            return
-
-        if not instance.vm_uuid:
-            record_event(
-                task_uuid,
-                instance.id,
-                "terminate_short_circuit",
-                "vm_uuid is None — clone not yet committed, nothing to destroy",
-            )
-            instance.status = "terminated"
-            instance.stopped_at = datetime.utcnow()
-            db.commit()
-            finish_task(task_uuid, "completed", "Short-circuit: no VM to destroy")
-            return
-
-        try:
-            vm_destroyed = False
-
-            if instance.vm_uuid and instance.vcenter_host:
-                record_event(
-                    task_uuid,
-                    instance.id,
-                    "vcenter_destroy_started",
-                    f"Destroying VM {instance.vm_uuid} on {instance.vcenter_host}",
-                )
-
-                creds = self._find_vcenter_credentials(instance.vcenter_host)
-                if not creds:
-                    raise RuntimeError(
-                        f"No vCenter credentials found for {instance.vcenter_host}"
-                    )
-
-                client = VCenterClient(
-                    host=creds["host"],
-                    username=creds["username"],
-                    password=creds["password"],
-                )
-                if not client.connect():
-                    raise RuntimeError(
-                        f"Failed to connect to vCenter {creds['host']}"
-                    )
-
-                try:
-                    vm = client.find_vm_by_uuid(instance.vm_uuid)
-                    if vm:
-                        if str(vm.runtime.powerState) == "poweredOn":
-                            try:
-                                task = vm.PowerOffVM_Task()
-                                # FIX #3: timeout wrapper prevents infinite hang
-                                _call_with_timeout(client._wait_for_task, 120, task)
-                            except Exception as e:
-                                record_event(
-                                    task_uuid,
-                                    instance.id,
-                                    "power_off_warning",
-                                    f"Power off before destroy failed (non-fatal): {e}",
-                                )
-
-                        task = vm.Destroy_Task()
-                        _call_with_timeout(client._wait_for_task, 180, task)
-                        record_event(
-                            task_uuid,
-                            instance.id,
-                            "vcenter_destroy_completed",
-                            f"Destroyed VM {instance.vm_uuid}",
-                        )
-                    else:
-                        # VM not found in vCenter — probably already deleted manually
-                        record_event(
-                            task_uuid,
-                            instance.id,
-                            "vcenter_vm_not_found",
-                            f"VM {instance.vm_uuid} not found in vCenter — assuming already destroyed",
-                        )
-
-                    vm_destroyed = True
-
-                except Exception as e:
-                    record_event(
-                        task_uuid,
-                        instance.id,
-                        "vcenter_destroy_failed",
-                        str(e),
-                    )
-                    raise
-                finally:
-                    client.disconnect()
-
-            if vm_destroyed or not instance.vm_uuid:
-                instance.status = "terminated"
-                instance.stopped_at = datetime.utcnow()
-                db.commit()
-                finish_task(task_uuid, "completed")
-            else:
-                # Should never reach here, but defensive
-                raise RuntimeError("VM destroy was not confirmed")
-
-        except Exception as e:
-            logger.error(
-                "[TERMINATE-WORKER] Failed for instance %s: %s",
-                instance_id,
-                e,
-                exc_info=True,
-            )
-            db.rollback()
-            instance = (
-                db.query(LabInstance)
-                .filter(LabInstance.id == instance_id)
-                .first()
-            )
-            if instance:
-                instance.status = "failed"
-                instance.error_message = str(e)
-                db.commit()
-            finish_task(task_uuid, "failed", str(e))
-            raise
-
-    # ------------------------------------------------------------------
     # Synchronous API methods
     # ------------------------------------------------------------------
 
@@ -697,14 +434,14 @@ class LabInstanceService:
             .first()
         )
         if instance:
-            logger.info(
+            logger.debug(
                 "[GET] Instance %s found for trainee %s (status=%s)",
                 instance_id,
                 trainee_id,
                 instance.status,
             )
         else:
-            logger.info(
+            logger.debug(
                 "[GET] Instance %s not found for trainee %s",
                 instance_id,
                 trainee_id,
@@ -718,7 +455,7 @@ class LabInstanceService:
         skip: int = 0,
         limit: int = 100,
     ) -> Tuple[List[LabInstance], int]:
-        logger.info(
+        logger.debug(
             "[LIST] Listing instances for trainee %s (skip=%s, limit=%s)",
             trainee_id,
             skip,
@@ -734,7 +471,7 @@ class LabInstanceService:
             .limit(limit)
             .all()
         )
-        logger.info("[LIST] Found %d instances (total=%d)", len(items), total)
+        logger.debug("[LIST] Found %d instances (total=%d)", len(items), total)
         return items, total
 
     def stop_instance(
@@ -759,7 +496,7 @@ class LabInstanceService:
             return instance
 
         if instance.vm_uuid and instance.vcenter_host:
-            logger.info(
+            logger.debug(
                 "[STOP] Connecting to vCenter %s to power off VM %s",
                 instance.vcenter_host,
                 instance.vm_uuid,
@@ -836,7 +573,7 @@ class LabInstanceService:
             return instance
 
         if instance.status in ("terminating", "terminated", "stopped"):
-            logger.info(
+            logger.debug(
                 "[REFRESH] Instance %s is in terminal state '%s'; skipping sync",
                 instance_id,
                 instance.status,
@@ -894,7 +631,7 @@ class LabInstanceService:
             )
             return instance
 
-        logger.info(
+        logger.debug(
             "[REFRESH] VM %s state: power=%s ip=%s",
             instance.vm_uuid,
             new_power_state,
@@ -913,7 +650,7 @@ class LabInstanceService:
                     new_ip,
                 )
             else:
-                logger.info(
+                logger.debug(
                     "[REFRESH] IP address still available: %s (previous: %s)",
                     new_ip,
                     instance.ip_address,
@@ -932,7 +669,7 @@ class LabInstanceService:
                     except json.JSONDecodeError:
                         slots = []
                 
-                logger.info(
+                logger.debug(
                     "[REFRESH] Lab %s has %d connection slot(s) to evaluate",
                     lab.id,
                     len(slots),
@@ -946,7 +683,7 @@ class LabInstanceService:
                         ip_address=new_ip,
                     )
                 else:
-                    logger.info(
+                    logger.debug(
                         "[REFRESH] Lab %s has no connection slots, skipping Guacamole sync",
                         lab.id,
                     )
@@ -968,7 +705,7 @@ class LabInstanceService:
                 )
                 instance.status = "running"
             elif not conns and instance.status == "provisioning":
-                logger.info(
+                logger.debug(
                     "[REFRESH] Instance %s still provisioning — "
                     "IP detected but no Guacamole connections created yet "
                     "(may need valid connection_slots + Vault credentials).",
@@ -983,7 +720,7 @@ class LabInstanceService:
                     instance.ip_address,
                 )
             else:
-                logger.info(
+                logger.debug(
                     "[REFRESH] No IP address available yet for instance %s",
                     instance_id,
                 )
@@ -1030,14 +767,14 @@ class LabInstanceService:
 
     def _default_port(self, protocol: str) -> int:
         port = {"ssh": 22, "rdp": 3389, "vnc": 5901}.get(protocol.lower(), 22)
-        logger.info("[GUAC] Default port for %s = %d", protocol, port)
+        logger.debug("[GUAC] Default port for %s = %d", protocol, port)
         return port
 
     def _load_connections_map(self, instance: LabInstance) -> Dict[str, str]:
         raw = getattr(instance, "guacamole_connections", None)
         if isinstance(raw, dict):
             copied = dict(raw)
-            logger.info(
+            logger.debug(
                 "[GUAC] Loaded connections map for instance %s: %d entries",
                 instance.id,
                 len(copied),
@@ -1046,7 +783,7 @@ class LabInstanceService:
         if isinstance(raw, str):
             try:
                 parsed = json.loads(raw)
-                logger.info(
+                logger.debug(
                     "[GUAC] Parsed connections JSON string for instance %s: %d entries",
                     instance.id,
                     len(parsed),
@@ -1059,7 +796,7 @@ class LabInstanceService:
                     raw,
                 )
                 return {}
-        logger.info(
+        logger.debug(
             "[GUAC] No connections map found for instance %s (raw type=%s)",
             instance.id,
             type(raw).__name__,
@@ -1070,7 +807,7 @@ class LabInstanceService:
         self, instance: LabInstance, mapping: Dict[str, str]
     ) -> None:
         instance.guacamole_connections = dict(mapping)
-        logger.info(
+        logger.debug(
             "[GUAC] Saved connections map for instance %s: %s",
             instance.id,
             mapping,
@@ -1081,7 +818,7 @@ class LabInstanceService:
             instance.connection_url = guacamole_service.get_connection_url(
                 mapping[first_key]
             )
-            logger.info(
+            logger.debug(
                 "[GUAC] Legacy fields updated for instance %s: conn_id=%s url=%s",
                 instance.id,
                 instance.guacamole_connection_id,
@@ -1090,7 +827,7 @@ class LabInstanceService:
         else:
             instance.guacamole_connection_id = None
             instance.connection_url = None
-            logger.info(
+            logger.debug(
                 "[GUAC] Legacy fields cleared for instance %s (empty mapping)",
                 instance.id,
             )
@@ -1099,7 +836,7 @@ class LabInstanceService:
         self, slug: str, protocol: str
     ) -> Optional[Dict[str, Any]]:
         vault_path = f"credentials/lab_connections/{slug}/{protocol}"
-        logger.info(
+        logger.debug(
             "[GUAC] Reading credentials from Vault: %s",
             vault_path,
         )
@@ -1151,7 +888,7 @@ class LabInstanceService:
         if isinstance(slots, str):
             try:
                 slots = json.loads(slots)
-                logger.info(
+                logger.debug(
                     "[GUAC-SYNC] Parsed connection_slots JSON string for lab %s",
                     lab.id,
                 )
@@ -1201,7 +938,7 @@ class LabInstanceService:
                 )
                 continue
 
-            logger.info(
+            logger.debug(
                 "[GUAC-SYNC] Processing slot: slug=%s ssh=%s rdp=%s vnc=%s",
                 slug,
                 slot.get("ssh", False),
@@ -1211,7 +948,7 @@ class LabInstanceService:
 
             for protocol in ("ssh", "rdp", "vnc"):
                 if not slot.get(protocol):
-                    logger.info(
+                    logger.debug(
                         "[GUAC-SYNC] Protocol %s not enabled for slot '%s', skipping",
                         protocol,
                         slug,
@@ -1253,7 +990,7 @@ class LabInstanceService:
                             username=creds["username"],
                             password=creds["password"],
                         )
-                        logger.info(
+                        logger.debug(
                             "[GUAC-SYNC] Updated Guacamole %s connection %s",
                             protocol,
                             existing_id,
@@ -1358,14 +1095,14 @@ class LabInstanceService:
                         keycloak_username, conn_id
                     )
                 except Exception as e:
-                    logger.info(
+                    logger.debug(
                         "[GUAC-DEL] Revoke permission %s/%s failed (non-fatal): %s",
                         keycloak_username,
                         conn_id,
                         e,
                     )
             try:
-                logger.info(
+                logger.debug(
                     "[GUAC-DEL] Deleting connection %s (%s)",
                     conn_id,
                     key,
@@ -1402,7 +1139,7 @@ class LabInstanceService:
     def _find_vcenter_for_template(
         self, source_vm_id: str
     ) -> Optional[Dict[str, str]]:
-        logger.info(
+        logger.debug(
             "[VCENTER] Searching for template %s across all vCenters",
             source_vm_id,
         )
@@ -1414,7 +1151,7 @@ class LabInstanceService:
         for admin_id in admin_ids:
             try:
                 hosts = list_admin_vcenters(admin_id)
-                logger.info(
+                logger.debug(
                     "[VCENTER] Admin %s has %d vCenter(s)",
                     admin_id,
                     len(hosts),
@@ -1429,7 +1166,7 @@ class LabInstanceService:
                         if not host_value:
                             continue
 
-                        logger.info(
+                        logger.debug(
                             "[VCENTER] Checking vCenter %s for template %s",
                             host_value,
                             source_vm_id,
@@ -1457,7 +1194,7 @@ class LabInstanceService:
                             finally:
                                 client.disconnect()
                     except Exception as e:
-                        logger.info(
+                        logger.debug(
                             "[VCENTER] Skip vCenter %s for admin %s: %s",
                             host,
                             admin_id,
@@ -1465,7 +1202,7 @@ class LabInstanceService:
                         )
                         continue
             except Exception as e:
-                logger.info("[VCENTER] Skip admin %s: %s", admin_id, e)
+                logger.debug("[VCENTER] Skip admin %s: %s", admin_id, e)
                 continue
 
         logger.error(
@@ -1477,7 +1214,7 @@ class LabInstanceService:
     def _find_vcenter_credentials(
         self, vcenter_host: str
     ) -> Optional[Dict[str, str]]:
-        logger.info(
+        logger.debug(
             "[VCENTER] Looking up credentials for vCenter host %s",
             vcenter_host,
         )
@@ -1495,7 +1232,7 @@ class LabInstanceService:
                             creds.get("host", "").strip().lower()
                             == target
                         ):
-                            logger.info(
+                            logger.debug(
                                 "[VCENTER] Found credentials for %s under admin %s",
                                 target,
                                 admin_id,
@@ -1519,7 +1256,7 @@ class LabInstanceService:
     def _list_all_admin_ids(self) -> List[str]:
         try:
             ids = VaultClient().list_secrets("credentials/admin")
-            logger.info(
+            logger.debug(
                 "[VCENTER] Listed %d admin ID(s) from Vault",
                 len(ids),
             )

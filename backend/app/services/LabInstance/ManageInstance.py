@@ -37,14 +37,14 @@ def get_instance(
         .first()
     )
     if instance:
-        logger.debug(
+        logger.info(
             "[GET] Instance %s found for trainee %s (status=%s)",
             instance_id,
             trainee_id,
             instance.status,
         )
     else:
-        logger.debug(
+        logger.info(
             "[GET] Instance %s not found for trainee %s",
             instance_id,
             trainee_id,
@@ -58,7 +58,7 @@ def list_instances(
     skip: int = 0,
     limit: int = 100,
 ) -> Tuple[List[LabInstance], int]:
-    logger.debug(
+    logger.info(
         "[LIST] Listing instances for trainee %s (skip=%s, limit=%s)",
         trainee_id,
         skip,
@@ -72,7 +72,7 @@ def list_instances(
         .limit(limit)
         .all()
     )
-    logger.debug("[LIST] Found %d instances (total=%d)", len(items), total)
+    logger.info("[LIST] Found %d instances (total=%d)", len(items), total)
     return items, total
 
 
@@ -104,7 +104,7 @@ def stop_instance(
         return instance
 
     if instance.vm_uuid and instance.vcenter_host:
-        logger.debug(
+        logger.info(
             "[STOP] Connecting to vCenter %s to power off VM %s",
             instance.vcenter_host,
             instance.vm_uuid,
@@ -198,7 +198,7 @@ def refresh_instance_status(
         return None
 
     if instance.status in ("terminating", "terminated", "stopped"):
-        logger.debug(
+        logger.info(
             "[REFRESH] Instance %s is in terminal state '%s'; skipping sync",
             instance_id,
             instance.status,
