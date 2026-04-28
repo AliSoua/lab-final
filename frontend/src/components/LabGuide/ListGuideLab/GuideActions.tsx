@@ -11,19 +11,15 @@ import {
 import {
     MoreHorizontal,
     Eye,
-    Pencil,
     Trash2,
     GitBranch,
     History,
-    Play,
-    CheckCircle2,
 } from "lucide-react"
 import type { LabGuideListItem } from "@/types/LabGuide"
 
 interface GuideActionsProps {
     guide: LabGuideListItem
     onPreview: (guide: LabGuideListItem) => void
-    onEdit: (guide: LabGuideListItem) => void
     onDelete: (guide: LabGuideListItem) => void
     onViewVersions: (guide: LabGuideListItem) => void
     onCreateVersion: (guide: LabGuideListItem) => void
@@ -32,14 +28,12 @@ interface GuideActionsProps {
 export function GuideActions({
     guide,
     onPreview,
-    onEdit,
     onDelete,
     onViewVersions,
     onCreateVersion,
 }: GuideActionsProps) {
     const [open, setOpen] = useState(false)
 
-    const hasPublishedVersion = guide.current_version_published === true
     const hasAnyVersion = guide.current_version_id !== null
 
     return (
@@ -67,17 +61,6 @@ export function GuideActions({
                 >
                     <Eye className="h-4 w-4 mr-2 text-[#727373]" />
                     Preview Current Version
-                </DropdownMenuItem>
-
-                <DropdownMenuItem
-                    onClick={() => {
-                        onEdit(guide)
-                        setOpen(false)
-                    }}
-                    className="text-[13px] cursor-pointer"
-                >
-                    <Pencil className="h-4 w-4 mr-2 text-[#727373]" />
-                    Edit Guide
                 </DropdownMenuItem>
 
                 <DropdownMenuSeparator />

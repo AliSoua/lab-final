@@ -8,6 +8,7 @@ import type { LabGuideStepCreateRequest } from "@/types/LabGuide"
 interface StepsBuilderProps {
     steps: LabGuideStepCreateRequest[]
     onChange: (steps: LabGuideStepCreateRequest[]) => void
+    title?: string
 }
 
 function getStepVmTargets(step: LabGuideStepCreateRequest): string[] {
@@ -21,7 +22,7 @@ function getStepVmTargets(step: LabGuideStepCreateRequest): string[] {
     return Array.from(targets)
 }
 
-export function StepsBuilder({ steps, onChange }: StepsBuilderProps) {
+export function StepsBuilder({ steps, onChange, title }: StepsBuilderProps) {
     const [modalOpen, setModalOpen] = useState(false)
     const [editingIndex, setEditingIndex] = useState<number | null>(null)
     const [editingStep, setEditingStep] = useState<LabGuideStepCreateRequest | null>(null)
@@ -75,7 +76,9 @@ export function StepsBuilder({ steps, onChange }: StepsBuilderProps) {
                     <div className="flex items-center gap-4">
                         <div>
                             <div className="flex items-center gap-2">
-                                <h2 className="text-[15px] font-semibold text-[#3a3a3a]">Build Version 1</h2>
+                                <h2 className="text-[15px] font-semibold text-[#3a3a3a]">
+                                    {title || "Build Version 1"}
+                                </h2>
                                 <span className="text-[10px] px-2 py-0.5 rounded bg-[#e6f7f8] text-[#1ca9b1] font-semibold">
                                     IMMUTABLE
                                 </span>
@@ -106,8 +109,8 @@ export function StepsBuilder({ steps, onChange }: StepsBuilderProps) {
                 <div>
                     <p className="text-sm font-medium text-amber-800">Immutable Version</p>
                     <p className="text-xs text-amber-700 mt-0.5">
-                        These steps will be saved as <strong>Version 1</strong>. Once created, this version cannot be modified.
-                        To make changes later, you'll create a new version (v2, v3, etc.).
+                        These steps will be saved as a new immutable version. Once created, this version cannot be modified.
+                        To make changes later, you'll create another version.
                     </p>
                 </div>
             </div>

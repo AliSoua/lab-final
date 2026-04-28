@@ -33,10 +33,6 @@ export default function ListGuidePage() {
         navigate(`/admin/lab-guides/${guide.id}/preview`)
     }
 
-    const handleEdit = (guide: LabGuideListItem) => {
-        navigate(`/admin/lab-guides/${guide.id}/edit`)
-    }
-
     const handleDelete = (guide: LabGuideListItem) => {
         setDeleteConfirm(guide.id)
     }
@@ -75,7 +71,6 @@ export default function ListGuidePage() {
     }
 
     const handleAssignVersion = (guideId: string, versionId: string) => {
-        // You'd typically navigate to a lab selection or open another modal
         toast.info(`Ready to assign version ${versionId} to a lab`)
     }
 
@@ -162,7 +157,6 @@ export default function ListGuidePage() {
                         guides={guides}
                         isLoading={isLoading}
                         onPreview={handlePreview}
-                        onEdit={handleEdit}
                         onDelete={handleDelete}
                         onViewVersions={handleViewVersions}
                         onCreateVersion={handleCreateVersion}
@@ -209,6 +203,7 @@ export default function ListGuidePage() {
                 open={!!versionsModalGuide}
                 onOpenChange={(open) => !open && setVersionsModalGuide(null)}
                 onAssignVersion={handleAssignVersion}
+                onCurrentVersionChanged={refetch}
             />
 
             <CreateVersionModal

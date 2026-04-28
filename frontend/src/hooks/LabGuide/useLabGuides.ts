@@ -154,7 +154,6 @@ export function useLabGuides(): UseLabGuidesReturn {
             }
 
             const result: LabGuide = await response.json()
-            toast.success(`Guide "${result.title}" created`)
             await fetchGuides()
             return result.id
         } catch (err) {
@@ -256,7 +255,6 @@ export function useLabGuides(): UseLabGuidesReturn {
                 if (response.status === 409) {
                     const errorData = await response.json().catch(() => ({}))
                     const msg = errorData.detail || "Guide is assigned to labs"
-                    toast.error(msg)
                     throw new Error(msg)
                 }
                 const errorText = await response.text()

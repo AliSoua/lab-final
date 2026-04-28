@@ -101,13 +101,15 @@ def enqueue_launch(
     max_score = _compute_max_score(db, lab.guide_version_id)
 
     # 4. Insert provisioning row with guide_version snapshot and session state
+    duration = lab.duration_minutes or 60
     instance = LabInstance(
         lab_definition_id=lab_definition_id,
         trainee_id=trainee_id,
         guide_version_id=lab.guide_version_id,  # snapshot at launch time
         status="provisioning",
         started_at=datetime.utcnow(),
-        expires_at=datetime.utcnow() + timedelta(hours=4),
+        expires_at=datetime.utcnow() + timedelta(minutes=duration),
+        duration_minutes=duration,
         guacamole_connections={},
         session_state=None,  # set after flush so we have the real instance.id
         current_step_index=0,

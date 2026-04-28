@@ -81,6 +81,8 @@ class LabInstance(Base):
     stopped_at = Column(DateTime(timezone=True))
     expires_at = Column(DateTime(timezone=True))
 
+    duration_minutes = Column(Integer, nullable=True)
+
     # Relationships
     lab_definition = relationship("LabDefinition", back_populates="instances")
     user = relationship("User", back_populates="instances")

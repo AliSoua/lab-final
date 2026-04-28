@@ -59,6 +59,11 @@ class LabInstanceResponse(BaseModel):
     stopped_at: Optional[datetime] = None
     expires_at: Optional[datetime] = None
 
+    duration_minutes: Optional[int] = Field(
+        None,
+        description="Copied from LabDefinition at launch. Used to compute expires_at.",
+    )
+    
     error_message: Optional[str] = None
 
     class Config:

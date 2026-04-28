@@ -550,11 +550,16 @@ def _delete_guacamole_connections(
     instance: LabInstance,
     db: Optional[Session] = None,
 ) -> None:
+    """
+    Revoke Guacamole connection permissions and delete the connections
+    from the Guacamole server, BUT preserve the connection metadata
+    in the LabInstance DB record for admin audit/history.
+    """
     from app.services.guacamole_service import guacamole_service
 
     connections_map = _load_connections_map(instance)
     logger.info(
-        "Deleting %d Guacamole connection(s) for instance %s",
+        "Revoking %d Guacamole connection(s) for instance %s",
         len(connections_map),
         instance.id,
     )
@@ -581,7 +586,7 @@ def _delete_guacamole_connections(
                 )
         try:
             logger.info(
-                "Deleting connection %s (%s)",
+                "Deleting connection %s (%s) from Guacamole",
                 conn_id,
                 key,
             )
@@ -602,7 +607,10 @@ def _delete_guacamole_connections(
             )
             failed += 1
 
-    _save_connections_map(instance, {})
+    # ── PRESERVE connection metadata for admin audit ─────────────────────
+    # DO NOT clear the DB record. The admin dashboard needs to see what
+    # connections were assigned even after termination.    
+    #_save_connections_map(instance, {})
     logger.info(
         "Cleanup complete for instance %s: %d deleted, %d failed",
         instance.id,

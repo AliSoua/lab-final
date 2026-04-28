@@ -161,7 +161,6 @@ export function useGuideVersions(): UseGuideVersionsReturn {
             }
 
             const result: GuideVersion = await response.json()
-            toast.success(`Version ${result.version_number} created`)
             setVersions((prev) => [
                 ...prev,
                 {
