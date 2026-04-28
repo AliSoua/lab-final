@@ -1,10 +1,11 @@
-// src/components/LabInstance/run/RunLabConnectionsPanel.tsx
-import { Monitor, Terminal, Server, Calendar, Clock, Shield } from "lucide-react"
+// src/components/LabInstance/Trainee/InstanceRun/RunLabConnectionsPanel.tsx
+import { Monitor, Terminal, Clock, Calendar } from "lucide-react"
 import { cn } from "@/lib/utils"
-import type { LabInstance } from "@/types/LabInstance/LabInstance"
+import type { LabInstanceRuntimeResponse } from "@/types/LabInstance/Trainee/LabRuntime"
 
 interface ConnectionsPanelProps {
-    instance: LabInstance
+    /** Safe runtime snapshot — no vm_uuid, vcenter_host, or trainee_id exposed. */
+    runtime: LabInstanceRuntimeResponse
     entries: [string, string][]
     activeKey: string | null
     onSelect: (key: string) => void
@@ -26,14 +27,24 @@ function parseKey(key: string): { slug: string; protocol: string } {
     return { slug, protocol }
 }
 
+function formatExpires(isoString: string | null | undefined): string {
+    if (!isoString) return "—"
+    try {
+        return new Date(isoString).toLocaleString()
+    } catch {
+        return "—"
+    }
+}
+
 export function RunLabConnectionsPanel({
-    instance,
+    runtime,
     entries,
     activeKey,
     onSelect,
 }: ConnectionsPanelProps) {
     return (
         <div className="flex h-full flex-col overflow-y-auto bg-[#f9f9f9] p-4">
+            {/* ── Connections List ───────────────────────────────────── */}
             <div className="mb-4">
                 <h2 className="text-[13px] font-bold uppercase tracking-wide text-[#727373]">
                     Connections
@@ -49,6 +60,7 @@ export function RunLabConnectionsPanel({
                     const cfg = PROTOCOL_CONFIG[protocol] || PROTOCOL_CONFIG.ssh
                     const Icon = cfg.icon
                     const isActive = key === activeKey
+
                     return (
                         <button
                             key={key}
@@ -85,39 +97,41 @@ export function RunLabConnectionsPanel({
                 })}
             </div>
 
+            {/* ── Runtime Metadata (safe fields only) ────────────────── */}
             <div className="mt-6 rounded-xl border border-[#e8e8e8] bg-white p-4">
                 <h3 className="text-[12px] font-bold uppercase tracking-wide text-[#727373]">
-                    Instance
+                    Lab Info
                 </h3>
                 <div className="mt-3 space-y-2.5 text-[12px]">
                     <InfoRow
-                        icon={Server}
-                        label="VM"
-                        value={instance.vm_name || "—"}
-                    />
-                    <InfoRow
-                        icon={Shield}
-                        label="vCenter"
-                        value={instance.vcenter_host || "—"}
+                        icon={Monitor}
+                        label="Lab"
+                        value={runtime.lab_name || "—"}
                     />
                     <InfoRow
                         icon={Calendar}
-                        label="Started"
-                        value={
-                            instance.started_at
-                                ? new Date(instance.started_at).toLocaleString()
-                                : "—"
-                        }
+                        label="Status"
+                        value={runtime.status}
                     />
-                    <InfoRow
-                        icon={Clock}
-                        label="Expires"
-                        value={
-                            instance.expires_at
-                                ? new Date(instance.expires_at).toLocaleString()
-                                : "—"
-                        }
-                    />
+                    {runtime.time_remaining_minutes !== undefined &&
+                        runtime.time_remaining_minutes !== null && (
+                            <InfoRow
+                                icon={Clock}
+                                label="Time Left"
+                                value={
+                                    runtime.time_remaining_minutes <= 0
+                                        ? "Expired"
+                                        : `${runtime.time_remaining_minutes} min`
+                                }
+                            />
+                        )}
+                    {runtime.expires_at && (
+                        <InfoRow
+                            icon={Calendar}
+                            label="Expires"
+                            value={formatExpires(runtime.expires_at)}
+                        />
+                    )}
                 </div>
             </div>
         </div>

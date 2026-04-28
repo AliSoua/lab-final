@@ -1,18 +1,7 @@
 // src/components/LabDefinition/catalogue/HeroSection.tsx
 import { useState, useEffect, useCallback } from "react"
 import { useNavigate } from "react-router-dom"
-import {
-    Play,
-    ChevronRight,
-    ChevronLeft,
-    Clock,
-    Users,
-    BookOpen,
-    CheckCircle2,
-    FlaskConical,
-    TrendingUp,
-    Target,
-} from "lucide-react"
+import { Play, ChevronRight, ChevronLeft, Clock, Users, BookOpen } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { PublicLabDefinition } from "@/types/LabDefinition"
 
@@ -24,8 +13,34 @@ interface HeroSectionProps {
     onBrowseLabs: () => void
 }
 
-
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
+
+/* ── Animated counter hook ── */
+function useAnimatedCounter(target: number, duration: number = 1200) {
+    const [count, setCount] = useState(0)
+
+    useEffect(() => {
+        if (target === 0) {
+            setCount(0)
+            return
+        }
+        let startTime: number | null = null
+        let raf: number
+
+        const animate = (timestamp: number) => {
+            if (!startTime) startTime = timestamp
+            const progress = Math.min((timestamp - startTime) / duration, 1)
+            const eased = 1 - Math.pow(1 - progress, 3)
+            setCount(Math.floor(eased * target))
+            if (progress < 1) raf = requestAnimationFrame(animate)
+        }
+
+        raf = requestAnimationFrame(animate)
+        return () => cancelAnimationFrame(raf)
+    }, [target, duration])
+
+    return count
+}
 
 export function HeroSection({
     featuredLabs,
@@ -38,12 +53,15 @@ export function HeroSection({
     const [currentIndex, setCurrentIndex] = useState(0)
     const [isPaused, setIsPaused] = useState(false)
 
-    // Auto-rotate every 5 seconds
+    const animatedTotal = useAnimatedCounter(totalLabs)
+    const animatedCompleted = useAnimatedCounter(completedLabs)
+    const animatedInProgress = useAnimatedCounter(inProgressLabs)
+
     useEffect(() => {
         if (featuredLabs.length <= 1 || isPaused) return
         const interval = setInterval(() => {
             setCurrentIndex((prev) => (prev + 1) % featuredLabs.length)
-        }, 5000)
+        }, 6000)
         return () => clearInterval(interval)
     }, [featuredLabs.length, isPaused])
 
@@ -56,7 +74,45 @@ export function HeroSection({
     }, [featuredLabs.length])
 
     const currentLab = featuredLabs[currentIndex]
-    if (!currentLab) return null
+
+    // ── Fallback: no featured labs ──
+    if (!currentLab) {
+        return (
+            <section className="bg-[#1ca9b1]">
+                <div className="mx-auto max-w-7xl px-6 py-24 lg:px-14 lg:py-32">
+                    <div className="mx-auto max-w-3xl text-center">
+                        <p className="mb-4 font-mono text-[11px] uppercase tracking-[0.2em] text-white/70">
+                            Lab Orchestration Platform
+                        </p>
+
+                        <h1 className="mb-6 font-serif font-light text-[2.75rem] leading-[1.1] tracking-tight text-white sm:text-[3.5rem]">
+                            Hands-on Learning for
+                            <br />
+                            Modern Infrastructure
+                        </h1>
+
+                        <p className="mx-auto mb-10 max-w-xl text-[16px] leading-[1.7] text-white/70">
+                            Explore real-world labs in cloud, security, DevOps, and more.
+                            Build practical skills with guided, interactive environments.
+                        </p>
+
+                        <button
+                            onClick={onBrowseLabs}
+                            className={cn(
+                                "inline-flex h-[48px] items-center gap-2.5 rounded-lg bg-white px-8",
+                                "text-[14px] font-semibold text-[#1ca9b1]",
+                                "transition-all duration-200 hover:bg-white/90"
+                            )}
+                        >
+                            <BookOpen className="h-4 w-4" />
+                            Browse All Labs
+                            <ChevronRight className="h-4 w-4" />
+                        </button>
+                    </div>
+                </div>
+            </section>
+        )
+    }
 
     const DIFFICULTY_LABEL: Record<string, string> = {
         beginner: "Beginner",
@@ -65,141 +121,142 @@ export function HeroSection({
     }
 
     return (
-        <div
-            className="relative overflow-hidden font-['Inter','Helvetica_Neue',Arial,sans-serif]"
-            style={{
-                background: "linear-gradient(160deg, #0d8f96 0%, #1ca9b1 55%, #2ec4cc 100%)",
-            }}
+        <section
+            className="bg-[#1ca9b1]"
             onMouseEnter={() => setIsPaused(true)}
             onMouseLeave={() => setIsPaused(false)}
         >
-            {/* ── Decorative circles — identical to login right panel ── */}
-            <div className="pointer-events-none absolute -right-20 -top-20 h-[360px] w-[360px] rounded-full border border-white/10" />
-            <div className="pointer-events-none absolute -right-10 -top-10 h-[240px] w-[240px] rounded-full border border-white/[0.08]" />
-            <div className="pointer-events-none absolute -bottom-24 -left-14 h-[320px] w-[320px] rounded-full border border-white/[0.07]" />
-            <div className="pointer-events-none absolute top-1/2 left-1/3 h-[560px] w-[560px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/[0.04]" />
-
-            {/* ── Main layout ── */}
-            <div className="relative mx-auto max-w-7xl px-14 py-16 lg:py-20">
-                <div className="grid items-center gap-12 lg:grid-cols-2 lg:gap-16">
-
+            <div className="mx-auto max-w-7xl px-6 py-20 lg:px-14 lg:py-24">
+                <div className="grid items-center gap-16 lg:grid-cols-2 lg:gap-20">
                     {/* ── Left: copy ── */}
                     <div className="flex flex-col gap-8">
+                        {/* Eyebrow */}
+                        <div className="flex items-center gap-3">
+                            <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-white/100">
+                                Featured Lab
+                            </span>
+                            <span className="h-px w-8 bg-white/30" />
+                            <span className="font-mono text-[10px] text-white/100">
+                                {currentIndex + 1} / {featuredLabs.length}
+                            </span>
+                        </div>
 
-                        {/* Eyebrow — same style as "Welcome back" on login */}
-                        <p className="text-[10.5px] font-bold uppercase tracking-[0.16em] text-white/60">
-                            Featured Lab {currentIndex + 1} of {featuredLabs.length}
-                        </p>
-
-                        {/* Headline block */}
-                        <div key={currentLab.id} className="space-y-4">
-                            <h1 className="text-[2.4rem] font-bold leading-[1.18] tracking-[-0.03em] text-white">
+                        {/* Headline */}
+                        <div>
+                            <h1 className="mb-5 font-serif font-light text-[2.5rem] leading-[1.12] tracking-tight text-white sm:text-[3rem]">
                                 {currentLab.name}
                             </h1>
-                            <p className="max-w-xl text-[14.5px] leading-[1.7] text-white/70">
+                            <p className="max-w-lg text-[15px] leading-[1.7] text-white/100">
                                 {currentLab.short_description || currentLab.description}
                             </p>
                         </div>
 
-                        {/* Meta pills */}
-                        <div key={`${currentLab.id}-meta`} className="flex flex-wrap gap-2.5">
-                            <span className="inline-flex items-center gap-1.5 rounded-full border border-white/20 bg-white/10 px-3 py-1.5 text-[12.5px] text-white/80">
-                                <Target className="h-3.5 w-3.5 text-white/60" />
-                                {currentLab.category.replace("_", " ")}
-                            </span>
-                            <span className="inline-flex items-center gap-1.5 rounded-full border border-white/20 bg-white/10 px-3 py-1.5 text-[12.5px] text-white/80">
+                        {/* Meta */}
+                        <div className="flex flex-wrap items-center gap-3">
+                            <span className="rounded-md bg-white/15 px-3 py-1.5 text-[12px] font-medium text-white">
                                 {DIFFICULTY_LABEL[currentLab.difficulty] ?? currentLab.difficulty}
                             </span>
-                            <span className="inline-flex items-center gap-1.5 rounded-full border border-white/20 bg-white/10 px-3 py-1.5 text-[12.5px] text-white/80">
-                                <Clock className="h-3.5 w-3.5 text-white/60" />
+                            <span className="text-[12px] text-white/100">
+                                {currentLab.category.replace("_", " ")}
+                            </span>
+                            <span className="text-white/100">·</span>
+                            <span className="flex items-center gap-1.5 text-[12px] text-white/100">
+                                <Clock className="h-3 w-3" />
                                 {currentLab.duration_minutes} min
                             </span>
                         </div>
 
-                        {/* CTAs — white primary mirrors login submit; ghost mirrors "Contact admin" */}
-                        <div className="flex flex-wrap gap-3.5">
+                        {/* CTAs */}
+                        <div className="flex flex-wrap items-center gap-4">
                             <button
                                 onClick={() => navigate(`/labs/${currentLab.slug}`)}
                                 className={cn(
-                                    "group flex h-[42px] items-center gap-2 rounded-md bg-white px-6",
-                                    "text-[13.5px] font-semibold tracking-wide text-[#0d8f96]",
-                                    "shadow-lg shadow-black/10 transition-colors duration-200",
-                                    "hover:bg-white/90"
+                                    "flex h-[44px] items-center gap-2 rounded-lg bg-white px-6",
+                                    "text-[13.5px] font-semibold text-[#1ca9b1]",
+                                    "transition-all duration-200 hover:bg-white/90"
                                 )}
                             >
                                 <Play className="h-4 w-4 fill-current" />
                                 Start This Lab
-                                <ChevronRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
                             </button>
 
                             <button
                                 onClick={onBrowseLabs}
                                 className={cn(
-                                    "flex h-[42px] items-center gap-2 rounded-md border border-white/30 bg-white/10 px-6",
-                                    "text-[13.5px] font-semibold tracking-wide text-white",
-                                    "transition-colors duration-200 hover:bg-white/20"
+                                    "flex h-[44px] items-center gap-2 rounded-lg border border-white/30",
+                                    "px-6 text-[13.5px] font-medium text-white",
+                                    "transition-all duration-200 hover:border-white/50 hover:bg-white/10"
                                 )}
                             >
-                                <BookOpen className="h-4 w-4" />
                                 Browse All Labs
                             </button>
                         </div>
 
-                        {/* Stats — identical pattern to login's FEATURE_HIGHLIGHTS list */}
-                        <ul className="flex flex-col gap-3.5 border-t border-white/20 pt-6">
-                            {[
-                                {
-                                    icon: TrendingUp,
-                                    label: `${completedLabs} lab${completedLabs !== 1 ? "s" : ""} completed`,
-                                },
-                                {
-                                    icon: Clock,
-                                    label: `${inProgressLabs} in progress`,
-                                },
-                                {
-                                    icon: FlaskConical,
-                                    label: `${totalLabs} lab${totalLabs !== 1 ? "s" : ""} available on the platform`,
-                                },
-                            ].map(({ label }) => (
-                                <li key={label} className="flex items-start gap-3">
-                                    <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-white/90" />
-                                    <span className="text-[13.5px] leading-snug text-white/75">
-                                        {label}
-                                    </span>
-                                </li>
-                            ))}
-                        </ul>
+                        {/* Stats */}
+                        <div className="flex items-center gap-8 border-t border-white/20 pt-6">
+                            <div>
+                                <p className="text-[24px] font-bold tracking-tight text-white">
+                                    {animatedTotal}
+                                </p>
+                                <p className="font-mono text-[10px] uppercase tracking-[0.15em] text-white/100">
+                                    Labs available
+                                </p>
+                            </div>
+                            <div className="h-8 w-px bg-white/20" />
+                            <div>
+                                <p className="text-[24px] font-bold tracking-tight text-white">
+                                    {animatedCompleted}
+                                </p>
+                                <p className="font-mono text-[10px] uppercase tracking-[0.15em] text-white/100">
+                                    Completed
+                                </p>
+                            </div>
+                            <div className="h-8 w-px bg-white/20" />
+                            <div>
+                                <p className="text-[24px] font-bold tracking-tight text-white">
+                                    {animatedInProgress}
+                                </p>
+                                <p className="font-mono text-[10px] uppercase tracking-[0.15em] text-white/100">
+                                    In progress
+                                </p>
+                            </div>
+                        </div>
                     </div>
 
-                    {/* ── Right: lab card — white, mirrors login left panel ── */}
-                    <div className="relative">
-                        {/* Prev / Next arrows */}
+                    {/* ── Right: lab card ── */}
+                    <div className="relative px-9">
+                        {/* Navigation arrows */}
                         {featuredLabs.length > 1 && (
                             <>
                                 <button
                                     onClick={prevSlide}
-                                    className="absolute -left-5 top-1/2 z-10 -translate-y-1/2 rounded-full border border-white/20 bg-white/10 p-2 text-white transition-colors hover:bg-white/20"
+                                    className={cn(
+                                        "absolute -left-12 top-1/2 z-20 -translate-y-1/2",
+                                        "flex h-10 w-10 items-center justify-center",
+                                        "text-white/50 transition-colors duration-200 hover:text-white"
+                                    )}
                                     aria-label="Previous lab"
                                 >
-                                    <ChevronLeft className="h-5 w-5" />
+                                    <ChevronLeft className="h-6 w-6" strokeWidth={1.5} />
                                 </button>
                                 <button
                                     onClick={nextSlide}
-                                    className="absolute -right-5 top-1/2 z-10 -translate-y-1/2 rounded-full border border-white/20 bg-white/10 p-2 text-white transition-colors hover:bg-white/20"
+                                    className={cn(
+                                        "absolute -right-12 top-1/2 z-20 -translate-y-1/2",
+                                        "flex h-10 w-10 items-center justify-center",
+                                        "text-white/50 transition-colors duration-200 hover:text-white"
+                                    )}
                                     aria-label="Next lab"
                                 >
-                                    <ChevronRight className="h-5 w-5" />
+                                    <ChevronRight className="h-6 w-6" strokeWidth={1.5} />
                                 </button>
                             </>
                         )}
 
-                        {/* White card — clean like the login form panel */}
-                        <div
-                            key={currentLab.id}
-                            className="overflow-hidden rounded-2xl bg-white shadow-2xl shadow-black/20"
-                        >
+                        {/* Card */}
+                        <div className="overflow-hidden rounded-xl border border-white/15 bg-[#0a5c61]/50 shadow-xl">
                             {/* Thumbnail */}
-                            <div className="relative aspect-video w-full overflow-hidden">
+                            <div className="relative aspect-[3/2] w-full overflow-hidden bg-[#0a5c61]/60">
                                 {currentLab.thumbnail_url ? (
                                     <img
                                         src={`${API_BASE_URL}${currentLab.thumbnail_url}`}
@@ -207,67 +264,39 @@ export function HeroSection({
                                         className="h-full w-full object-cover"
                                     />
                                 ) : (
-                                    <div
-                                        className="flex h-full w-full items-center justify-center"
-                                        style={{
-                                            background:
-                                                "linear-gradient(160deg, #e8f8f9 0%, #d0f0f2 100%)",
-                                        }}
-                                    >
-                                        <FlaskConical className="h-16 w-16 text-[#1ca9b1]/40" />
+                                    <div className="flex h-full w-full items-center justify-center">
+                                        <span className="font-serif text-[48px] font-light text-white/100">
+                                            {currentLab.name.charAt(0).toUpperCase()}
+                                        </span>
                                     </div>
                                 )}
                             </div>
 
                             {/* Card body */}
                             <div className="px-6 py-5">
-                                {/* Eyebrow inside card */}
-                                <p className="mb-1.5 text-[10.5px] font-semibold uppercase tracking-[0.13em] text-[#1ca9b1]">
-                                    Featured Lab
+                                <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.15em] text-[#2ec4cc]">
+                                    Featured
                                 </p>
-
-                                <h3 className="mb-1.5 text-[16px] font-semibold leading-tight tracking-[-0.02em] text-[#3a3a3a]">
+                                <h3 className="mb-2 text-[16px] font-semibold leading-tight text-white">
                                     {currentLab.name}
                                 </h3>
-
-                                <p className="mb-4 text-[13px] leading-relaxed text-[#727373] line-clamp-2">
+                                <p className="mb-4 text-[13px] leading-relaxed text-white/100 line-clamp-2">
                                     {currentLab.short_description || currentLab.description}
                                 </p>
-
-                                <div className="flex items-center justify-between text-[12.5px] text-[#727373]">
-                                    <span className="flex items-center gap-1.5">
-                                        <Clock className="h-3.5 w-3.5 text-[#1ca9b1]" />
+                                <div className="flex items-center justify-between border-t border-white/10 pt-4">
+                                    <span className="flex items-center gap-1.5 text-[12px] text-white/100">
+                                        <Clock className="h-3.5 w-3.5" />
                                         {currentLab.duration_minutes} min
                                     </span>
-                                    <span className="flex items-center gap-1.5">
-                                        <Users className="h-3.5 w-3.5 text-[#1ca9b1]" />
-                                        Max {currentLab.max_concurrent_users}
+                                    <span className="flex items-center gap-1.5 text-[12px] text-white/100">
+                                        <Users className="h-3.5 w-3.5" />
+                                        {currentLab.max_concurrent_users}
                                     </span>
                                 </div>
-
-                                {/* Objectives — CheckCircle2 matches login feature list */}
-                                {currentLab.objectives && currentLab.objectives.length > 0 && (
-                                    <div className="mt-4 border-t border-[#f0f0f0] pt-4">
-                                        <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-[#c4c4c4]">
-                                            What you&apos;ll learn
-                                        </p>
-                                        <ul className="flex flex-col gap-2">
-                                            {currentLab.objectives.slice(0, 2).map((obj, idx) => (
-                                                <li
-                                                    key={idx}
-                                                    className="flex items-start gap-2 text-[12.5px] text-[#3a3a3a]"
-                                                >
-                                                    <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#1ca9b1]" />
-                                                    <span className="line-clamp-1">{obj}</span>
-                                                </li>
-                                            ))}
-                                        </ul>
-                                    </div>
-                                )}
                             </div>
                         </div>
 
-                        {/* Carousel indicators */}
+                        {/* Dots */}
                         {featuredLabs.length > 1 && (
                             <div className="mt-5 flex justify-center gap-2">
                                 {featuredLabs.map((_, index) => (
@@ -275,10 +304,10 @@ export function HeroSection({
                                         key={index}
                                         onClick={() => setCurrentIndex(index)}
                                         className={cn(
-                                            "h-1.5 rounded-full transition-all duration-300",
+                                            "h-[3px] rounded-full transition-all duration-300",
                                             index === currentIndex
-                                                ? "w-8 bg-white"
-                                                : "w-2 bg-white/30 hover:bg-white/50"
+                                                ? "w-6 bg-white/70"
+                                                : "w-2 bg-white/25 hover:bg-white/40"
                                         )}
                                         aria-label={`Go to slide ${index + 1}`}
                                     />
@@ -288,11 +317,6 @@ export function HeroSection({
                     </div>
                 </div>
             </div>
-
-            {/* ── Bottom rule — same footer element as login right panel ── */}
-            <div className="absolute bottom-6 left-14 right-14 flex items-center gap-3">
-                <div className="h-px flex-1 bg-white/20" />
-            </div>
-        </div>
+        </section>
     )
 }

@@ -1,5 +1,5 @@
 # app/schemas/LabDefinition/lab_runtime.py
-from typing import Optional, List
+from typing import Optional, List, Dict
 from uuid import UUID
 from enum import Enum
 from datetime import datetime
@@ -117,3 +117,40 @@ class LabGuideSessionState(BaseModel):
         default="active",
         description="active | paused | completed | abandoned",
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  TRAINEE RUNTIME RESPONSE — Stripped-down view for Run Lab UI
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class LabInstanceRuntimeResponse(BaseModel):
+    """
+    Stripped-down runtime view for the trainee Run Lab UI.
+    Contains only what's needed to connect to Guacamole and track progress.
+    Intentionally excludes: vm_uuid, vcenter_host, trainee_id, ip_address,
+    internal routing, credentials, and other infrastructure-sensitive fields.
+    """
+    id: UUID
+    status: str
+    power_state: Optional[str] = None
+
+    # Connection info — only what's needed to build Guacamole client URLs
+    guacamole_connection_id: Optional[str] = None
+    guacamole_connections: Optional[Dict[str, str]] = Field(default_factory=dict)
+
+    # Progress
+    current_step_index: int = 0
+    session_state_status: Optional[str] = None  # "active" | "completed" | etc.
+
+    # Timing
+    time_remaining_minutes: Optional[int] = None
+    expires_at: Optional[datetime] = None
+
+    # Lab metadata (denormalized for convenience)
+    lab_name: Optional[str] = None
+    lab_definition_id: Optional[UUID] = None
+
+    error_message: Optional[str] = None
+
+    class Config:
+        from_attributes = True

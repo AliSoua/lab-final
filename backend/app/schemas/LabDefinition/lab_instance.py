@@ -96,3 +96,47 @@ class LabInstanceStatusResponse(BaseModel):
         None,
         description="Derived from session_state.status for quick polling.",
     )
+
+# TRAINEE RESPONSES
+
+class LabDefinitionSummary(BaseModel):
+    id: uuid.UUID
+    name: str
+    difficulty: Optional[str] = None
+    category: Optional[str] = None
+    track: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class MyLabInstanceSummary(BaseModel):
+    id: uuid.UUID
+    lab_definition: LabDefinitionSummary
+
+    status: str
+    power_state: Optional[str] = None
+
+    # Timing info the trainee actually cares about
+    created_at: Optional[datetime] = None
+    started_at: Optional[datetime] = None
+    stopped_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+    duration_minutes: Optional[int] = None
+
+    # Computed convenience field
+    time_remaining_minutes: Optional[int] = Field(
+        None,
+        description="Minutes left until expiration. Null if not started or no expiry.",
+    )
+
+    # Progress
+    current_step_index: int = 0
+
+    class Config:
+        from_attributes = True
+
+
+class MyLabInstanceListResponse(BaseModel):
+    items: List[MyLabInstanceSummary]
+    total: int

@@ -1,4 +1,4 @@
-// src/components/LabInstance/run/GuacamoleConsole.tsx
+// src/components/LabInstance/Trainee/InstanceRun/GuacamoleConsole.tsx
 import { useEffect, useRef, useState, useCallback } from "react"
 import { RefreshCw, Monitor, Maximize2, Minimize2, Keyboard } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -7,14 +7,12 @@ import { buildGuacamoleClientUrl } from "@/lib/guacamole"
 interface GuacamoleConsoleProps {
     connectionId: string
     title?: string
-    subtitle?: string
     className?: string
 }
 
 export function GuacamoleConsole({
     connectionId,
     title = "Lab Console",
-    subtitle,
     className,
 }: GuacamoleConsoleProps) {
     const iframeRef = useRef<HTMLIFrameElement>(null)
@@ -29,14 +27,12 @@ export function GuacamoleConsole({
     }, [connectionId])
 
     // CRITICAL FIX: Global focus management per Apache Guacamole FAQ
-    // Refocus iframe on any page click/keydown unless user is in an input
     useEffect(() => {
         const iframe = iframeRef.current
         if (!iframe) return
 
         const refocusGuacamole = () => {
             const focused = document.activeElement
-            // Don't steal focus from inputs, textareas, buttons, or selects
             if (
                 focused &&
                 focused !== document.body &&
@@ -54,8 +50,6 @@ export function GuacamoleConsole({
 
         document.addEventListener("click", refocusGuacamole)
         document.addEventListener("keydown", refocusGuacamole)
-
-        // Initial focus
         setTimeout(refocusGuacamole, 500)
 
         return () => {
@@ -105,7 +99,7 @@ export function GuacamoleConsole({
             className={cn(
                 "flex h-full w-full flex-col bg-[#1a1a1a] relative",
                 isFullscreen && "fixed inset-0 z-50",
-                className
+                className,
             )}
         >
             {/* Toolbar */}
@@ -115,11 +109,6 @@ export function GuacamoleConsole({
                     <span className="text-[13px] font-semibold text-white truncate">
                         {title}
                     </span>
-                    {subtitle && (
-                        <span className="text-[11px] bg-[#1ca9b1]/20 text-[#1ca9b1] px-2 py-0.5 rounded truncate">
-                            {subtitle}
-                        </span>
-                    )}
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -129,9 +118,13 @@ export function GuacamoleConsole({
                             "flex items-center gap-1.5 rounded px-2 py-1 text-[11px] font-medium transition-colors",
                             hasFocus
                                 ? "bg-emerald-500/15 text-emerald-400"
-                                : "bg-amber-500/15 text-amber-400"
+                                : "bg-amber-500/15 text-amber-400",
                         )}
-                        title={hasFocus ? "Keyboard input active" : "Click to activate keyboard"}
+                        title={
+                            hasFocus
+                                ? "Keyboard input active"
+                                : "Click to activate keyboard"
+                        }
                     >
                         <Keyboard className="h-3 w-3" />
                         {hasFocus ? "Input active" : "Click to type"}
@@ -141,7 +134,7 @@ export function GuacamoleConsole({
                         onClick={() => setIframeKey((k) => k + 1)}
                         className={cn(
                             "flex items-center gap-1.5 rounded bg-[#2a2a2a] px-2.5 py-1.5",
-                            "text-[11px] font-medium text-[#aaa] hover:bg-[#333] hover:text-white transition"
+                            "text-[11px] font-medium text-[#aaa] hover:bg-[#333] hover:text-white transition",
                         )}
                         title="Reload connection"
                     >
@@ -152,7 +145,7 @@ export function GuacamoleConsole({
                         onClick={toggleFullscreen}
                         className={cn(
                             "flex items-center gap-1.5 rounded bg-[#2a2a2a] px-2.5 py-1.5",
-                            "text-[11px] font-medium text-[#aaa] hover:bg-[#333] hover:text-white transition"
+                            "text-[11px] font-medium text-[#aaa] hover:bg-[#333] hover:text-white transition",
                         )}
                         title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
                     >

@@ -96,6 +96,7 @@ services:
       - ./backend/.env:/app/.env
       - ./backend/app/scripts:/app/app/scripts
       - vault_data:/vault/file:ro
+      - uploads_data:/app/uploads
     command: ["/bin/sh", "/app/app/scripts/start_with_keycloak.sh"]
     environment:
       - VAULT_ADDR=http://vault:8200
@@ -240,4 +241,5 @@ volumes:
   keycloak_data:
   guac-data:
   vault_data:
-  redis-data: 
+  redis-data:
+  uploads_data:

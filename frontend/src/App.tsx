@@ -26,9 +26,9 @@ import PreviewGuidePage from "@/pages/LabGuide/PreviewGuidePage"
 import LabConnectionPage from "@/pages/LabDefinition/LabConnectionPage"
 
 // Lab Instances
-import LabInstanceListPage from "@/pages/LabInstance/list/index"
-import LabInstanceDetailPage from "@/pages/LabInstance/detail/index"
-import RunLabPage from "@/pages/LabInstance/run/RunLabPage"
+import LabInstanceListPage from "@/pages/LabInstance/Trainee/LabInstanceListPage"
+import LabInstanceDetailPage from "@/pages/LabInstance/Trainee/LabInstanceDetailPage"
+import RunLabPage from "@/pages/LabInstance/Trainee/LabInstanceRunPage"
 
 // Instances (Admin)
 import ListLabInstancePage from "@/pages/LabInstance/admin/ListLabInstancePage"

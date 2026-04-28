@@ -1,12 +1,12 @@
-// src/components/LabInstance/run/VMConsolePanel.tsx
+// src/components/LabInstance/Trainee/InstanceRun/VMConsolePanel.tsx
 import { Monitor, Loader2, AlertCircle } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { GuacamoleConsole } from "./GuacamoleConsole"
+import { GuacamoleConsole } from "@/components/LabInstance/Trainee/InstanceRun/GuacamoleConsole"
 
 interface VMConsolePanelProps {
     connectionId: string | null
+    /** Connection name (e.g., "Kali Linux", "Windows Server"). NOT an IP. */
     title?: string
-    subtitle?: string
     isProvisioning?: boolean
     errorMessage?: string | null
 }
@@ -14,10 +14,10 @@ interface VMConsolePanelProps {
 export function VMConsolePanel({
     connectionId,
     title = "Console",
-    subtitle,
     isProvisioning,
     errorMessage,
 }: VMConsolePanelProps) {
+    // ── Error state (guide or runtime failure) ─────────────────────────
     if (errorMessage) {
         return (
             <div className="flex h-full items-center justify-center bg-[#1a1a1a] p-6">
@@ -34,6 +34,7 @@ export function VMConsolePanel({
         )
     }
 
+    // ── Provisioning state ─────────────────────────────────────────────
     if (isProvisioning) {
         return (
             <div className="flex h-full items-center justify-center bg-[#1a1a1a] p-6">
@@ -53,6 +54,7 @@ export function VMConsolePanel({
         )
     }
 
+    // ── No connection available ────────────────────────────────────────
     if (!connectionId) {
         return (
             <div className="flex h-full items-center justify-center bg-[#1a1a1a] p-6">
@@ -71,11 +73,11 @@ export function VMConsolePanel({
         )
     }
 
+    // ── Active Guacamole session ───────────────────────────────────────
     return (
         <GuacamoleConsole
             connectionId={connectionId}
             title={title}
-            subtitle={subtitle}
         />
     )
 }

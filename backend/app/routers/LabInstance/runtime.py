@@ -7,11 +7,13 @@ GET /lab-instances/{id}/guide-version
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from datetime import datetime, timezone
 import uuid
 
 from app.config.connection.postgres_client import get_db
 from app.dependencies.keycloak.keycloak_roles import require_any_role
 from app.schemas.LabDefinition.lab_instance import LabInstanceResponse
+from app.schemas.LabDefinition.lab_runtime import LabInstanceRuntimeResponse
 from app.schemas.LabDefinition.LabGuide import GuideVersionResponse
 from app.services.LabInstance.ManageInstance import get_instance, refresh_instance_status
 from app.services.LabGuide.guide_service import get_version
@@ -32,8 +34,8 @@ router = APIRouter(
 
 @router.post(
     "/{instance_id}/refresh",
-    response_model=LabInstanceResponse,
-    summary="Refresh instance status from vCenter and sync Guacamole connections",
+    response_model=LabInstanceRuntimeResponse,
+    summary="Refresh instance status and return runtime-safe data",
 )
 def refresh_instance(
     instance_id: uuid.UUID,
@@ -48,7 +50,46 @@ def refresh_instance(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Instance not found",
             )
-        return instance
+
+        # ── Compute time remaining ──
+        time_remaining = None
+        if instance.expires_at and instance.started_at:
+            now = datetime.now(timezone.utc)
+            if instance.expires_at > now:
+                time_remaining = int((instance.expires_at - now).total_seconds() / 60)
+
+        # ── Resolve session state status safely ──
+        session_state_status = None
+        if instance.session_state:
+            if isinstance(instance.session_state, dict):
+                session_state_status = instance.session_state.get("status")
+            else:
+                session_state_status = getattr(instance.session_state, "status", None)
+
+        # ── Resolve lab name from relation if available ──
+        lab_name = None
+        if instance.lab_definition:
+            lab_name = getattr(instance.lab_definition, "name", None)
+        elif instance.vm_name:
+            # Fallback if no relation loaded
+            lab_name = instance.vm_name
+
+        # ── Build stripped response ──
+        return LabInstanceRuntimeResponse(
+            id=instance.id,
+            status=instance.status,
+            power_state=instance.power_state,
+            guacamole_connection_id=instance.guacamole_connection_id,
+            guacamole_connections=instance.guacamole_connections or {},
+            current_step_index=instance.current_step_index,
+            session_state_status=session_state_status,
+            time_remaining_minutes=time_remaining,
+            expires_at=instance.expires_at,
+            lab_name=lab_name,
+            lab_definition_id=instance.lab_definition_id,
+            error_message=instance.error_message,
+        )
+
     except HTTPException:
         raise
     except TimeoutError:
@@ -79,25 +120,25 @@ def get_instance_guide_version(
     Trainees can only access their own instances' guide versions.
     """
     trainee_id = get_trainee_id(userinfo, db)
-    
+
     instance = get_instance(db, instance_id, trainee_id)
     if not instance:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Instance not found",
         )
-    
+
     if not instance.guide_version_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No guide version assigned to this instance",
         )
-    
+
     version = get_version(db, instance.guide_version_id)
     if not version:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Guide version not found",
         )
-    
+
     return version

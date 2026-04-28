@@ -1,5 +1,4 @@
 // src/components/LabDefinition/detail/LabObjectives.tsx
-import { CheckCircle2, Lightbulb, GraduationCap } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 interface LabObjectivesProps {
@@ -12,20 +11,13 @@ export function LabObjectives({ objectives }: LabObjectivesProps) {
     }
 
     return (
-        <div className="rounded-xl border border-[#e8e8e8] bg-white p-6">
-            <div className="mb-5 flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#1ca9b1]/10">
-                    <GraduationCap className="h-5 w-5 text-[#1ca9b1]" />
-                </div>
-                <div>
-                    <h2 className="text-[16px] font-semibold text-[#3a3a3a]">
-                        Learning Objectives
-                    </h2>
-                    <p className="text-[12px] text-[#727373]">
-                        What you&apos;ll accomplish in this lab
-                    </p>
-                </div>
-            </div>
+        <section className="rounded-xl border border-[#e8e8e8] bg-white p-6">
+            <p className="mb-1 font-mono text-[10px] uppercase tracking-[0.2em] text-[#1ca9b1]">
+                Outcomes
+            </p>
+            <h2 className="mb-6 font-serif font-light text-xl tracking-tight text-[#1a1a1a]">
+                Learning Objectives
+            </h2>
 
             <div className="space-y-3">
                 {objectives.map((objective, index) => (
@@ -33,18 +25,18 @@ export function LabObjectives({ objectives }: LabObjectivesProps) {
                         key={index}
                         className={cn(
                             "flex items-start gap-4 rounded-lg border border-[#f0f0f0] bg-[#fafafa] p-4",
-                            "transition-colors duration-200 hover:border-[#1ca9b1]/20 hover:bg-[#1ca9b1]/[0.02]"
+                            "transition-colors duration-200 hover:border-[#c4c4c4]"
                         )}
                     >
-                        <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#1ca9b1]/10">
-                            <CheckCircle2 className="h-3.5 w-3.5 text-[#1ca9b1]" />
-                        </div>
-                        <p className="text-[13.5px] leading-[1.6] text-[#3a3a3a]">
+                        <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-[#1ca9b1]/30 text-[10px] font-semibold text-[#1ca9b1]">
+                            {index + 1}
+                        </span>
+                        <p className="text-[13px] leading-[1.6] text-[#3a3a3a]">
                             {objective}
                         </p>
                     </div>
                 ))}
             </div>
-        </div>
+        </section>
     )
 }

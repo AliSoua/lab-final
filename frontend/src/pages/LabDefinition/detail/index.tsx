@@ -1,16 +1,13 @@
 // src/pages/LabDefinition/detail/index.tsx
 import { useParams, useNavigate } from "react-router-dom"
-import { AlertCircle, RefreshCw, Play, ArrowRight, Loader2 } from "lucide-react"
+import { RefreshCw, ArrowRight, Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useLabDetail } from "@/hooks/LabDefinition/useLabDetail"
 import { useLabInstance } from "@/hooks/LabInstance/useLabInstance"
 import { LabDetailHeader } from "@/components/LabDefinition/detail/LabDetailHeader"
-import { LabObjectives } from "@/components/LabDefinition/detail/LabObjectives"
-import { LabPrerequisites } from "@/components/LabDefinition/detail/LabPrerequisites"
-import { LabVMs } from "@/components/LabDefinition/detail/LabVMs"
-import { LabGuidePreview } from "@/components/LabDefinition/detail/LabGuidePreview"
 import { LabInfoCard } from "@/components/LabDefinition/detail/LabInfoCard"
 import { LabDetailSkeleton } from "@/components/LabDefinition/detail/LabDetailSkeleton"
+import type { LabDetail } from "@/types/LabDefinition/LabDetail"
 
 export default function LabDetailPage() {
     const { slug } = useParams<{ slug: string }>()
@@ -24,11 +21,9 @@ export default function LabDetailPage() {
             const instance = await launchLabInstance({
                 lab_definition_id: labId,
             })
-            // Navigate directly into the split-screen Run experience so the
-            // trainee lands on the Guacamole console as soon as it's ready.
             navigate(`/lab-instances/${instance.id}/run`)
         } catch {
-            // Error is already toasted by the hook; no-op here
+            // Error is already toasted by the hook
         }
     }
 
@@ -39,29 +34,27 @@ export default function LabDetailPage() {
     if (error || !lab) {
         return (
             <div className="min-h-screen bg-[#fafafa]">
-                <div className="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
-                    <div className="flex flex-col items-center justify-center gap-6 rounded-2xl border border-red-200 bg-red-50 p-12 text-center">
-                        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-red-100">
-                            <AlertCircle className="h-8 w-8 text-red-600" />
-                        </div>
-                        <div>
-                            <h2 className="text-[18px] font-semibold text-red-900">
-                                {error?.includes("not found")
-                                    ? "Lab Not Found"
-                                    : "Failed to Load Lab"}
-                            </h2>
-                            <p className="mt-2 max-w-md text-[14px] text-red-700">
-                                {error || "The lab you're looking for doesn't exist or you don't have permission to view it."}
-                            </p>
-                        </div>
-                        <div className="flex gap-3">
+                <div className="mx-auto max-w-7xl px-6 py-16 lg:px-14">
+                    <div className="flex flex-col items-center gap-4 rounded-xl border border-[#e8e8e8] bg-white py-16 text-center">
+                        <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-[#1ca9b1]">
+                            Error
+                        </p>
+                        <h2 className="font-serif font-light text-2xl text-[#1a1a1a]">
+                            {error?.includes("not found")
+                                ? "Lab Not Found"
+                                : "Failed to Load Lab"}
+                        </h2>
+                        <p className="max-w-md text-[13px] text-[#727373]">
+                            {error || "The lab you're looking for doesn't exist or you don't have permission to view it."}
+                        </p>
+                        <div className="mt-2 flex gap-3">
                             {error && !error.includes("not found") && (
                                 <button
                                     onClick={() => refetch()}
                                     className={cn(
-                                        "flex items-center gap-2 rounded-lg bg-white px-5 py-2.5",
-                                        "text-[13px] font-medium text-red-700",
-                                        "border border-red-200 hover:bg-red-100",
+                                        "flex h-10 items-center gap-2 rounded-lg border border-[#e8e8e8] px-5",
+                                        "text-[13px] font-medium text-[#727373]",
+                                        "hover:border-[#c4c4c4] hover:text-[#1a1a1a]",
                                         "transition-all duration-200"
                                     )}
                                 >
@@ -72,10 +65,10 @@ export default function LabDetailPage() {
                             <button
                                 onClick={() => navigate("/labs")}
                                 className={cn(
-                                    "flex items-center gap-2 rounded-lg bg-[#1ca9b1] px-5 py-2.5",
+                                    "flex h-10 items-center gap-2 rounded-lg bg-[#1ca9b1] px-5",
                                     "text-[13px] font-medium text-white",
                                     "hover:bg-[#17959c]",
-                                    "transition-all duration-200"
+                                    "transition-colors duration-200"
                                 )}
                             >
                                 Browse Labs
@@ -90,60 +83,101 @@ export default function LabDetailPage() {
 
     return (
         <div className="min-h-screen bg-[#fafafa]">
-            {/* Header Section */}
-            <LabDetailHeader lab={lab} onStartLab={handleStartLab} />
+            {/* Header */}
+            <LabDetailHeader lab={lab} />
 
             {/* Main Content */}
-            <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-                <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
-                    {/* Left Column - Main Content */}
-                    <div className="lg:col-span-2 space-y-6">
-                        {/* Full Description */}
-                        {lab.description && (
-                            <div className="rounded-xl border border-[#e8e8e8] bg-white p-6">
-                                <h2 className="mb-4 text-[16px] font-semibold text-[#3a3a3a]">
-                                    About This Lab
-                                </h2>
-                                <div className="prose prose-sm max-w-none text-[#727373]">
-                                    {lab.description.split("\n").map((paragraph, idx) => (
-                                        <p key={idx} className="mb-4 last:mb-0 leading-[1.7]">
-                                            {paragraph}
-                                        </p>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
+            <div className="mx-auto max-w-7xl px-6 py-12 lg:px-14">
+                <div className="grid grid-cols-1 gap-8 lg:grid-cols-3 lg:gap-12">
+                    {/* Left Column — Merged Content Card */}
+                    <div className="lg:col-span-2">
+                        <div className="rounded-xl border border-[#e8e8e8] bg-white p-6 lg:p-8">
+                            {/* Overview */}
+                            {lab.description && (
+                                <section className="mb-10">
+                                    <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.2em] text-[#1ca9b1]">
+                                        Overview
+                                    </p>
+                                    <h2 className="mb-4 font-serif font-light text-xl tracking-tight text-[#1a1a1a]">
+                                        About This Lab
+                                    </h2>
+                                    <div className="space-y-4 text-[13px] leading-[1.7] text-[#727373]">
+                                        {lab.description.split("\n").map((paragraph, idx) => (
+                                            <p key={idx}>{paragraph}</p>
+                                        ))}
+                                    </div>
+                                </section>
+                            )}
 
-                        {/* Objectives */}
-                        {lab.objectives && lab.objectives.length > 0 && (
-                            <LabObjectives objectives={lab.objectives} />
-                        )}
+                            {/* Objectives */}
+                            {lab.objectives && lab.objectives.length > 0 && (
+                                <section className="mb-10">
+                                    <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.2em] text-[#1ca9b1]">
+                                        Outcomes
+                                    </p>
+                                    <h2 className="mb-4 font-serif font-light text-xl tracking-tight text-[#1a1a1a]">
+                                        Learning Objectives
+                                    </h2>
+                                    <div className="space-y-3">
+                                        {lab.objectives.map((objective, index) => (
+                                            <div
+                                                key={index}
+                                                className={cn(
+                                                    "flex items-start gap-4 rounded-lg border border-[#f0f0f0] bg-[#fafafa] p-4",
+                                                    "transition-colors duration-200 hover:border-[#c4c4c4]"
+                                                )}
+                                            >
+                                                <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-[#1ca9b1]/30 text-[10px] font-semibold text-[#1ca9b1]">
+                                                    {index + 1}
+                                                </span>
+                                                <p className="text-[13px] leading-[1.6] text-[#3a3a3a]">
+                                                    {objective}
+                                                </p>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </section>
+                            )}
 
-                        {/* VMs Configuration */}
-                        {lab.vms && lab.vms.length > 0 && (
-                            <LabVMs vms={lab.vms} />
-                        )}
-
-                        {/* Guide Preview */}
-                        {lab.guide_blocks && lab.guide_blocks.length > 0 && (
-                            <LabGuidePreview guideBlocks={lab.guide_blocks} />
-                        )}
+                            {/* Prerequisites */}
+                            {lab.prerequisites && lab.prerequisites.length > 0 && (
+                                <section>
+                                    <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.2em] text-[#1ca9b1]">
+                                        Requirements
+                                    </p>
+                                    <h2 className="mb-4 font-serif font-light text-xl tracking-tight text-[#1a1a1a]">
+                                        Prerequisites
+                                    </h2>
+                                    <ul className="space-y-3">
+                                        {lab.prerequisites.map((prerequisite, index) => (
+                                            <li
+                                                key={index}
+                                                className="flex items-start gap-3 text-[13px] leading-[1.6] text-[#3a3a3a]"
+                                            >
+                                                <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-[#a0a0a0]" />
+                                                <span>{prerequisite}</span>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </section>
+                            )}
+                        </div>
                     </div>
 
-                    {/* Right Column - Sidebar */}
-                    <div className="space-y-6">
-                        {/* Start Lab CTA */}
+                    {/* Right Column — Sticky Sidebar */}
+                    <div className="space-y-6 lg:sticky lg:top-6 lg:self-start">
+                        {/* Start CTA */}
                         <div className="rounded-xl border border-[#e8e8e8] bg-white p-6">
                             <button
                                 onClick={() => handleStartLab(lab.id)}
                                 disabled={isLaunching}
                                 className={cn(
-                                    "group mb-4 flex w-full items-center justify-center gap-2 rounded-lg px-6 py-3",
-                                    "text-[14px] font-semibold tracking-wide text-white",
-                                    "shadow-lg shadow-[#1ca9b1]/30 transition-all duration-200",
+                                    "mb-4 flex h-11 w-full items-center justify-center gap-2 rounded-lg",
+                                    "text-[13px] font-semibold text-white",
+                                    "transition-colors duration-200",
                                     isLaunching
                                         ? "cursor-not-allowed bg-[#1ca9b1]/70"
-                                        : "bg-[#1ca9b1] hover:bg-[#17959c] hover:shadow-xl hover:shadow-[#1ca9b1]/40"
+                                        : "bg-[#1ca9b1] hover:bg-[#17959c]"
                                 )}
                             >
                                 {isLaunching ? (
@@ -152,25 +186,15 @@ export default function LabDetailPage() {
                                         Launching...
                                     </>
                                 ) : (
-                                    <>
-                                        <Play className="h-4 w-4 fill-current" />
-                                        Start Lab Now
-                                    </>
+                                    <>Start Lab Now</>
                                 )}
                             </button>
-
-                            <p className="text-center text-[12px] text-[#727373]">
-                                Duration: {lab.duration_minutes} minutes
+                            <p className="text-center text-[12px] text-[#a0a0a0]">
+                                {lab.duration_minutes} minutes
                             </p>
                         </div>
 
-                        {/* Lab Info */}
                         <LabInfoCard lab={lab} />
-
-                        {/* Prerequisites */}
-                        {lab.prerequisites && lab.prerequisites.length > 0 && (
-                            <LabPrerequisites prerequisites={lab.prerequisites} />
-                        )}
                     </div>
                 </div>
             </div>
