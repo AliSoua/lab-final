@@ -16,6 +16,7 @@ from app.core.logging import log_task
 from app.models.LabDefinition.core import LabDefinition
 from app.models.LabDefinition.LabInstance import LabInstance
 from app.config.connection.vcenter_client import VCenterClient
+from app.utils.expiry_queue import register_instance_expiry
 from app.services.LabInstance.utils import (
     _call_with_timeout,
     _find_vcenter_credentials,
@@ -345,6 +346,16 @@ def refresh_instance_status(
                     "Instance transitioned provisioning -> running | instance_id=%s started_at=%s",
                     instance_id,
                 )
+
+                # ── Register expiry in Redis ZSET ───────────────────────
+                # This is the moment the expiration becomes known.
+                if instance.expires_at:
+                    register_instance_expiry(instance.id, instance.expires_at)
+                    logger.info(
+                        "Registered instance expiry | instance_id=%s expires_at=%s",
+                        instance.id,
+                        instance.expires_at.isoformat(),
+                    )
 
         db.commit()
         db.refresh(instance)

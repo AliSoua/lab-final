@@ -33,6 +33,7 @@ import RunLabPage from "@/pages/LabInstance/Trainee/LabInstanceRunPage"
 // Instances (Admin)
 import ListLabInstancePage from "@/pages/LabInstance/admin/ListLabInstancePage"
 import ViewLabInstancePage from "@/pages/LabInstance/admin/ViewLabInstancePage"
+import MonitoringDashboardPage from "@/pages/LabInstance/admin/MonitoringDashboardPage"
 
 import TestGuacamolePage from "@/pages/TestGuacamolePage"
 
@@ -222,6 +223,7 @@ function App() {
         {/* Instances (Admin) */}
         <Route path="lab-instances" element={<ListLabInstancePage />} />
         <Route path="lab-instances/:id" element={<ViewLabInstancePage />} />
+        <Route path="monitoring" element={<MonitoringDashboardPage />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.core.logging import log_task
 from app.utils.db_session import background_session
+from app.utils.expiry_queue import remove_instance_expiry
 from app.models.LabDefinition.LabInstance import LabInstance
 from app.config.connection.vcenter_client import VCenterClient
 from app.services.LabDefinition.task_audit import (
@@ -92,6 +93,17 @@ def enqueue_terminate(
     _delete_guacamole_connections(instance, db=db)
     _mark_session_abandoned(instance)
     db.commit()
+
+    # ── Remove from Redis expiry queue so the enforcer doesn't race ─────
+    try:
+        remove_instance_expiry(instance.id)
+        logger.debug(
+            "Removed instance from expiry queue | instance_id=%s",
+            instance.id,
+        )
+    except Exception:
+        # Best-effort: if Redis is down the enforcer will see 'terminating' and skip
+        pass
 
     # API path: no shared session, let start_task open its own
     task_audit_id = start_task(
@@ -206,6 +218,13 @@ def run_terminate_worker(
             instance.stopped_at = datetime.utcnow()
             _mark_session_abandoned(instance)
             db.commit()
+
+            # ── Clean up Redis expiry queue ─────────────────────────────
+            try:
+                remove_instance_expiry(instance_uuid)
+            except Exception:
+                pass
+            
             finish_task(
                 task_uuid,
                 "completed",
@@ -380,6 +399,13 @@ def run_terminate_worker(
             _mark_session_abandoned(instance)
 
             db.commit()
+
+            # ── Clean up Redis expiry queue ─────────────────────────────
+            try:
+                remove_instance_expiry(instance_uuid)
+            except Exception:
+                pass
+
             finish_task(task_uuid, "completed", db=db)
             task_logger.info("Worker completed successfully")
 
@@ -428,6 +454,12 @@ def _fail_instance(
             instance.status = "failed"
             instance.error_message = error_message
             db.commit()
+
+        # ── Clean up Redis expiry queue (best-effort) ─────────────────
+        try:
+            remove_instance_expiry(instance_id)
+        except Exception:
+            pass
 
         finish_task(task_id, "failed", error_message, db=db)
 

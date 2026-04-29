@@ -67,7 +67,8 @@ export function useTraineeLabRuntime(): UseTraineeLabRuntimeReturn {
                         throw new Error(msg)
                     }
                     if (response.status === 403) {
-                        const msg = "Forbidden — insufficient permissions."
+                        const errorData = await response.json().catch(() => ({}))
+                        const msg = errorData.detail || "Forbidden — insufficient permissions."
                         toast.error(msg)
                         throw new Error(msg)
                     }
@@ -102,7 +103,6 @@ export function useTraineeLabRuntime(): UseTraineeLabRuntimeReturn {
                 const alreadyHandled =
                     message === "Authentication required" ||
                     message === "Unauthorized. Please log in." ||
-                    message === "Forbidden — insufficient permissions." ||
                     message.includes("Instance not found") ||
                     message.includes("timed out") ||
                     message.includes("Failed to refresh instance")
@@ -147,7 +147,8 @@ export function useTraineeLabRuntime(): UseTraineeLabRuntimeReturn {
                         throw new Error(msg)
                     }
                     if (response.status === 403) {
-                        const msg = "Forbidden — insufficient permissions."
+                        const errorData = await response.json().catch(() => ({}))
+                        const msg = errorData.detail || "Forbidden — insufficient permissions."
                         toast.error(msg)
                         throw new Error(msg)
                     }
@@ -176,7 +177,6 @@ export function useTraineeLabRuntime(): UseTraineeLabRuntimeReturn {
                 const alreadyHandled =
                     message === "Authentication required" ||
                     message === "Unauthorized. Please log in." ||
-                    message === "Forbidden — insufficient permissions." ||
                     message.includes("Guide version not found") ||
                     message.includes("Failed to get guide version")
 
@@ -224,7 +224,8 @@ export function useTraineeLabRuntime(): UseTraineeLabRuntimeReturn {
                         throw new Error(msg)
                     }
                     if (response.status === 403) {
-                        const msg = "Forbidden."
+                        const errorData = await response.json().catch(() => ({}))
+                        const msg = errorData.detail || "Forbidden."
                         toast.error(msg)
                         throw new Error(msg)
                     }

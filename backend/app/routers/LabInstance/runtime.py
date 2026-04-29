@@ -51,6 +51,13 @@ def refresh_instance(
                 detail="Instance not found",
             )
 
+        # ── Reject if the instance has expired ──
+        if instance.expires_at and instance.expires_at <= datetime.now(timezone.utc):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Lab instance has expired",
+            )
+
         # ── Compute time remaining ──
         time_remaining = None
         if instance.expires_at and instance.started_at:
@@ -126,6 +133,13 @@ def get_instance_guide_version(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Instance not found",
+        )
+
+    # ── Reject if the instance has expired ──
+    if instance.expires_at and instance.expires_at <= datetime.now(timezone.utc):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Lab instance has expired",
         )
 
     if not instance.guide_version_id:

@@ -1,16 +1,20 @@
 # app/routers/LabInstance/audit.py
 """
-Lab Instance Audit Operations
-GET /lab-instances/{id}/tasks
-GET /lab-instances/{id}/tasks/{task_id}
-GET /lab-instances/{id}/events
+Lab Instance Audit Operations — ADMIN ONLY
 
-ADMIN ENDPOINTS (bypass trainee ownership):
-GET /lab-instances/{id}/tasks/admin
-GET /lab-instances/{id}/events/admin
+All endpoints require moderator or admin role.
+Trainee-scoped routes removed: VM/vCenter metadata is security-sensitive.
+
+Endpoints:
+  GET /lab-instances/monitoring/tasks/admin   — global monitoring tasks
+  GET /lab-instances/monitoring/events/admin  — global monitoring events
+  GET /lab-instances/{id}/tasks/admin         — instance tasks (filterable)
+  GET /lab-instances/{id}/tasks/{task_id}/admin — single task
+  GET /lab-instances/{id}/events/admin        — instance events (filterable)
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 import uuid
 
@@ -27,10 +31,7 @@ from app.schemas.LabDefinition.LabInstanceEvent import (
 from app.models.LabDefinition.LabInstanceTask import LabInstanceTask
 from app.models.LabDefinition.LabInstanceEventLog import LabInstanceEventLog
 from app.models.LabDefinition.LabInstance import LabInstance as LabInstanceModel
-from app.services.LabInstance.ManageInstance import get_instance
-from .common import get_trainee_id
 
-require_all = require_any_role(["trainee", "moderator", "admin"])
 require_admin = require_any_role(["moderator", "admin"])
 
 router = APIRouter(
@@ -50,31 +51,38 @@ def _get_instance_admin(db: Session, instance_id: uuid.UUID):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  ADMIN/MODERATOR ENDPOINTS — MUST be defined BEFORE dynamic /{task_id} routes
+#  GLOBAL MONITORING AUDIT — across all instances
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @router.get(
-    "/{instance_id}/tasks/admin",
+    "/monitoring/tasks/admin",
     response_model=LabInstanceTaskListResponse,
-    summary="List audit tasks for any lab instance (admin/moderator)",
+    summary="List all monitoring tasks across instances (admin/moderator)",
 )
-def list_instance_tasks_admin(
-    instance_id: uuid.UUID,
+def list_monitoring_tasks_admin(
+    task_type: Optional[str] = Query(None, description="Exact task_type, e.g. monitoring.session_timeout"),
+    status: Optional[str] = Query(None, description="queued | running | completed | failed"),
+    instance_id: Optional[uuid.UUID] = None,
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
     userinfo: dict = Depends(require_admin),
 ):
-    instance = _get_instance_admin(db, instance_id)
-    if not instance:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Instance not found",
-        )
-
+    """
+    Returns every LabInstanceTask whose task_type starts with `monitoring.`.
+    Useful for reviewing auto-terminations and health-check actions platform-wide.
+    """
     query = db.query(LabInstanceTask).filter(
-        LabInstanceTask.lab_instance_id == instance_id
+        LabInstanceTask.task_type.like("monitoring.%")
     )
+
+    if task_type:
+        query = query.filter(LabInstanceTask.task_type == task_type)
+    if status:
+        query = query.filter(LabInstanceTask.status == status)
+    if instance_id:
+        query = query.filter(LabInstanceTask.lab_instance_id == instance_id)
+
     total = query.count()
     items = (
         query.order_by(LabInstanceTask.created_at.desc())
@@ -89,30 +97,38 @@ def list_instance_tasks_admin(
 
 
 @router.get(
-    "/{instance_id}/events/admin",
+    "/monitoring/events/admin",
     response_model=LabInstanceEventLogListResponse,
-    summary="List audit events for any lab instance (admin/moderator)",
+    summary="List all monitoring events across instances (admin/moderator)",
 )
-def list_instance_events_admin(
-    instance_id: uuid.UUID,
+def list_monitoring_events_admin(
+    event_type: Optional[str] = Query(None, description="Exact event_type, e.g. instance_auto_terminated"),
+    instance_id: Optional[uuid.UUID] = None,
+    task_id: Optional[uuid.UUID] = None,
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
     userinfo: dict = Depends(require_admin),
 ):
-    instance = _get_instance_admin(db, instance_id)
-    if not instance:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Instance not found",
-        )
-
-    query = db.query(LabInstanceEventLog).filter(
-        LabInstanceEventLog.lab_instance_id == instance_id
+    """
+    Returns every event log whose parent task is a monitoring task.
+    """
+    query = (
+        db.query(LabInstanceEventLog)
+        .join(LabInstanceTask, LabInstanceEventLog.task_id == LabInstanceTask.id)
+        .filter(LabInstanceTask.task_type.like("monitoring.%"))
     )
+
+    if event_type:
+        query = query.filter(LabInstanceEventLog.event_type == event_type)
+    if instance_id:
+        query = query.filter(LabInstanceEventLog.lab_instance_id == instance_id)
+    if task_id:
+        query = query.filter(LabInstanceEventLog.task_id == task_id)
+
     total = query.count()
     items = (
-        query.order_by(LabInstanceEventLog.created_at.asc())
+        query.order_by(LabInstanceEventLog.created_at.desc())
         .offset(skip)
         .limit(limit)
         .all()
@@ -124,23 +140,24 @@ def list_instance_events_admin(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  TRAINEE-SCOPED ENDPOINTS
+#  INSTANCE-SCOPED ADMIN ENDPOINTS
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @router.get(
-    "/{instance_id}/tasks",
+    "/{instance_id}/tasks/admin",
     response_model=LabInstanceTaskListResponse,
-    summary="List audit tasks for a lab instance (trainee-owned)",
+    summary="List audit tasks for a lab instance (admin/moderator)",
 )
-def list_instance_tasks(
+def list_instance_tasks_admin(
     instance_id: uuid.UUID,
+    task_type: Optional[str] = Query(None, description="Filter by exact task_type"),
+    status: Optional[str] = Query(None, description="Filter by status"),
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
-    userinfo: dict = Depends(require_all),
+    userinfo: dict = Depends(require_admin),
 ):
-    trainee_id = get_trainee_id(userinfo, db)
-    instance = get_instance(db, instance_id, trainee_id)
+    instance = _get_instance_admin(db, instance_id)
     if not instance:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -150,6 +167,11 @@ def list_instance_tasks(
     query = db.query(LabInstanceTask).filter(
         LabInstanceTask.lab_instance_id == instance_id
     )
+    if task_type:
+        query = query.filter(LabInstanceTask.task_type == task_type)
+    if status:
+        query = query.filter(LabInstanceTask.status == status)
+
     total = query.count()
     items = (
         query.order_by(LabInstanceTask.created_at.desc())
@@ -164,18 +186,17 @@ def list_instance_tasks(
 
 
 @router.get(
-    "/{instance_id}/tasks/{task_id}",
+    "/{instance_id}/tasks/{task_id}/admin",
     response_model=LabInstanceTaskResponse,
-    summary="Get a single audit task (trainee-owned)",
+    summary="Get a single audit task (admin/moderator)",
 )
-def get_instance_task(
+def get_instance_task_admin(
     instance_id: uuid.UUID,
     task_id: uuid.UUID,
     db: Session = Depends(get_db),
-    userinfo: dict = Depends(require_all),
+    userinfo: dict = Depends(require_admin),
 ):
-    trainee_id = get_trainee_id(userinfo, db)
-    instance = get_instance(db, instance_id, trainee_id)
+    instance = _get_instance_admin(db, instance_id)
     if not instance:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -199,19 +220,19 @@ def get_instance_task(
 
 
 @router.get(
-    "/{instance_id}/events",
+    "/{instance_id}/events/admin",
     response_model=LabInstanceEventLogListResponse,
-    summary="List audit events for a lab instance (trainee-owned)",
+    summary="List audit events for a lab instance (admin/moderator)",
 )
-def list_instance_events(
+def list_instance_events_admin(
     instance_id: uuid.UUID,
+    event_type: Optional[str] = Query(None, description="Filter by exact event_type"),
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
-    userinfo: dict = Depends(require_all),
+    userinfo: dict = Depends(require_admin),
 ):
-    trainee_id = get_trainee_id(userinfo, db)
-    instance = get_instance(db, instance_id, trainee_id)
+    instance = _get_instance_admin(db, instance_id)
     if not instance:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -221,9 +242,12 @@ def list_instance_events(
     query = db.query(LabInstanceEventLog).filter(
         LabInstanceEventLog.lab_instance_id == instance_id
     )
+    if event_type:
+        query = query.filter(LabInstanceEventLog.event_type == event_type)
+
     total = query.count()
     items = (
-        query.order_by(LabInstanceEventLog.created_at.asc())
+        query.order_by(LabInstanceEventLog.created_at.desc())
         .offset(skip)
         .limit(limit)
         .all()

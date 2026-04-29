@@ -1,10 +1,10 @@
 // src/pages/LabInstance/Trainee/LabInstanceDetailPage.tsx
 import { useEffect, useCallback, useState } from "react"
 import { useParams, useNavigate } from "react-router-dom"
-import { ArrowLeft, RefreshCw, Loader2, Play } from "lucide-react"
+import { ArrowLeft, RefreshCw, Loader2, Play, Clock, AlertTriangle } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useTraineeLabInstance } from "@/hooks/LabInstance/Trainee/useTraineeLabInstance"
-import type { MyLabInstance, MyLabInstanceListResponse, } from "@/types/LabInstance/Trainee/LabInstance"
+import type { MyLabInstance } from "@/types/LabInstance/Trainee/LabInstance"
 import { StatusBadge } from "@/components/LabInstance/Trainee/InstanceDetail/StatusBadge"
 import { InstanceSkeleton } from "@/components/LabInstance/Trainee/InstanceDetail/InstanceSkeleton"
 import { InstanceError } from "@/components/LabInstance/Trainee/InstanceDetail/InstanceError"
@@ -51,9 +51,9 @@ export default function LabInstanceDetailPage() {
     }
 
     const handleEnterLab = () => {
-        if (instanceId) {
-            navigate(`/lab-instances/${instanceId}/run`)
-        }
+        if (!instanceId) return
+        if (isExpired) return
+        navigate(`/lab-instances/${instanceId}/run`)
     }
 
     if (isLoading && !instance) {
@@ -71,13 +71,18 @@ export default function LabInstanceDetailPage() {
     const isRunning = instance.status === "running"
     const isProvisioning = instance.status === "provisioning"
 
+    // ── Expiry guards ───────────────────────────────────────────────────
+    const timeRemaining = instance.time_remaining_minutes
+    const isExpired = timeRemaining !== undefined && timeRemaining !== null && timeRemaining <= 0
+    const isTimeLow = !isExpired && timeRemaining !== undefined && timeRemaining !== null && timeRemaining < 10
+
     return (
         <div className="min-h-screen bg-[#fafafa]">
             <div className="mx-auto max-w-7xl px-6 py-12 lg:px-14">
                 {/* Header */}
                 <div className="mb-10">
                     <button
-                        onClick={() => navigate("/my-labs")}
+                        onClick={() => navigate("/lab-instances")}
                         className={cn(
                             "mb-4 flex items-center gap-1.5 text-[13px] font-medium text-[#a0a0a0]",
                             "transition-colors duration-200 hover:text-[#1a1a1a]"
@@ -129,6 +134,32 @@ export default function LabInstanceDetailPage() {
                         </div>
                     </div>
                 </div>
+
+                {/* ── Expiry Banner ────────────────────────────────────── */}
+                {isExpired && (
+                    <div className="mb-8 flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-5 py-4 text-red-800">
+                        <Clock className="h-5 w-5 shrink-0 text-red-600" />
+                        <div>
+                            <p className="text-[13px] font-semibold">Lab session expired</p>
+                            <p className="text-[12px] text-red-700">
+                                Your allocated time has ended. This instance is no longer accessible.
+                            </p>
+                        </div>
+                    </div>
+                )}
+
+                {/* ── Low-time Warning ─────────────────────────────────── */}
+                {isTimeLow && (
+                    <div className="mb-8 flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-5 py-4 text-amber-800">
+                        <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600" />
+                        <div>
+                            <p className="text-[13px] font-semibold">Time is running out</p>
+                            <p className="text-[12px] text-amber-700">
+                                Only <span className="font-semibold">{timeRemaining} minutes</span> remaining. Save your work and finish soon.
+                            </p>
+                        </div>
+                    </div>
+                )}
 
                 {/* Main Content */}
                 <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
@@ -186,17 +217,27 @@ export default function LabInstanceDetailPage() {
                                         : "—"}
                                 />
                             </div>
-                            {instance.time_remaining_minutes && (
-                                <div className="mt-6 border-t border-[#f0f0f0] pt-4">
+                            {timeRemaining !== undefined && timeRemaining !== null && (
+                                <div className={cn(
+                                    "mt-6 border-t pt-4",
+                                    isExpired ? "border-red-200 bg-red-50/60 rounded-lg p-4 -mx-2" : "border-[#f0f0f0]"
+                                )}>
                                     <div className="flex items-center justify-between">
                                         <span className="text-[13px] text-[#727373]">Time Remaining</span>
                                         <span className={cn(
                                             "text-[15px] font-semibold",
-                                            instance.time_remaining_minutes < 10 ? "text-rose-600" : "text-[#1a1a1a]"
+                                            isExpired && "text-red-600",
+                                            isTimeLow && "text-rose-600",
+                                            !isExpired && !isTimeLow && "text-[#1a1a1a]"
                                         )}>
-                                            {instance.time_remaining_minutes} minutes
+                                            {isExpired ? "Expired" : `${timeRemaining} min`}
                                         </span>
                                     </div>
+                                    {isExpired && (
+                                        <p className="mt-2 text-[12px] text-red-600">
+                                            This lab session has ended. You cannot re-enter this instance.
+                                        </p>
+                                    )}
                                 </div>
                             )}
                         </section>
@@ -236,7 +277,12 @@ export default function LabInstanceDetailPage() {
                     <div className="space-y-6 lg:sticky lg:top-6 lg:self-start">
                         {/* Primary CTA */}
                         <div className="rounded-xl border border-[#e8e8e8] bg-white p-6">
-                            {isRunning ? (
+                            {isExpired ? (
+                                <div className="flex h-11 w-full items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 text-[13px] font-semibold text-red-600">
+                                    <Clock className="h-4 w-4" />
+                                    Lab Expired
+                                </div>
+                            ) : isRunning ? (
                                 <button
                                     onClick={handleEnterLab}
                                     className={cn(
@@ -260,11 +306,13 @@ export default function LabInstanceDetailPage() {
                             )}
 
                             <p className="mt-3 text-center text-[11px] text-[#a0a0a0]">
-                                {isRunning
-                                    ? "Your lab is ready. Click above to start."
-                                    : isProvisioning
-                                        ? "Your lab is being prepared. Please wait."
-                                        : "This instance is not currently active."}
+                                {isExpired
+                                    ? "This lab session has expired and cannot be accessed."
+                                    : isRunning
+                                        ? "Your lab is ready. Click above to start."
+                                        : isProvisioning
+                                            ? "Your lab is being prepared. Please wait."
+                                            : "This instance is not currently active."}
                             </p>
                         </div>
 

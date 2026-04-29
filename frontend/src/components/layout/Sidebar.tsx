@@ -1,7 +1,7 @@
 // src/components/layout/Sidebar.tsx
 import { NavLink, useLocation } from "react-router-dom"
 import { cn } from "@/lib/utils"
-import { FlaskConical, ChevronRight, Shield } from "lucide-react"
+import { FlaskConical, ChevronRight } from "lucide-react"
 
 interface SidebarProps {
   userRole?: string
@@ -16,6 +16,7 @@ interface NavItem {
 const allNavItems: NavItem[] = [
   { to: "/admin/lab-definitions", label: "Lab Management" },
   { to: "/admin/lab-instances", label: "Lab Instances" },
+  { to: "/admin/monitoring", label: "Monitoring Audit" },
   { to: "/admin/infrastructure", label: "Infrastructure" },
   { to: "/admin/credentials", label: "Host Credentials" },
   { to: "/admin/vcenter-credentials", label: "vCenter Credentials", adminOnly: true },
