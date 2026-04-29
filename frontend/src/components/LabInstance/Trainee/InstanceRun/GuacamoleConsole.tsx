@@ -26,12 +26,19 @@ export function GuacamoleConsole({
         setIframeKey((k) => k + 1)
     }, [connectionId])
 
-    // CRITICAL FIX: Global focus management per Apache Guacamole FAQ
+    // FIX: Scoped focus management — only refocus when clicking INSIDE the console container
+    // This prevents the paste popup from appearing on clicks elsewhere in the page
     useEffect(() => {
         const iframe = iframeRef.current
-        if (!iframe) return
+        const container = containerRef.current
+        if (!iframe || !container) return
 
-        const refocusGuacamole = () => {
+        const refocusGuacamole = (e: MouseEvent | KeyboardEvent) => {
+            // Only steal focus if the click/keydown happened inside our container
+            const target = e.target as Node
+            if (!container.contains(target)) return
+
+            // Don't steal from interactive elements inside our container either
             const focused = document.activeElement
             if (
                 focused &&
@@ -44,17 +51,27 @@ export function GuacamoleConsole({
             ) {
                 return
             }
+
             iframe.focus()
             iframe.contentWindow?.focus()
         }
 
-        document.addEventListener("click", refocusGuacamole)
-        document.addEventListener("keydown", refocusGuacamole)
-        setTimeout(refocusGuacamole, 500)
+        // Attach listeners to the container, not document
+        container.addEventListener("click", refocusGuacamole)
+        container.addEventListener("keydown", refocusGuacamole)
+
+        // Initial focus
+        const timer = setTimeout(() => {
+            if (document.activeElement === iframe || container.contains(document.activeElement)) {
+                iframe.focus()
+                iframe.contentWindow?.focus()
+            }
+        }, 500)
 
         return () => {
-            document.removeEventListener("click", refocusGuacamole)
-            document.removeEventListener("keydown", refocusGuacamole)
+            container.removeEventListener("click", refocusGuacamole)
+            container.removeEventListener("keydown", refocusGuacamole)
+            clearTimeout(timer)
         }
     }, [iframeKey])
 
@@ -123,7 +140,7 @@ export function GuacamoleConsole({
                         title={
                             hasFocus
                                 ? "Keyboard input active"
-                                : "Click to activate keyboard"
+                                : "Click console to activate keyboard"
                         }
                     >
                         <Keyboard className="h-3 w-3" />

@@ -3,30 +3,29 @@ import { useState, useCallback } from "react"
 import { toast } from "sonner"
 import type { LabInstanceRuntimeResponse } from "@/types/LabInstance/Trainee/LabRuntime"
 import type { GuideVersion } from "@/types/LabGuide"
+import type { MyLabInstance } from "@/types/LabInstance/Trainee/LabInstance"
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
 
 interface UseTraineeLabRuntimeReturn {
-    /** POST /lab-instances/{id}/refresh — Refresh status & return runtime-safe data */
     refreshInstance: (instanceId: string) => Promise<LabInstanceRuntimeResponse>
-    /** GET /lab-instances/{id}/guide-version — Get pinned guide version */
     getGuideVersion: (instanceId: string) => Promise<GuideVersion>
+    terminateInstance: (instanceId: string) => Promise<MyLabInstance>
     isLoading: boolean
+    isRefreshing: boolean
+    isLoadingGuide: boolean
+    isTerminating: boolean
     error: string | null
     resetError: () => void
 }
 
-/**
- * Trainee hook for RUNTIME lab instance operations.
- * Uses stripped-down schemas — no vm_uuid, vcenter_host, trainee_id, or IPs exposed.
- *
- * Endpoints:
- *   POST /lab-instances/{id}/refresh        → safe runtime snapshot
- *   GET  /lab-instances/{id}/guide-version  → guide content for this instance
- */
 export function useTraineeLabRuntime(): UseTraineeLabRuntimeReturn {
-    const [isLoading, setIsLoading] = useState(false)
+    const [isRefreshing, setIsRefreshing] = useState(false)
+    const [isLoadingGuide, setIsLoadingGuide] = useState(false)
+    const [isTerminating, setIsTerminating] = useState(false)
     const [error, setError] = useState<string | null>(null)
+
+    const isLoading = isRefreshing || isLoadingGuide || isTerminating
 
     const resetError = useCallback(() => {
         setError(null)
@@ -46,7 +45,7 @@ export function useTraineeLabRuntime(): UseTraineeLabRuntimeReturn {
     // -------------------------------------------------------------------------
     const refreshInstance = useCallback(
         async (instanceId: string): Promise<LabInstanceRuntimeResponse> => {
-            setIsLoading(true)
+            setIsRefreshing(true)
             setError(null)
 
             try {
@@ -115,7 +114,7 @@ export function useTraineeLabRuntime(): UseTraineeLabRuntimeReturn {
 
                 throw new Error(message)
             } finally {
-                setIsLoading(false)
+                setIsRefreshing(false)
             }
         },
         [getToken]
@@ -126,7 +125,7 @@ export function useTraineeLabRuntime(): UseTraineeLabRuntimeReturn {
     // -------------------------------------------------------------------------
     const getGuideVersion = useCallback(
         async (instanceId: string): Promise<GuideVersion> => {
-            setIsLoading(true)
+            setIsLoadingGuide(true)
             setError(null)
 
             try {
@@ -188,7 +187,93 @@ export function useTraineeLabRuntime(): UseTraineeLabRuntimeReturn {
 
                 throw new Error(message)
             } finally {
-                setIsLoading(false)
+                setIsLoadingGuide(false)
+            }
+        },
+        [getToken]
+    )
+
+    // -------------------------------------------------------------------------
+    // DELETE /lab-instances/{instance_id} — Terminate instance
+    // -------------------------------------------------------------------------
+    const terminateInstance = useCallback(
+        async (instanceId: string): Promise<MyLabInstance> => {
+            setIsTerminating(true)
+            setError(null)
+
+            const loadingToast = toast.loading("Terminating lab instance...")
+
+            try {
+                const token = getToken()
+                const url = `${API_BASE_URL}/lab-instances/${instanceId}`
+
+                const response = await fetch(url, {
+                    method: "DELETE",
+                    headers: {
+                        Accept: "application/json",
+                        Authorization: `Bearer ${token}`,
+                    },
+                })
+
+                if (!response.ok) {
+                    toast.dismiss(loadingToast)
+
+                    if (response.status === 401) {
+                        const msg = "Unauthorized. Please log in."
+                        toast.error(msg)
+                        throw new Error(msg)
+                    }
+                    if (response.status === 403) {
+                        const msg = "Forbidden."
+                        toast.error(msg)
+                        throw new Error(msg)
+                    }
+                    if (response.status === 404) {
+                        const errorData = await response.json().catch(() => ({}))
+                        const msg = errorData.detail || "Instance not found"
+                        toast.error(msg)
+                        throw new Error(msg)
+                    }
+                    if (response.status === 502) {
+                        const errorData = await response.json().catch(() => ({}))
+                        const msg = errorData.detail || "External service error"
+                        toast.error(msg)
+                        throw new Error(msg)
+                    }
+                    const msg = `Failed to terminate instance: ${response.statusText}`
+                    toast.error(msg)
+                    throw new Error(msg)
+                }
+
+                const instance: MyLabInstance = await response.json()
+
+                toast.dismiss(loadingToast)
+                toast.success("Instance terminating", {
+                    description: instance.lab_definition.name || instance.id,
+                })
+
+                return instance
+            } catch (err) {
+                const message =
+                    err instanceof Error ? err.message : "Failed to terminate lab instance"
+
+                const alreadyHandled =
+                    message === "Authentication required" ||
+                    message === "Unauthorized. Please log in." ||
+                    message === "Forbidden." ||
+                    message.includes("Instance not found") ||
+                    message.includes("External service error") ||
+                    message.includes("Failed to terminate instance")
+
+                if (!alreadyHandled) {
+                    toast.dismiss(loadingToast)
+                    toast.error(message)
+                    setError(message)
+                }
+
+                throw new Error(message)
+            } finally {
+                setIsTerminating(false)
             }
         },
         [getToken]
@@ -197,7 +282,11 @@ export function useTraineeLabRuntime(): UseTraineeLabRuntimeReturn {
     return {
         refreshInstance,
         getGuideVersion,
+        terminateInstance,
         isLoading,
+        isRefreshing,
+        isLoadingGuide,
+        isTerminating,
         error,
         resetError,
     }

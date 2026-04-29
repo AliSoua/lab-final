@@ -63,6 +63,7 @@ def create_guide(db: Session, data: LabGuideCreate, user_id: str) -> LabGuide:
             version_number=1,
             created_by=user_id,
             is_published=data.is_published,
+            published_at=datetime.utcnow() if data.is_published else None,  # ← FIX
             steps=_serialize_steps(data.initial_steps),
         )
         db.add(version)
@@ -96,6 +97,7 @@ def create_version(
         version_number=next_version,
         created_by=user_id,
         is_published=data.is_published,
+        published_at=datetime.utcnow() if data.is_published else None,  # ← FIX
         steps=_serialize_steps(data.steps),
     )
     db.add(version)

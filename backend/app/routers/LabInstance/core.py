@@ -158,7 +158,7 @@ def list_my_instances(
 
 @router.get(
     "/{instance_id}",
-    response_model=LabInstanceResponse,
+    response_model=MyLabInstanceSummary,
     summary="Get lab instance details",
 )
 def get_instance_detail(

@@ -9,11 +9,12 @@ import {
     Power,
     Monitor,
     RefreshCw,
+    PowerOff,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useTraineeLabRuntime } from "@/hooks/LabInstance/Trainee/useTraineeLabRuntime"
 import { ResizableLabWorkspace } from "@/components/LabInstance/Trainee/InstanceRun/ResizableLabWorkspace"
-import { LabGuidePanel } from "@/components/LabInstance/Trainee/InstanceRun/LabGuidePanel"
+import { LabGuidePanel } from "@/components/LabInstance/Trainee/InstanceRun/LabGuidePanel/index"
 import { VMConsolePanel } from "@/components/LabInstance/Trainee/InstanceRun/VMConsolePanel"
 import type { LabInstanceRuntimeResponse } from "@/types/LabInstance/Trainee/LabRuntime"
 import type { GuideVersion } from "@/types/LabGuide"
@@ -22,7 +23,7 @@ const POLL_INTERVAL_MS = 30_000
 const TERMINAL_STATUSES = new Set(["terminated", "stopped", "failed", "completed", "abandoned"])
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   PRESENTATIONAL COMPONENTS (inline for now — extract to files later)
+   PRESENTATIONAL COMPONENTS
    ═══════════════════════════════════════════════════════════════════════════ */
 
 function FullPageLoader({ message }: { message: string }) {
@@ -112,7 +113,8 @@ export default function RunLabPage() {
     const {
         refreshInstance,
         getGuideVersion,
-        isLoading: hookLoading,
+        terminateInstance,
+        isTerminating,
         error: hookError,
     } = useTraineeLabRuntime()
 
@@ -149,6 +151,8 @@ export default function RunLabPage() {
         if (!runtime?.guacamole_connections) return []
         return Object.entries(runtime.guacamole_connections)
     }, [runtime?.guacamole_connections])
+
+    const hasConnections = useMemo(() => connectionEntries.length > 0, [connectionEntries])
 
     useEffect(() => {
         if (connectionEntries.length === 0) {
@@ -188,14 +192,12 @@ export default function RunLabPage() {
 
         const bootstrap = async () => {
             try {
-                // 1. Runtime first — gives us status, connections, step index
                 const rt = await refreshInstance(instanceId)
                 if (cancelled || !isMountedRef.current) return
 
                 setRuntime(rt)
                 setCurrentStepIndex(rt.current_step_index ?? 0)
 
-                // 2. Guide version — completely independent of runtime polling
                 try {
                     const gv = await getGuideVersion(instanceId)
                     if (cancelled || !isMountedRef.current) return
@@ -231,10 +233,11 @@ export default function RunLabPage() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [instanceId])
 
-    // ── Polling: Runtime ONLY (no guide re-fetch) ───────────────────────
+    // ── Polling: Runtime ONLY — stops when connections exist ────────────
     useEffect(() => {
         if (!instanceId || isBootstrapping) return
         if (TERMINAL_STATUSES.has(runtime?.status ?? "")) return
+        if (hasConnections) return  // ← STOP polling once connections are ready
 
         const tick = async () => {
             if (inFlightRef.current) return
@@ -245,7 +248,6 @@ export default function RunLabPage() {
                 if (!isMountedRef.current) return
 
                 setRuntime(prev => {
-                    // Defensive: avoid no-op re-renders if nothing changed
                     if (
                         prev &&
                         prev.status === fresh.status &&
@@ -258,18 +260,16 @@ export default function RunLabPage() {
                     return fresh
                 })
 
-                // Sync step index from server if it moved forward
                 setCurrentStepIndex(prev =>
                     fresh.current_step_index > prev ? fresh.current_step_index : prev,
                 )
             } catch {
-                // Silent fail on background poll — don't spam toasts
+                // Silent fail on background poll
             } finally {
                 inFlightRef.current = false
             }
         }
 
-        // Immediate tick, then interval
         tick()
         pollTimerRef.current = window.setInterval(tick, POLL_INTERVAL_MS)
 
@@ -280,7 +280,7 @@ export default function RunLabPage() {
             }
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [instanceId, isBootstrapping])
+    }, [instanceId, isBootstrapping, hasConnections])
 
     // Stop polling when terminal
     useEffect(() => {
@@ -311,6 +311,22 @@ export default function RunLabPage() {
         }
     }, [instanceId, refreshInstance])
 
+    // ── Terminate ───────────────────────────────────────────────────────
+    const handleTerminate = useCallback(async () => {
+        if (!instanceId) return
+        const confirmed = window.confirm(
+            "Are you sure you want to terminate this lab instance? This action cannot be undone."
+        )
+        if (!confirmed) return
+
+        try {
+            await terminateInstance(instanceId)
+            navigate("/labs")
+        } catch {
+            // Error handled by hook
+        }
+    }, [instanceId, terminateInstance, navigate])
+
     // ── Guide Interaction Handlers ──────────────────────────────────────
     const handleStepChange = useCallback((index: number) => {
         setCurrentStepIndex(index)
@@ -325,14 +341,14 @@ export default function RunLabPage() {
 
     // ── Derived ─────────────────────────────────────────────────────────
     const isProvisioning = runtime?.status === "provisioning"
-    const hasConnections = connectionEntries.length > 0
     const displayError = bootstrapError || hookError
 
     // ════════════════════════════════════════════════════════════════════
     // RENDER STATES
     // ════════════════════════════════════════════════════════════════════
 
-    if (isBootstrapping || hookLoading) {
+    // FIX: removed hookLoading from this check — only bootstrap blocks the page
+    if (isBootstrapping) {
         return <FullPageLoader message="Loading lab environment..." />
     }
 
@@ -370,7 +386,6 @@ export default function RunLabPage() {
                 </div>
 
                 <div className="flex items-center gap-4 text-[12px] text-[#727373]">
-                    {/* Connection count (safe) */}
                     {hasConnections ? (
                         <div className="flex items-center gap-1.5">
                             <Monitor className="h-3.5 w-3.5" />
@@ -386,7 +401,6 @@ export default function RunLabPage() {
                         </div>
                     )}
 
-                    {/* Time remaining (from backend, no client calc) */}
                     {timeDisplay && (
                         <div className="flex items-center gap-1.5 border-l border-[#e8e8e8] pl-4">
                             <Clock className="h-3.5 w-3.5" />
@@ -401,7 +415,6 @@ export default function RunLabPage() {
                         </div>
                     )}
 
-                    {/* Power state */}
                     <div className="flex items-center gap-1.5 border-l border-[#e8e8e8] pl-4">
                         <Power className="h-3.5 w-3.5" />
                         <span className="capitalize">
@@ -409,7 +422,6 @@ export default function RunLabPage() {
                         </span>
                     </div>
 
-                    {/* Manual refresh */}
                     <button
                         onClick={handleManualRefresh}
                         disabled={inFlightRef.current}
@@ -422,6 +434,22 @@ export default function RunLabPage() {
                                 inFlightRef.current && "animate-spin",
                             )}
                         />
+                    </button>
+
+                    {/* ── Terminate Button ───────────────────────────── */}
+                    <button
+                        onClick={handleTerminate}
+                        disabled={isTerminating}
+                        className={cn(
+                            "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-medium border transition-colors",
+                            isTerminating
+                                ? "bg-red-50 text-red-300 border-red-100 cursor-not-allowed"
+                                : "bg-red-50 text-red-600 border-red-200 hover:bg-red-100 hover:text-red-700"
+                        )}
+                        title="Terminate lab instance"
+                    >
+                        <PowerOff className="h-3.5 w-3.5" />
+                        {isTerminating ? "Terminating..." : "Terminate"}
                     </button>
                 </div>
             </header>
@@ -438,7 +466,7 @@ export default function RunLabPage() {
                     leftPanel={
                         <LabGuidePanel
                             steps={guide?.steps ?? []}
-                            stepStates={{}} // TODO: hydrate from session_state when API ready
+                            stepStates={{}}
                             currentStepIndex={currentStepIndex}
                             onStepChange={handleStepChange}
                             onRunCommand={handleRunCommand}

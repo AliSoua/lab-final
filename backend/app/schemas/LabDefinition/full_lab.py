@@ -5,7 +5,6 @@ from uuid import UUID
 from datetime import datetime
 
 from app.schemas.LabDefinition.LabVM import LabVMResponse, LabVMCreate
-from app.schemas.LabDefinition.LabGuide import LabGuideStepCreate, LabGuideResponse
 from app.schemas.LabDefinition.LabConnection import LabConnectionSlot
 from app.schemas.LabDefinition.core import (
     LabCategory, LabDifficulty, LabStatus, InfrastructureProvider

@@ -64,3 +64,29 @@ def log_task(
             "trainee_id": str(trainee_id),
         },
     )
+
+
+def log_monitor_task(
+    logger: logging.Logger,
+    *,
+    task_id: str,
+    monitor_name: str = "monitor",
+) -> logging.LoggerAdapter:
+    """
+    Return a LoggerAdapter for system-level monitoring tasks.
+
+    Monitoring tasks don't target a specific instance/trainee.
+    instance_id and trainee_id are set to the monitor name for traceability.
+
+    Usage:
+        task_logger = log_monitor_task(logger, task_id="...", monitor_name="session_timeout")
+        task_logger.info("Scanning for expired instances")
+    """
+    return logging.LoggerAdapter(
+        logger,
+        {
+            "task_id": str(task_id),
+            "instance_id": f"monitor:{monitor_name}",
+            "trainee_id": "system",
+        },
+    )

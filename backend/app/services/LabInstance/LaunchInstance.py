@@ -107,8 +107,8 @@ def enqueue_launch(
         trainee_id=trainee_id,
         guide_version_id=lab.guide_version_id,  # snapshot at launch time
         status="provisioning",
-        started_at=datetime.utcnow(),
-        expires_at=datetime.utcnow() + timedelta(minutes=duration),
+        # started_at=datetime.utcnow(),
+        # expires_at=datetime.utcnow() + timedelta(minutes=duration),
         duration_minutes=duration,
         guacamole_connections={},
         session_state=None,  # set after flush so we have the real instance.id

@@ -4,7 +4,7 @@ from uuid import UUID
 from enum import Enum
 from datetime import datetime
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -109,7 +109,11 @@ class ValidationCheck(BaseModel):
 class LabGuideStepBase(BaseModel):
     title: str = Field(..., max_length=255)
     description: Optional[str] = None
-    theory_content: Optional[str] = Field(None, description="Markdown/HTML explanation")
+    theory_content: Optional[str] = Field(
+        None, 
+        max_length=50_000,  # generous limit for long guides
+        description="Markdown content. Limited HTML allowed for tables/iframe embeds."
+    )
     commands: List[GuideCommand] = Field(default_factory=list)
     tasks: List[GuideTask] = Field(default_factory=list)
     hints: List[GuideHint] = Field(default_factory=list)
@@ -117,6 +121,13 @@ class LabGuideStepBase(BaseModel):
     quiz: Optional[GuideQuiz] = None
     points: int = Field(10, ge=0, description="Points for completing this step")
     order: int = Field(0, ge=0, description="Display order within the guide")
+    
+    @field_validator('theory_content')
+    @classmethod
+    def validate_content_length(cls, v: Optional[str]) -> Optional[str]:
+        if v and len(v) > 50_000:
+            raise ValueError("Theory content exceeds 50,000 characters")
+        return v
 
 
 class LabGuideStepCreate(LabGuideStepBase):

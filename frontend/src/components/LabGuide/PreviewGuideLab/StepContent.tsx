@@ -7,12 +7,12 @@ import {
     Lightbulb,
     Shield,
     HelpCircle,
-    AlertCircle,
 } from "lucide-react"
 import { toast } from "sonner"
 import type { LabGuideStep, GuideCommand, GuideQuiz } from "@/types/LabGuide"
 import { CommandBlock } from "./CommandBlock"
 import { QuizBlock } from "./QuizBlock"
+import { TheoryContentRenderer } from "@/components/LabGuide/shared/TheoryContentRenderer"
 
 interface StepContentProps {
     step: LabGuideStep
@@ -72,9 +72,7 @@ export function StepContent({
                         </h3>
                     </div>
                     <div className="bg-white border border-[#e8e8e8] rounded-lg p-4">
-                        <p className="text-[13px] text-[#3a3a3a] leading-relaxed whitespace-pre-wrap">
-                            {step.theory_content}
-                        </p>
+                        <TheoryContentRenderer content={step.theory_content} />
                     </div>
                 </div>
             )}

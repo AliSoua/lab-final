@@ -6,8 +6,8 @@ Synchronous CRUD and lifecycle operations: get, list, stop, refresh.
 
 import uuid
 import logging
-from datetime import datetime
-from typing import Optional, List, Tuple
+from datetime import datetime, timedelta
+from typing import Optional, List, Tuple, Any, Dict
 
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
@@ -20,6 +20,7 @@ from app.services.LabInstance.utils import (
     _call_with_timeout,
     _find_vcenter_credentials,
     _sync_guacamole_connections,
+    _delete_guacamole_connections,
 )
 
 logger = logging.getLogger(__name__)
@@ -332,12 +333,16 @@ def refresh_instance_status(
             # Transition provisioning -> running
             if instance.status == "provisioning":
                 instance.status = "running"
+                instance.started_at = datetime.utcnow()
+                instance.expires_at = datetime.utcnow() + timedelta(
+                    minutes=instance.duration_minutes or 60
+                )
                 if instance.session_state:
                     state = dict(instance.session_state)
                     state["status"] = "active"
                     instance.session_state = state
                 logger.info(
-                    "Instance transitioned provisioning -> running | instance_id=%s",
+                    "Instance transitioned provisioning -> running | instance_id=%s started_at=%s",
                     instance_id,
                 )
 
@@ -362,4 +367,81 @@ def refresh_instance_status(
     finally:
         client.disconnect()
 
+    return instance
+
+def terminate_instance(
+    db: Session,
+    instance_id: uuid.UUID,
+    trainee_id: uuid.UUID,
+) -> LabInstance:
+    """
+    Hard terminate: destroy VM, clean up Guacamole, mark terminated.
+    Synchronous — for monitoring tasks and admin ops.
+    For user-initiated terminate, use enqueue_terminate() + Celery worker instead.
+    """
+    logger.info(
+        "Terminating instance | instance_id=%s trainee_id=%s",
+        instance_id,
+        trainee_id,
+    )
+    instance = get_instance(db, instance_id, trainee_id)
+    if not instance:
+        raise ValueError("Instance not found")
+
+    if instance.status == "terminated":
+        return instance
+
+    # ── vCenter destroy (NO DB session held) ──────────────────────────
+    if instance.vm_uuid and instance.vcenter_host:
+        creds = _find_vcenter_credentials(instance.vcenter_host)
+        if creds:
+            client = VCenterClient(
+                host=creds["host"],
+                username=creds["username"],
+                password=creds["password"],
+            )
+            if client.connect():
+                try:
+                    vm = client.find_vm_by_uuid(instance.vm_uuid)
+                    if vm:
+                        if str(vm.runtime.powerState) == "poweredOn":
+                            task = vm.PowerOffVM_Task()
+                            client._wait_for_task(task)
+                        task = vm.Destroy_Task()
+                        client._wait_for_task(task)
+                        logger.info(
+                            "VM destroyed | vm_uuid=%s",
+                            instance.vm_uuid,
+                        )
+                except Exception as e:
+                    logger.error(
+                        "Failed to destroy VM | vm_uuid=%s error=%s",
+                        instance.vm_uuid,
+                        e,
+                    )
+                finally:
+                    client.disconnect()
+
+    # ── Guacamole cleanup ─────────────────────────────────────────────
+    _delete_guacamole_connections(instance, db=db)
+
+    # ── Update DB ─────────────────────────────────────────────────────
+    instance.status = "terminated"
+    instance.stopped_at = datetime.utcnow()
+    instance.guacamole_connections = {}
+
+    if instance.session_state:
+        state = dict(instance.session_state)
+        state["status"] = "terminated"
+        state["terminated_at"] = instance.stopped_at.isoformat()
+        state["termination_reason"] = "expired"
+        instance.session_state = state
+
+    db.commit()
+    db.refresh(instance)
+    logger.info(
+        "Instance terminated | instance_id=%s stopped_at=%s",
+        instance_id,
+        instance.stopped_at,
+    )
     return instance

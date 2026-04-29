@@ -236,6 +236,32 @@ services:
     networks:
       - default
 
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    container_name: celery-beat
+    restart: always
+    command: ["/bin/sh", "/app/load_vault_token.sh", "celery", "-A", "app.core.celery", "beat", "--loglevel=info", "--scheduler", "celery.beat.PersistentScheduler", "--schedule", "/tmp/celerybeat-schedule"]
+    volumes:
+      - vault_data:/vault/file:ro
+      - ./backend/app/scripts/load_vault_token.sh:/app/load_vault_token.sh:ro
+      - celery-beat-data:/tmp
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      - VAULT_ADDR=http://vault:8200
+      - GUACAMOLE_API_URL=http://guacamole:8080/guacamole/api
+      - GUACAMOLE_ADMIN_USER=guacadmin
+      - GUACAMOLE_ADMIN_PASS=${GUACAMOLE_ADMIN_PASS:-guacadmin}
+      - GUACAMOLE_CLIENT_ID=guacamole
+      - GUACAMOLE_PUBLIC_URL=${GUACAMOLE_PUBLIC_URL}
+    depends_on:
+      - redis
+      - db
+      - vault
+
 volumes:
   pgdata_lab_platform_test:
   keycloak_data:
@@ -243,3 +269,4 @@ volumes:
   vault_data:
   redis-data:
   uploads_data:
+  celery-beat-data:
