@@ -9,7 +9,7 @@ export interface CountdownState {
     isExpired: boolean
     minutesRemaining: number | null
     formattedTime: string | null
-    showWarning: boolean  // ← ADDED
+    showWarning: boolean
 }
 
 export interface CountdownActions {
@@ -20,23 +20,35 @@ export interface CountdownActions {
 export function useLabCountdown(expiresAt: string | null): [CountdownState, CountdownActions] {
     const [timeRemainingMs, setTimeRemainingMs] = useState<number | null>(null)
     const [isExpired, setIsExpired] = useState(false)
-    const [showWarning, setShowWarning] = useState(false)  // ← ADDED state
-    const [hasWarned5Min, setHasWarned5Min] = useState(false)
-    const [hasWarned1Min, setHasWarned1Min] = useState(false)
-    const timerRef = useRef<number | null>(null)
+    const [showWarning, setShowWarning] = useState(false)
+
+    // Use refs for warning flags so the interval is NOT recreated when they change
+    const hasWarned5MinRef = useRef(false)
+    const hasWarned1MinRef = useRef(false)
+    const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
     const clearTimer = useCallback(() => {
         if (timerRef.current !== null) {
-            window.clearInterval(timerRef.current)
+            clearInterval(timerRef.current)
             timerRef.current = null
         }
     }, [])
+
+
+    // Reset warning flags whenever expiresAt changes (e.g. backend extends time)
+    useEffect(() => {
+        hasWarned5MinRef.current = false
+        hasWarned1MinRef.current = false
+        setShowWarning(false)
+        setIsExpired(false)
+    }, [expiresAt])
 
     useEffect(() => {
         if (!expiresAt) {
             setTimeRemainingMs(null)
             setIsExpired(false)
-            setShowWarning(false)  // ← Reset warning
+            setShowWarning(false)
+            clearTimer()
             return
         }
 
@@ -48,36 +60,36 @@ export function useLabCountdown(expiresAt: string | null): [CountdownState, Coun
             if (remaining <= 0) {
                 setTimeRemainingMs(0)
                 setIsExpired(true)
-                setShowWarning(false)  // ← Hide warning when expired
+                setShowWarning(false)
                 clearTimer()
                 return
             }
 
             setTimeRemainingMs(remaining)
-            setIsExpired(false)
 
-            const mins = Math.ceil(remaining / 60000)
-            if (mins <= CRITICAL_MINUTES && !hasWarned1Min) {
+            const mins = remaining / 60000
+
+            if (mins <= CRITICAL_MINUTES && !hasWarned1MinRef.current) {
                 setShowWarning(true)
-                setHasWarned1Min(true)
-            } else if (mins <= WARNING_MINUTES && !hasWarned5Min) {
+                hasWarned1MinRef.current = true
+            } else if (mins <= WARNING_MINUTES && !hasWarned5MinRef.current) {
                 setShowWarning(true)
-                setHasWarned5Min(true)
+                hasWarned5MinRef.current = true
             }
         }
 
-        tick()
-        timerRef.current = window.setInterval(tick, 1000)
+        tick() // immediate first render
+        timerRef.current = setInterval(tick, 1000)
 
         return clearTimer
-    }, [expiresAt, hasWarned5Min, hasWarned1Min, clearTimer])
+    }, [expiresAt, clearTimer]) // ← stable: only recreates if expiresAt changes
 
-    const formattedTime = useFormatTime(timeRemainingMs)
+    const formattedTime = formatCountdownTime(timeRemainingMs)
 
     const dismissWarning = useCallback(() => setShowWarning(false), [])
     const reset = useCallback(() => {
-        setHasWarned5Min(false)
-        setHasWarned1Min(false)
+        hasWarned5MinRef.current = false
+        hasWarned1MinRef.current = false
         setShowWarning(false)
         setIsExpired(false)
     }, [])
@@ -86,24 +98,29 @@ export function useLabCountdown(expiresAt: string | null): [CountdownState, Coun
         {
             timeRemainingMs,
             isExpired,
-            minutesRemaining: timeRemainingMs ? Math.ceil(timeRemainingMs / 60000) : null,
+            minutesRemaining: timeRemainingMs !== null ? Math.ceil(timeRemainingMs / 60000) : null,
             formattedTime,
-            showWarning,  // ← INCLUDED in return
+            showWarning,
         },
         { dismissWarning, reset }
     ]
 }
 
-function useFormatTime(ms: number | null): string | null {
+function formatCountdownTime(ms: number | null): string | null {
     if (ms === null) return null
     if (ms <= 0) return "Expired"
 
-    const totalSeconds = Math.floor(ms / 1000)
+    const totalSeconds = Math.max(0, Math.ceil(ms / 1000))
     const h = Math.floor(totalSeconds / 3600)
     const m = Math.floor((totalSeconds % 3600) / 60)
     const s = totalSeconds % 60
 
-    if (h > 0) return `${h}h ${m}m ${s}s`
-    if (m > 0) return `${m}m ${s}s`
-    return `${s}s`
+    const ss = s.toString().padStart(2, "0")
+
+    if (h > 0) {
+        const mm = m.toString().padStart(2, "0")
+        return `${h}:${mm}:${ss}`
+    }
+
+    return `${m}:${ss}` // e.g. "4:00", "3:59", "0:05", "0:00"
 }

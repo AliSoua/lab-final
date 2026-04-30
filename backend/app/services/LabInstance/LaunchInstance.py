@@ -534,6 +534,10 @@ def run_launch_worker(
             "vcenter_host": instance.vcenter_host,
             "task_id": str(task_uuid),
             "trainee_id": trainee_id,
+            "expires_at_iso": instance.expires_at.isoformat() if instance.expires_at else None,
+            "expires_at_unix": instance.expires_at.timestamp() if instance.expires_at else None,
+            "started_at_iso": instance.created_at.isoformat() if instance.created_at else None,
+            "started_at_unix": instance.created_at.timestamp() if instance.created_at else None,
         }
 
     return {"status": "error", "message": "Worker exited without result"}

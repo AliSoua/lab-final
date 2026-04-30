@@ -1,5 +1,5 @@
 // src/components/LabInstance/Trainee/InstanceRun/LabRunPage.tsx
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { useNavigate } from "react-router-dom"
 import { useTraineeLabRuntime } from "@/hooks/LabInstance/Trainee/useTraineeLabRuntime"
 import { useLabCountdown } from "./hooks/useLabCountdown"
@@ -37,6 +37,7 @@ export function LabRunPage({ instanceId }: LabRunPageProps) {
 
     // ── Polling (only until connections ready) ──────────────────────
     const [isRefreshing, setIsRefreshing] = useState(false)
+    const isPollingRef = useRef(false) // ← guards against overlapping requests WITHOUT effect churn
 
     // ── Bootstrap: Load once ──────────────────────────────────────────
     useEffect(() => {
@@ -68,25 +69,23 @@ export function LabRunPage({ instanceId }: LabRunPageProps) {
     }, [instanceId, refreshInstance, getGuideVersion])
 
     // ── Polling: Only until connections ready ─────────────────────────
+    // ← FIXED: removed isRefreshing from deps; use ref to guard overlap
     useEffect(() => {
         if (isBootstrapping || hasConnections) return
 
         const tick = async () => {
-            if (isRefreshing) return
+            if (isPollingRef.current) return
+            isPollingRef.current = true
             setIsRefreshing(true)
+
             try {
                 const fresh = await refreshInstance(instanceId)
-                setRuntime(prev => {
-                    // Only update if meaningful change
-                    if (prev && prev.status === fresh.status && prev.guacamole_connections === fresh.guacamole_connections) {
-                        return prev
-                    }
-                    return fresh
-                })
+                setRuntime(fresh)
                 if (fresh.expires_at) setExpiresAt(fresh.expires_at)
             } catch {
-                // Silent fail
+                // Silent fail — countdown keeps running client-side
             } finally {
+                isPollingRef.current = false
                 setIsRefreshing(false)
             }
         }
@@ -94,27 +93,31 @@ export function LabRunPage({ instanceId }: LabRunPageProps) {
         tick()
         const interval = window.setInterval(tick, 30_000)
         return () => window.clearInterval(interval)
-    }, [instanceId, isBootstrapping, hasConnections, refreshInstance, isRefreshing])
+    }, [instanceId, isBootstrapping, hasConnections, refreshInstance])
 
     // ── Auto-redirect on expiry ───────────────────────────────────────
     useEffect(() => {
         if (isExpired) {
             const timer = window.setTimeout(() => {
                 navigate("/labs")
-            }, 5000) // Give user 5s to read modal
+            }, 5000)
             return () => window.clearTimeout(timer)
         }
     }, [isExpired, navigate])
 
     // ── Handlers ──────────────────────────────────────────────────────
     const handleBack = useCallback(() => navigate(`/lab-instances/${instanceId}`), [navigate, instanceId])
+
     const handleManualRefresh = useCallback(async () => {
+        if (isPollingRef.current) return
+        isPollingRef.current = true
         setIsRefreshing(true)
         try {
             const fresh = await refreshInstance(instanceId)
             setRuntime(fresh)
             if (fresh.expires_at) setExpiresAt(fresh.expires_at)
         } finally {
+            isPollingRef.current = false
             setIsRefreshing(false)
         }
     }, [instanceId, refreshInstance])
