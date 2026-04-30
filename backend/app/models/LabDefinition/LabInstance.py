@@ -1,6 +1,6 @@
 # app/models/LabDefinition/LabInstance.py
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone  # ← Added timezone
 
 from sqlalchemy import Column, String, DateTime, Integer, ForeignKey, Text
 from sqlalchemy.dialects.postgresql import UUID, JSONB
@@ -76,7 +76,10 @@ class LabInstance(Base):
     # ── NEW: Current step index for the trainee's active session ────────────
     current_step_index = Column(Integer, default=0, nullable=False, server_default="0")
 
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+    )
     started_at = Column(DateTime(timezone=True))
     stopped_at = Column(DateTime(timezone=True))
     expires_at = Column(DateTime(timezone=True))

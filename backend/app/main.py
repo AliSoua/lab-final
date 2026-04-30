@@ -1,7 +1,7 @@
 # app/main.py
 import os
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -48,7 +48,7 @@ def _reap_unsent_tasks() -> None:
             db.query(LabInstanceTask)
             .filter(
                 LabInstanceTask.status == "queued",
-                LabInstanceTask.enqueued_at < datetime.utcnow() - timedelta(seconds=60),
+                LabInstanceTask.enqueued_at < datetime.now(timezone.utc) - timedelta(seconds=60),
             )
             .all()
         )
@@ -56,7 +56,7 @@ def _reap_unsent_tasks() -> None:
         for task in stuck:
             task.status = "failed"
             task.error_message = "task never published"
-            task.finished_at = datetime.utcnow()
+            task.finished_at = datetime.now(timezone.utc)
 
             instance = (
                 db.query(LabInstance)
@@ -88,7 +88,7 @@ def _reap_unsent_tasks() -> None:
 async def lifespan(app: FastAPI):
     # ── Startup ────────────────────────────────────────────────────────────────
     init_db()
-    _reap_unsent_tasks()
+    #_reap_unsent_tasks()
 
     yield
 

@@ -14,4 +14,30 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  optimizeDeps: {
+    include: ["guacamole-common-js"],
+  },
+  build: {
+    commonjsOptions: {
+      include: [/guacamole-common-js/],
+    },
+    rollupOptions: {
+      output: {
+        manualChunks: (id) => {
+          if (id.includes("node_modules/react") || id.includes("node_modules/react-dom") || id.includes("node_modules/react-router")) {
+            return "vendor-react"
+          }
+          if (id.includes("node_modules/guacamole-common-js")) {
+            return "vendor-guac"
+          }
+          if (id.includes("node_modules/@radix-ui")) {
+            return "vendor-ui"
+          }
+          if (id.includes("node_modules/")) {
+            return "vendor"
+          }
+        },
+      },
+    },
+  },
 })

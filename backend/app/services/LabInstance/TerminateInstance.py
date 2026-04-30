@@ -8,7 +8,7 @@ import uuid
 import os
 import socket
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 
 from sqlalchemy.orm import Session
@@ -215,7 +215,8 @@ def run_terminate_worker(
                 db=db,
             )
             instance.status = "terminated"
-            instance.stopped_at = datetime.utcnow()
+            # ← FIX: timezone-aware UTC
+            instance.stopped_at = datetime.now(timezone.utc)
             _mark_session_abandoned(instance)
             db.commit()
 
@@ -284,6 +285,9 @@ def run_terminate_worker(
             creds["host"],
         )
 
+        # ← NOTE: record_event here has no db session. 
+        # If record_event requires db, these will fail or open new sessions.
+        # Consider batching these events and writing them in Phase 4.
         record_event(
             task_uuid,
             instance_uuid,
@@ -293,37 +297,39 @@ def run_terminate_worker(
 
         vm = client.find_vm_by_uuid(vm_uuid)
         if vm:
-            if str(vm.runtime.powerState) == "poweredOn":
-                try:
-                    task_logger.info("Powering off VM | vm_uuid=%s", vm_uuid)
-                    task = vm.PowerOffVM_Task()
-                    _call_with_timeout(client._wait_for_task, 120, task)
-                    task_logger.info("VM powered off | vm_uuid=%s", vm_uuid)
-                except Exception as e:
-                    record_event(
-                        task_uuid,
-                        instance_uuid,
-                        "power_off_warning",
-                        f"Power off before destroy failed (non-fatal): {e}",
-                    )
-                    task_logger.warning(
-                        "Power off before destroy failed (non-fatal) | vm_uuid=%s error=%s",
-                        vm_uuid,
-                        e,
-                    )
+            # ← FIX: Handle poweredOff VMs too (manual shutdown case)
+            if str(vm.runtime.powerState) in ("poweredOn", "poweredOff"):
+                if str(vm.runtime.powerState) == "poweredOn":
+                    try:
+                        task_logger.info("Powering off VM | vm_uuid=%s", vm_uuid)
+                        task = vm.PowerOffVM_Task()
+                        _call_with_timeout(client._wait_for_task, 120, task)
+                        task_logger.info("VM powered off | vm_uuid=%s", vm_uuid)
+                    except Exception as e:
+                        record_event(
+                            task_uuid,
+                            instance_uuid,
+                            "power_off_warning",
+                            f"Power off before destroy failed (non-fatal): {e}",
+                        )
+                        task_logger.warning(
+                            "Power off before destroy failed (non-fatal) | vm_uuid=%s error=%s",
+                            vm_uuid,
+                            e,
+                        )
 
-            task_logger.info("Destroying VM | vm_uuid=%s", vm_uuid)
-            task = vm.Destroy_Task()
-            _call_with_timeout(client._wait_for_task, 180, task)
-            vm_destroyed = True
+                task_logger.info("Destroying VM | vm_uuid=%s", vm_uuid)
+                task = vm.Destroy_Task()
+                _call_with_timeout(client._wait_for_task, 180, task)
+                vm_destroyed = True
 
-            record_event(
-                task_uuid,
-                instance_uuid,
-                "vcenter_destroy_completed",
-                f"Destroyed VM {vm_uuid}",
-            )
-            task_logger.info("VM destroyed | vm_uuid=%s", vm_uuid)
+                record_event(
+                    task_uuid,
+                    instance_uuid,
+                    "vcenter_destroy_completed",
+                    f"Destroyed VM {vm_uuid}",
+                )
+                task_logger.info("VM destroyed | vm_uuid=%s", vm_uuid)
 
         else:
             # VM not found in vCenter — probably already deleted manually
@@ -387,7 +393,8 @@ def run_terminate_worker(
                 return
 
             instance.status = "terminated"
-            instance.stopped_at = datetime.utcnow()
+            # ← FIX: timezone-aware UTC
+            instance.stopped_at = datetime.now(timezone.utc)
             # ── PRESERVE VM METADATA FOR ADMIN AUDIT ─────────────────────
             # DO NOT null these out — the admin dashboard needs them for
             # historical reference (what VM was assigned, which vCenter, etc.)

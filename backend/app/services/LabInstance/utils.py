@@ -8,7 +8,7 @@ import uuid
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone  # ← Added timezone
 from typing import Optional, List, Dict, Any
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 
@@ -71,7 +71,8 @@ def _build_initial_session_state(
             "user_id": str(trainee_id),
             "vm_mappings": [],
             "default_vm": None,
-            "started_at": datetime.utcnow().isoformat(),
+            # ← FIX: timezone-aware UTC
+            "started_at": datetime.now(timezone.utc).isoformat(),
             "expires_at": None,
         },
         "step_states": [],
@@ -81,22 +82,25 @@ def _build_initial_session_state(
     }
 
 
-def _mark_session_abandoned(instance: LabInstance) -> None:
+def _mark_session_abandoned(instance: LabInstance) -> bool:
     """
     Update session_state to reflect that the lab was abandoned/terminated.
 
-    NOTE: This mutates instance.session_state in-place. Callers must ensure
-    SQLAlchemy detects the change (either by reassigning the dict or by
-    using MutableDict if configured on the model).
+    Returns True if state was mutated, False if no session_state existed.
+    Callers must ensure SQLAlchemy detects the change and commit.
     """
-    if instance.session_state:
-        # Defensive copy to trigger SQLAlchemy change detection
-        state = dict(instance.session_state)
-        state["status"] = "abandoned"
-        if state.get("runtime_context"):
-            state["runtime_context"] = dict(state["runtime_context"])
-            state["runtime_context"]["expires_at"] = datetime.utcnow().isoformat()
-        instance.session_state = state
+    if not instance.session_state:
+        return False
+
+    # Defensive copy to trigger SQLAlchemy change detection
+    state = dict(instance.session_state)
+    state["status"] = "abandoned"
+    if state.get("runtime_context"):
+        state["runtime_context"] = dict(state["runtime_context"])
+        # ← FIX: timezone-aware UTC
+        state["runtime_context"]["expires_at"] = datetime.now(timezone.utc).isoformat()
+    instance.session_state = state
+    return True
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

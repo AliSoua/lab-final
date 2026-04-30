@@ -1,6 +1,6 @@
 # app/models/LabDefinition/core.py
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import Column, String, DateTime, Integer, Text, ARRAY, Boolean, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID, JSONB
@@ -21,8 +21,17 @@ class LabDefinition(Base):
 
     # Metadata
     created_by = Column(String(255), nullable=False, index=True)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    # ← FIX: timezone-aware UTC
+    created_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+    )
+    # ← FIX: timezone-aware UTC
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
     updated_by = Column(String(255))
 
     # Publishing

@@ -2,7 +2,7 @@
 import os
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone  # ← Added timezone
 from pathlib import Path
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text, inspect
@@ -141,7 +141,8 @@ def backup_db_tables(backup_dir: str = "backup-db") -> dict:
     inspector = inspect(engine)
 
     # Build timestamped subdirectory so backups never overwrite each other
-    timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    # ← CHANGED: timezone-aware UTC with explicit +00:00 in ISO format
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%z")
     backup_path = Path(backup_dir) / timestamp
     backup_path.mkdir(parents=True, exist_ok=True)
 
@@ -163,6 +164,10 @@ def backup_db_tables(backup_dir: str = "backup-db") -> dict:
                 clean = {}
                 for k, v in dict(row).items():
                     if isinstance(v, datetime):
+                        # ← CHANGED: Ensure ISO format with timezone info preserved
+                        if v.tzinfo is None:
+                            # If DB stored naive, assume UTC and make aware
+                            v = v.replace(tzinfo=timezone.utc)
                         clean[k] = v.isoformat()
                     elif hasattr(v, "__str__") and not isinstance(v, (str, int, float, bool, type(None))):
                         # Handles UUID, Decimal, Enum, etc.

@@ -1,6 +1,6 @@
-# backend/app/models/LabInstance/LabInstanceTask.py
+# backend/app/models/LabInstance/LabInstanceEventLog.py
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import Column, String, DateTime, Text, ForeignKey, Index
 from sqlalchemy.dialects.postgresql import UUID, JSONB
@@ -27,11 +27,15 @@ class LabInstanceEventLog(Base):
         index=True,
     )
 
-    event_type = Column(String(100), nullable=False)        # e.g. "clone_started", "power_on", "ip_discovered"
+    event_type = Column(String(100), nullable=False)  # e.g. "clone_started", "power_on", "ip_discovered"
     message = Column(Text, nullable=False)
     metadata_ = Column("metadata", JSONB, nullable=True, default=dict)
 
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    # ← FIX: timezone-aware + lambda (per-row evaluation)
+    created_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+    )
 
     # Relationships
     task = relationship("LabInstanceTask", back_populates="events")

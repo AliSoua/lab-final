@@ -6,9 +6,8 @@ On instance launch:   zadd(lab_instance_expiry, expires_at_timestamp, instance_i
 On enforcer run:      zrangebyscore(lab_instance_expiry, -inf, now) → pop & terminate
 """
 
-import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List
 from uuid import UUID
 
@@ -26,7 +25,6 @@ KEY = "lab_instance_expiry"
 def _get_redis() -> redis.Redis:
     global _redis_client
     if _redis_client is None:
-        # Assumes Redis URL is available from settings; adjust if your config differs
         _redis_client = redis.from_url(
             settings.CELERY_BROKER_URL,
             decode_responses=True,
@@ -34,21 +32,38 @@ def _get_redis() -> redis.Redis:
     return _redis_client
 
 
+def _ensure_aware(dt: datetime) -> datetime:
+    """
+    Ensure a datetime is timezone-aware (UTC).
+    Naive datetimes are treated as UTC.
+    Aware datetimes are converted to UTC.
+    """
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 def register_instance_expiry(instance_id: UUID | str, expires_at: datetime) -> None:
     """
-    Call this from your launch worker AFTER the instance row is committed
-    and expires_at is known.
+    Register an instance expiry in the Redis ZSET.
+    MUST be called after the instance row is committed and expires_at is known.
     """
     r = _get_redis()
-    score = expires_at.timestamp()
+    aware_dt = _ensure_aware(expires_at)
+    score = aware_dt.timestamp()
     r.zadd(KEY, {str(instance_id): score})
-    logger.debug("Registered expiry | instance=%s expires_at=%s", instance_id, expires_at.isoformat())
+    logger.debug(
+        "Registered expiry | instance=%s expires_at=%s score=%s",
+        instance_id,
+        aware_dt.isoformat(),
+        score,
+    )
 
 
 def remove_instance_expiry(instance_id: UUID | str) -> None:
     """
-    Call this when an instance is manually terminated or deleted
-    so the enforcer doesn't try to act on it later.
+    Remove an instance from the expiry queue.
+    Call on manual termination or deletion to prevent enforcer races.
     """
     r = _get_redis()
     r.zrem(KEY, str(instance_id))
@@ -57,32 +72,14 @@ def remove_instance_expiry(instance_id: UUID | str) -> None:
 
 def pop_expired_instances(batch_size: int = 100) -> List[str]:
     """
-    Atomically fetch and remove instance IDs whose expiry time is <= now.
-    Returns list of instance_id strings.
+    Atomically fetch and remove up to `batch_size` expired instance IDs.
+    Uses a Lua script for atomicity across multiple workers.
+
+    Returns:
+        List of instance_id strings. Empty list if nothing expired.
     """
     r = _get_redis()
-    now = datetime.utcnow().timestamp()
-
-    # ZRANGEBYSCORE to peek, then ZREMRANGEBYSCORE to remove in a pipeline
-    pipe = r.pipeline()
-    pipe.zrangebyscore(KEY, "-inf", now, start=0, num=batch_size)
-    pipe.zremrangebyscore(KEY, "-inf", now)
-    results, _ = pipe.execute()
-
-    # results contains ALL items removed in that score range;
-    # if there are more than batch_size we only removed batch_size due to the
-    # earlier zrangebyscore limit, but zremrangebyscore doesn't support limit.
-    # Safer Lua script approach below for true atomic batching:
-    return results
-
-
-def pop_expired_instances_lua(batch_size: int = 100) -> List[str]:
-    """
-    Atomic Lua script: fetch up to N expired items and remove them in one shot.
-    Prevents race conditions when multiple workers run the enforcer.
-    """
-    r = _get_redis()
-    now = datetime.utcnow().timestamp()
+    now = datetime.now(timezone.utc).timestamp()
 
     lua = """
     local key = KEYS[1]

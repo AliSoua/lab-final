@@ -8,7 +8,7 @@ import uuid
 import os
 import socket
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 
 from sqlalchemy.orm import Session, joinedload
@@ -31,6 +31,7 @@ from app.services.LabInstance.utils import (
     _compute_max_score,
     _build_initial_session_state,
 )
+from app.utils.expiry_queue import register_instance_expiry, remove_instance_expiry   # ← ADD
 
 logger = logging.getLogger(__name__)
 
@@ -102,13 +103,14 @@ def enqueue_launch(
 
     # 4. Insert provisioning row with guide_version snapshot and session state
     duration = lab.duration_minutes or 60
+    now = datetime.now(timezone.utc)
     instance = LabInstance(
         lab_definition_id=lab_definition_id,
         trainee_id=trainee_id,
         guide_version_id=lab.guide_version_id,  # snapshot at launch time
         status="provisioning",
-        # started_at=datetime.utcnow(),
-        # expires_at=datetime.utcnow() + timedelta(minutes=duration),
+        created_at=now,
+        expires_at=now + timedelta(minutes=duration),
         duration_minutes=duration,
         guacamole_connections={},
         session_state=None,  # set after flush so we have the real instance.id
@@ -130,6 +132,25 @@ def enqueue_launch(
 
     db.commit()
     db.refresh(instance)
+
+    # ── Register expiry in Redis ZSET immediately ───────────────────────
+    # This ensures the enforcer knows about the instance even if the user
+    # leaves before the first refresh or the worker hasn't finished yet.
+    try:
+        register_instance_expiry(instance.id, instance.expires_at)
+        logger.info(
+            "[ENQUEUE-LAUNCH] Registered expiry | instance=%s expires_at=%s",
+            instance.id,
+            instance.expires_at.isoformat(),
+        )
+    except Exception as e:
+        logger.error(
+            "[ENQUEUE-LAUNCH] Failed to register Redis expiry | instance=%s error=%s",
+            instance.id,
+            e,
+        )
+        # Non-fatal: the enforcer's DB reconciliation will catch it,
+        # but log loudly so ops knows Redis might be down.
 
     logger.info(
         "[ENQUEUE-LAUNCH] Instance %s created in 'provisioning' (guide_version=%s)",
@@ -170,6 +191,11 @@ def enqueue_launch(
         instance.status = "failed"
         instance.error_message = f"Task queue unavailable: {e}"
         db.commit()
+        # Clean up Redis since the instance is failed
+        try:
+            remove_instance_expiry(instance.id)
+        except Exception:
+            pass
         # API path: no shared session, let finish_task open its own
         finish_task(task_audit_id, "failed", str(e))
         raise RuntimeError("Task queue unavailable") from e
@@ -475,6 +501,25 @@ def run_launch_worker(
         )
 
         db.commit()
+
+        # ── Ensure Redis ZSET has the expiry (idempotent) ───────────────
+        # If the enqueue path failed to register (e.g. Redis blip), this
+        # ensures the enforcer will still clean up the instance.
+        try:
+            if instance.expires_at:
+                register_instance_expiry(instance.id, instance.expires_at)
+                task_logger.info(
+                    "Confirmed Redis expiry | instance=%s expires_at=%s",
+                    instance.id,
+                    instance.expires_at.isoformat(),
+                )
+        except Exception as e:
+            task_logger.warning(
+                "Failed to confirm Redis expiry | instance=%s error=%s",
+                instance.id,
+                e,
+            )
+
         finish_task(task_uuid, "completed", db=db)
         task_logger.info("Worker completed successfully")
 
@@ -568,6 +613,20 @@ def _abort_after_race(
     instance.vm_name = None
     instance.vcenter_host = None
     db.commit()
+
+    # ── Clean up Redis expiry queue ─────────────────────────────────────
+    try:
+        remove_instance_expiry(instance.id)
+        task_logger.info(
+            "Removed Redis expiry after race abort | instance=%s",
+            instance.id,
+        )
+    except Exception as e:
+        task_logger.warning(
+            "Failed to remove Redis expiry after race abort | instance=%s error=%s",
+            instance.id,
+            e,
+        )
 
     finish_task(
         task_uuid,

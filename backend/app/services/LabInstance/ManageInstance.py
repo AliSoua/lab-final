@@ -6,7 +6,7 @@ Synchronous CRUD and lifecycle operations: get, list, stop, refresh.
 
 import uuid
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Tuple, Any, Dict
 
 from sqlalchemy.orm import Session
@@ -334,8 +334,8 @@ def refresh_instance_status(
             # Transition provisioning -> running
             if instance.status == "provisioning":
                 instance.status = "running"
-                instance.started_at = datetime.utcnow()
-                instance.expires_at = datetime.utcnow() + timedelta(
+                instance.started_at = datetime.now(timezone.utc)
+                instance.expires_at = datetime.now(timezone.utc) + timedelta(
                     minutes=instance.duration_minutes or 60
                 )
                 if instance.session_state:

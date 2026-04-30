@@ -12,13 +12,17 @@ Improvements:
 import logging
 import os
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any
 
 from app.core.celery import celery_app
 from app.core.logging import log_monitor_task
 from app.utils.db_session import background_session
-from app.utils.expiry_queue import pop_expired_instances_lua, remove_instance_expiry
+from app.utils.expiry_queue import (
+    pop_expired_instances as pop_expired_instances_lua,
+    remove_instance_expiry,
+    register_instance_expiry,  # ← Added for race condition fix
+)
 from app.models.LabDefinition.LabInstance import LabInstance
 from app.models.LabDefinition.LabInstanceTask import LabInstanceTask
 from app.models.LabDefinition.LabInstanceEventLog import LabInstanceEventLog
@@ -46,12 +50,25 @@ def _create_monitoring_task(
     worker_pid: int,
     worker_host: str,
 ) -> LabInstanceTask:
+    # Idempotency: return existing running task if found
+    existing = (
+        db.query(LabInstanceTask)
+        .filter(
+            LabInstanceTask.lab_instance_id == lab_instance_id,
+            LabInstanceTask.status == "running",
+            LabInstanceTask.task_type == task_type,
+        )
+        .first()
+    )
+    if existing:
+        return existing
+
     task = LabInstanceTask(
         id=uuid.uuid4(),
         lab_instance_id=lab_instance_id,
         task_type=task_type,
         status="running",
-        started_at=datetime.utcnow(),
+        started_at=datetime.now(timezone.utc),  # ← Already correct
         worker_pid=worker_pid,
         worker_host=worker_host,
     )
@@ -73,6 +90,7 @@ def _log_instance_event(
         id=uuid.uuid4(),
         task_id=task_id,
         lab_instance_id=lab_instance_id,
+        created_at=datetime.now(timezone.utc),  # ← Already correct
         event_type=event_type,
         message=message,
         metadata_=metadata or {},
@@ -82,7 +100,7 @@ def _log_instance_event(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-#  1. INSTANCE HEALTH CHECK (every 5 min) — unchanged logic, added audit
+#  1. INSTANCE HEALTH CHECK (every 5 min)
 # ═══════════════════════════════════════════════════════════════════════════
 
 @celery_app.task(
@@ -96,7 +114,7 @@ def instance_health_check(self) -> Dict[str, Any]:
         task_id=self.request.id,
         monitor_name="instance_health_check",
     )
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     worker_pid = os.getpid()
     worker_host = self.request.hostname or "unknown"
     celery_task_id = str(self.request.id)
@@ -160,16 +178,17 @@ def instance_health_check(self) -> Dict[str, Any]:
 
                 instance.status = "failed"
                 instance.error_message = f"Auto-failed: {reason}"
-                if instance.session_state:
-                    state = dict(instance.session_state)
-                    state["status"] = "failed"
-                    state["failure_reason"] = reason
-                    instance.session_state = state
+                # ← FIX: Handle None session_state
+                state = dict(instance.session_state or {})
+                state["status"] = "failed"
+                state["failure_reason"] = reason
+                instance.session_state = state
 
                 db.commit()
 
+                # ← FIX: timezone-aware UTC
                 audit_task.status = "completed"
-                audit_task.finished_at = datetime.utcnow()
+                audit_task.finished_at = datetime.now(timezone.utc)
 
                 _log_instance_event(
                     db,
@@ -186,8 +205,9 @@ def instance_health_check(self) -> Dict[str, Any]:
                 db.rollback()
                 task_logger.error("Failed to mark instance %s as failed: %s", instance.id, e)
 
+                # ← FIX: timezone-aware UTC
                 audit_task.status = "failed"
-                audit_task.finished_at = datetime.utcnow()
+                audit_task.finished_at = datetime.now(timezone.utc)
                 audit_task.error_message = str(e)[:500]
 
                 _log_instance_event(
@@ -223,7 +243,7 @@ def instance_health_check(self) -> Dict[str, Any]:
     bind=True,
     max_retries=3,
     retry_backoff=True,
-    ignore_result=True,
+    ignore_result=False,
 )
 def session_timeout_enforcer(self) -> Dict[str, Any]:
     """
@@ -235,7 +255,7 @@ def session_timeout_enforcer(self) -> Dict[str, Any]:
         task_id=self.request.id,
         monitor_name="session_timeout_enforcer",
     )
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     worker_pid = os.getpid()
     worker_host = self.request.hostname or "unknown"
     celery_task_id = str(self.request.id)
@@ -244,7 +264,6 @@ def session_timeout_enforcer(self) -> Dict[str, Any]:
     expired_ids = pop_expired_instances_lua(batch_size=EXPIRY_BATCH_SIZE)
 
     if not expired_ids:
-        # Nothing expired → instant return, no audit noise, no Flower clutter
         return {
             "terminated": 0,
             "checked": 0,
@@ -259,7 +278,6 @@ def session_timeout_enforcer(self) -> Dict[str, Any]:
         for instance_id_str in expired_ids:
             instance_id = uuid.UUID(instance_id_str)
 
-            # Double-check the instance is still active (safety net)
             instance = (
                 db.query(LabInstance)
                 .filter(
@@ -270,13 +288,17 @@ def session_timeout_enforcer(self) -> Dict[str, Any]:
             )
 
             if not instance:
-                # Already terminated or deleted — clean up Redis residue
                 remove_instance_expiry(instance_id_str)
                 continue
 
-            # Grace period safety check
-            if instance.expires_at and instance.expires_at > now - timedelta(seconds=EXPIRY_GRACE_SECONDS):
-                # Not truly expired yet (clock skew or Redis early pop) — put it back
+            # ← FIX: Correct grace period logic
+            # If instance hasn't actually expired yet (clock skew), re-register and skip
+            if instance.expires_at and instance.expires_at > now:
+                register_instance_expiry(instance.id, instance.expires_at)
+                task_logger.warning(
+                    "Instance %s popped early from Redis (clock skew), re-queued",
+                    instance.id,
+                )
                 continue
 
             # ── Create audit trail ──
@@ -294,8 +316,7 @@ def session_timeout_enforcer(self) -> Dict[str, Any]:
                 lab_instance_id=instance.id,
                 event_type="expired_instance_detected",
                 message=(
-                    f"Instance expired at {instance.expires_at.isoformat() if instance.expires_at else 'unknown'} "
-                    f"(grace={EXPIRY_GRACE_SECONDS}s)"
+                    f"Instance expired at {instance.expires_at.isoformat() if instance.expires_at else 'unknown'}"
                 ),
                 metadata={
                     "expires_at": instance.expires_at.isoformat() if instance.expires_at else None,
@@ -317,8 +338,9 @@ def session_timeout_enforcer(self) -> Dict[str, Any]:
 
                 terminate_instance(db, instance.id, instance.trainee_id)
 
+                # ← FIX: timezone-aware UTC
                 audit_task.status = "completed"
-                audit_task.finished_at = datetime.utcnow()
+                audit_task.finished_at = datetime.now(timezone.utc)
 
                 _log_instance_event(
                     db,
@@ -327,7 +349,7 @@ def session_timeout_enforcer(self) -> Dict[str, Any]:
                     event_type="instance_auto_terminated",
                     message="Instance automatically terminated due to session expiry",
                     metadata={
-                        "terminated_at": datetime.utcnow().isoformat(),
+                        "terminated_at": datetime.now(timezone.utc).isoformat(),
                         "expires_at": instance.expires_at.isoformat() if instance.expires_at else None,
                     },
                 )
@@ -343,8 +365,9 @@ def session_timeout_enforcer(self) -> Dict[str, Any]:
                     exc_info=True,
                 )
 
+                # ← FIX: timezone-aware UTC
                 audit_task.status = "failed"
-                audit_task.finished_at = datetime.utcnow()
+                audit_task.finished_at = datetime.now(timezone.utc)
                 audit_task.error_message = str(e)[:500]
 
                 _log_instance_event(
@@ -383,10 +406,6 @@ def session_timeout_enforcer(self) -> Dict[str, Any]:
     max_retries=2,
 )
 def guacamole_connection_audit(self) -> Dict[str, Any]:
-    """
-    Validate guacamole_connections JSONB against actual Guacamole API.
-    Removes orphaned entries. Recreates missing ones for running VMs.
-    """
     task_logger = log_monitor_task(logger, task_id=self.request.id, monitor_name="guacamole_connection_audit")
     task_logger.info("Guacamole audit skipped — not yet implemented")
     return {"status": "skipped", "reason": "not implemented"}
@@ -402,9 +421,6 @@ def guacamole_connection_audit(self) -> Dict[str, Any]:
     max_retries=2,
 )
 def resource_quota_reporter(self) -> Dict[str, Any]:
-    """
-    Aggregate per-trainee VM hours, storage, network usage.
-    """
     task_logger = log_monitor_task(logger, task_id=self.request.id, monitor_name="resource_quota_reporter")
     task_logger.info("Quota reporter skipped — not yet implemented")
     return {"status": "skipped", "reason": "not implemented"}
@@ -420,9 +436,6 @@ def resource_quota_reporter(self) -> Dict[str, Any]:
     max_retries=2,
 )
 def lab_definition_health_check(self) -> Dict[str, Any]:
-    """
-    Verify guide_version_id still exists, source_vm_id templates reachable.
-    """
     task_logger = log_monitor_task(logger, task_id=self.request.id, monitor_name="lab_definition_health_check")
     task_logger.info("Lab definition health check skipped — not yet implemented")
     return {"status": "skipped", "reason": "not implemented"}

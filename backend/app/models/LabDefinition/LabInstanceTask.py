@@ -1,9 +1,9 @@
-# backend/app/models/LabDefinition/LabInstanceTask.py
+# backend/app/models/LabInstance/LabInstanceTask.py
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone  # ← Added timezone
 
-from sqlalchemy import Column, String, DateTime, Integer, Text, ForeignKey, Index
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Column, String, DateTime, Text, ForeignKey, Index, Integer
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from app.db.base import Base
 
@@ -11,7 +11,6 @@ from app.db.base import Base
 class LabInstanceTask(Base):
     __tablename__ = "lab_instance_tasks"
 
-    # This UUID is reused as Celery's task_id (plan §3.4)
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
     lab_instance_id = Column(
@@ -21,23 +20,35 @@ class LabInstanceTask(Base):
         index=True,
     )
 
-    task_type = Column(String(50), nullable=False)          # "launch" | "terminate"
+    task_type = Column(String(100), nullable=False)  # e.g. "provision", "terminate", "monitoring.health_check"
+
     status = Column(
         String(50),
-        default="queued",
-        nullable=False,                                     # queued | running | completed | failed
+        nullable=False,
+        default="queued",  # queued → running → completed / failed
     )
 
-    enqueued_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    # ── Timing ─────────────────────────────────────────────────────────────
+    enqueued_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),  # ← FIX
+    )
     started_at = Column(DateTime(timezone=True), nullable=True)
     finished_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+    )
 
+    # ── Worker attribution ─────────────────────────────────────────────────
     worker_pid = Column(Integer, nullable=True)
     worker_host = Column(String(255), nullable=True)
 
+    # ── Error capture ────────────────────────────────────────────────────
     error_message = Column(Text, nullable=True)
 
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    # ── Metadata for debugging ───────────────────────────────────────────
+    metadata_ = Column("metadata", JSONB, nullable=True, default=dict)
 
     # Relationships
     lab_instance = relationship("LabInstance", back_populates="tasks")

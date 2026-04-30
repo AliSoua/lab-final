@@ -74,29 +74,22 @@ export function useLabInstance(): UseLabInstanceReturn {
                 if (!response.ok) {
                     toast.dismiss(loadingToast)
 
+                    let msg: string
+
                     if (response.status === 401) {
-                        const msg = "Unauthorized. Please log in."
-                        toast.error(msg)
-                        throw new Error(msg)
-                    }
-                    if (response.status === 403) {
-                        const msg = "Forbidden."
-                        toast.error(msg)
-                        throw new Error(msg)
-                    }
-                    if (response.status === 400) {
+                        msg = "Unauthorized. Please log in."
+                    } else if (response.status === 403) {
+                        msg = "Forbidden."
+                    } else if (response.status === 400) {
                         const errorData = await response.json().catch(() => ({}))
-                        const msg = errorData.detail || "Bad request"
-                        toast.error(msg)
-                        throw new Error(msg)
-                    }
-                    if (response.status === 502) {
+                        msg = errorData.detail || "Bad request"
+                    } else if (response.status === 502) {
                         const errorData = await response.json().catch(() => ({}))
-                        const msg = errorData.detail || "External service error"
-                        toast.error(msg)
-                        throw new Error(msg)
+                        msg = errorData.detail || "External service error"
+                    } else {
+                        msg = `Failed to launch lab: ${response.statusText}`
                     }
-                    const msg = `Failed to launch lab: ${response.statusText}`
+
                     toast.error(msg)
                     throw new Error(msg)
                 }
@@ -113,15 +106,14 @@ export function useLabInstance(): UseLabInstanceReturn {
                 const message =
                     err instanceof Error ? err.message : "Failed to launch lab instance"
 
-                const alreadyHandled =
+                // Only toast if we haven't already toasted (i.e. non-HTTP errors)
+                const wasAlreadyHandled =
                     message === "Authentication required" ||
                     message === "Unauthorized. Please log in." ||
                     message === "Forbidden." ||
-                    message.includes("Bad request") ||
-                    message.includes("External service error") ||
-                    message.includes("Failed to launch lab")
+                    message.startsWith("Failed to launch lab:")
 
-                if (!alreadyHandled) {
+                if (!wasAlreadyHandled) {
                     toast.dismiss(loadingToast)
                     toast.error(message)
                     setError(message)
@@ -438,7 +430,7 @@ export function useLabInstance(): UseLabInstanceReturn {
 
             try {
                 const token = getToken()
-                const url = `${API_BASE_URL}/lab-instances/${instanceId}`
+                const url = `${API_BASE_URL}/lab-instances/${instanceId}/admin`
 
                 const response = await fetch(url, {
                     method: "DELETE",

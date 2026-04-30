@@ -19,9 +19,11 @@ from app.schemas.LabDefinition.lab_instance import (
 from app.services.LabInstance.LaunchInstance import enqueue_launch
 from app.services.LabInstance.ManageInstance import stop_instance
 from app.services.LabInstance.TerminateInstance import enqueue_terminate
+from app.models.LabDefinition.LabInstance import LabInstance
 from .common import get_trainee_id
 
 require_all = require_any_role(["trainee", "moderator", "admin"])
+require_admin = require_any_role(["moderator", "admin"])
 
 router = APIRouter(
     prefix="/lab-instances",
@@ -121,3 +123,46 @@ def terminate_lab_instance(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to terminate instance: {str(e)}",
         )
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  ADMIN TERMINATE — moderator/admin can terminate any instance
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@router.delete(
+  "/{instance_id}/admin",
+  response_model=LabInstanceResponse,
+  status_code=status.HTTP_202_ACCEPTED,
+  summary="Terminate any lab instance (admin/moderator)",
+)
+def terminate_lab_instance_admin(
+  instance_id: uuid.UUID,
+  db: Session = Depends(get_db),
+  userinfo: dict = Depends(require_admin),
+):
+  """
+  Admin/moderator endpoint to terminate any instance regardless of ownership.
+  Uses the instance's actual trainee_id from the database.
+  """
+  instance = db.query(LabInstance).filter(LabInstance.id == instance_id).first()
+  if not instance:
+      raise HTTPException(
+          status_code=status.HTTP_404_NOT_FOUND,
+          detail="Instance not found",
+      )
+
+  try:
+      terminated = enqueue_terminate(db, instance_id, instance.trainee_id)
+      return terminated
+  except ValueError as e:
+      raise HTTPException(
+          status_code=status.HTTP_404_NOT_FOUND, detail=str(e)
+      )
+  except RuntimeError as e:
+      raise HTTPException(
+          status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)
+      )
+  except Exception as e:
+      raise HTTPException(
+          status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+          detail=f"Failed to terminate instance: {str(e)}",
+      )
