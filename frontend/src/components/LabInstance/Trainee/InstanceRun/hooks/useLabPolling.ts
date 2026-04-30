@@ -23,14 +23,13 @@ export function useLabPolling({
     const isMountedRef = useRef(true)
     const pollTimerRef = useRef<number | null>(null)
 
-    // Cleanup on unmount
+    // Keep latest callbacks in refs so tick() never changes identity
+    const onRefreshRef = useRef(onRefresh)
+    const refreshFnRef = useRef(refreshFn)
     useEffect(() => {
-        isMountedRef.current = true
-        return () => {
-            isMountedRef.current = false
-            stopPolling()
-        }
-    }, [])
+        onRefreshRef.current = onRefresh
+        refreshFnRef.current = refreshFn
+    })
 
     const stopPolling = useCallback(() => {
         if (pollTimerRef.current !== null) {
@@ -39,24 +38,33 @@ export function useLabPolling({
         }
     }, [])
 
+    // Cleanup on unmount
+    useEffect(() => {
+        isMountedRef.current = true
+        return () => {
+            isMountedRef.current = false
+            stopPolling()
+        }
+    }, [stopPolling])
+
     const tick = useCallback(async () => {
         if (!instanceId || inFlightRef.current) return
         inFlightRef.current = true
 
         try {
-            const fresh = await refreshFn(instanceId)
+            const fresh = await refreshFnRef.current(instanceId)
             if (!isMountedRef.current) return
-            onRefresh(fresh)
+            onRefreshRef.current(fresh)
         } catch {
             // Silent fail on background poll
         } finally {
             inFlightRef.current = false
         }
-    }, [instanceId, refreshFn, onRefresh])
+    }, [instanceId]) // ← ONLY depends on instanceId
 
     useEffect(() => {
         if (!instanceId || isBootstrapping) return
-        if (hasConnections) return // ← STOP polling once connections ready
+        if (hasConnections) return // stop polling once connections ready
 
         tick()
         pollTimerRef.current = window.setInterval(tick, POLL_INTERVAL_MS)
@@ -68,12 +76,13 @@ export function useLabPolling({
         if (!instanceId || inFlightRef.current) return
         inFlightRef.current = true
         try {
-            const fresh = await refreshFn(instanceId)
-            if (isMountedRef.current) onRefresh(fresh)
+            const fresh = await refreshFnRef.current(instanceId)
+            if (isMountedRef.current) onRefreshRef.current(fresh)
+            return fresh
         } finally {
             inFlightRef.current = false
         }
-    }, [instanceId, refreshFn, onRefresh])
+    }, [instanceId])
 
     return { manualRefresh, isRefreshing: inFlightRef.current, stopPolling }
 }

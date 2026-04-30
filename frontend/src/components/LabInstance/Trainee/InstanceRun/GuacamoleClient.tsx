@@ -10,6 +10,23 @@ interface GuacamoleClientProps {
     errorMessage?: string | null
 }
 
+function getGuacWebSocketUrl(): string {
+    const raw = import.meta.env.VITE_GUACAMOLE_WS_URL as string | undefined
+
+    // If it's already a full ws:// / wss:// URL, use it directly
+    if (raw && (raw.startsWith("ws://") || raw.startsWith("wss://"))) {
+        return raw
+    }
+
+    // Otherwise treat it as a path (e.g. /guacamole) and derive host from current page
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
+    const host = window.location.host
+    const path = raw ? (raw.startsWith("/") ? raw : `/${raw}`) : "/guacamole"
+    return `${protocol}//${host}${path}`
+}
+
+const GUAC_WS_BASE = getGuacWebSocketUrl()
+
 export default function GuacamoleClient({
     connectionId,
     title,
@@ -20,16 +37,50 @@ export default function GuacamoleClient({
     const clientRef = useRef<any>(null)
     const [status, setStatus] = useState<"connecting" | "connected" | "error">("connecting")
     const [error, setError] = useState<string | null>(null)
+    const [guacToken, setGuacToken] = useState<string | null>(null)
 
+    // ── Fetch Guacamole token via nginx SSO proxy if not cached ───────────
     useEffect(() => {
-        if (!connectionId || !containerRef.current) return
+        if (!connectionId) return
+
+        const initToken = async () => {
+            let token = localStorage.getItem("guacamole_token")
+            if (!token) {
+                try {
+                    // nginx handles JWT validation via auth_request and passes X-Remote-User
+                    const res = await fetch("/guacamole/api/tokens", {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/x-www-form-urlencoded",
+                        },
+                        // Header auth extension uses X-Remote-User from nginx;
+                        // body can be empty/dummy because nginx SSO does the real auth
+                        body: "username=sso&password=sso",
+                    })
+                    if (res.ok) {
+                        const data = await res.json()
+                        token = data.authToken ?? data.token ?? null
+                        if (token) localStorage.setItem("guacamole_token", token)
+                    }
+                } catch (e) {
+                    console.warn("[Guacamole] Token fetch failed:", e)
+                }
+            }
+            setGuacToken(token)
+        }
+
+        initToken()
+    }, [connectionId])
+
+    // ── Establish WebSocket tunnel once we have token + connectionId ──────
+    useEffect(() => {
+        if (!connectionId || !containerRef.current || guacToken === null) return
 
         setStatus("connecting")
         setError(null)
 
-        // WebSocket tunnel to Guacamole proxy
         const tunnel = new Guacamole.WebSocketTunnel(
-            `${import.meta.env.VITE_GUACAMOLE_WS_URL}/websocket-tunnel`
+            `${GUAC_WS_BASE}/websocket-tunnel`
         )
 
         const client = new Guacamole.Client(tunnel)
@@ -42,21 +93,21 @@ export default function GuacamoleClient({
         containerRef.current.innerHTML = ""
         containerRef.current.appendChild(display)
 
-        // Mouse handling
+        // Mouse
         const mouse = new Guacamole.Mouse(display)
         mouse.onmousedown = mouse.onmouseup = mouse.onmousemove = (state: any) => {
             client.sendMouseState(state)
         }
 
-        // Keyboard handling — attached to document for full capture
+        // Keyboard
         const keyboard = new Guacamole.Keyboard(document)
         keyboard.onkeydown = (keysym: number) => client.sendKeyEvent(1, keysym)
         keyboard.onkeyup = (keysym: number) => client.sendKeyEvent(0, keysym)
 
         // State changes
         client.onstatechange = (state: number) => {
-            if (state === 3) setStatus("connected")      // CONNECTED
-            if (state === 4) {                          // DISCONNECTED
+            if (state === 3) setStatus("connected")
+            if (state === 4) {
                 setError("Disconnected from session")
                 setStatus("error")
             }
@@ -67,9 +118,8 @@ export default function GuacamoleClient({
             setStatus("error")
         }
 
-        // Connect with token
-        const token = localStorage.getItem("guacamole_token") || ""
-        client.connect(`token=${token}&connection=${connectionId}`)
+        // Connect with token and connection ID
+        client.connect(`token=${guacToken}&connection=${connectionId}`)
 
         return () => {
             keyboard.onkeydown = null
@@ -77,7 +127,7 @@ export default function GuacamoleClient({
             client.disconnect()
             if (containerRef.current) containerRef.current.innerHTML = ""
         }
-    }, [connectionId])
+    }, [connectionId, guacToken])
 
     if (isProvisioning) {
         return (

@@ -163,6 +163,7 @@ services:
         - VITE_API_BASE_URL=${VITE_API_BASE_URL}
         - VITE_TOKEN_REFRESH_INTERVAL_MINUTES=${VITE_TOKEN_REFRESH_INTERVAL_MINUTES}
         - VITE_MAX_REFRESH_RETRIES=${VITE_MAX_REFRESH_RETRIES}
+        - VITE_GUACAMOLE_WS_URL=${VITE_GUACAMOLE_WS_URL}
     container_name: react-frontend
     restart: always
     depends_on:
@@ -173,6 +174,7 @@ services:
       - VITE_API_BASE_URL=${VITE_API_BASE_URL}
       - VITE_TOKEN_REFRESH_INTERVAL_MINUTES=${VITE_TOKEN_REFRESH_INTERVAL_MINUTES}
       - VITE_MAX_REFRESH_RETRIES=${VITE_MAX_REFRESH_RETRIES}
+      - VITE_GUACAMOLE_WS_URL=${VITE_GUACAMOLE_WS_URL}
 
   # -------------------------------------------------------------------------
   # Guacamole Stack (isolated database)
