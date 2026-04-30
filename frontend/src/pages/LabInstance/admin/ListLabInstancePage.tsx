@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils"
 import { Monitor, RefreshCw, AlertTriangle } from "lucide-react"
 import { useAdminLabInstance } from "@/hooks/LabInstance/useAdminLabInstance"
 import { useLabInstance } from "@/hooks/LabInstance/useLabInstance"
+import { useInstanceTerminate } from "@/hooks/LabInstance/admin/useInstanceTerminate"
 import { InstanceTable } from "@/components/LabInstance/admin/ListLabInstance/InstanceTable"
 import type { LabInstance } from "@/types/LabInstance/LabInstance"
 
@@ -14,13 +15,9 @@ export default function ListLabInstancePage() {
     // ── Admin list (no trainee filter) ────────────────────────────────────
     const { listAllInstances, isLoading, error } = useAdminLabInstance()
 
-    // ── Mutations (stop / terminate) ──────────────────────────────────────
-    const {
-        stopInstance,
-        isLoading: isMutating,
-    } = useLabInstance()
-
-    const { terminateInstanceAdmin } = useAdminLabInstance()
+    // ── Mutations ─────────────────────────────────────────────────────────
+    const { stopInstance, isLoading: isStopping } = useLabInstance()
+    const { terminateInstance, isLoading: isTerminating } = useInstanceTerminate()
 
     const [instances, setInstances] = useState<LabInstance[]>([])
     const [total, setTotal] = useState(0)
@@ -77,14 +74,14 @@ export default function ListLabInstancePage() {
     const confirmTerminate = useCallback(
         async (instance: LabInstance) => {
             try {
-                await terminateInstanceAdmin(instance.id)
+                await terminateInstance(instance.id)
                 setTerminateConfirm(null)
                 fetchInstances(0, 100)
             } catch {
                 // Error toast handled by mutation hook
             }
         },
-        [terminateInstanceAdmin, fetchInstances]
+        [terminateInstance, fetchInstances]
     )
 
     return (
@@ -149,7 +146,7 @@ export default function ListLabInstancePage() {
                     <InstanceTable
                         instances={instances}
                         isLoading={isLoading}
-                        isSubmitting={isMutating}
+                        isSubmitting={isStopping || isTerminating}
                         onView={handleView}
                         onStop={handleStop}
                         onTerminate={handleTerminate}
@@ -184,14 +181,14 @@ export default function ListLabInstancePage() {
                             </button>
                             <button
                                 onClick={() => confirmStop(stopConfirm)}
-                                disabled={isMutating}
+                                disabled={isStopping}
                                 className={cn(
                                     "px-4 py-2 rounded-lg text-sm font-medium",
                                     "bg-amber-500 text-white hover:bg-amber-600",
                                     "transition-colors disabled:opacity-60"
                                 )}
                             >
-                                {isMutating ? "Stopping..." : "Stop Instance"}
+                                {isStopping ? "Stopping..." : "Stop Instance"}
                             </button>
                         </div>
                     </div>
@@ -225,14 +222,14 @@ export default function ListLabInstancePage() {
                             </button>
                             <button
                                 onClick={() => confirmTerminate(terminateConfirm)}
-                                disabled={isMutating}
+                                disabled={isTerminating}
                                 className={cn(
                                     "px-4 py-2 rounded-lg text-sm font-medium",
                                     "bg-red-500 text-white hover:bg-red-600",
                                     "transition-colors disabled:opacity-60"
                                 )}
                             >
-                                {isMutating ? "Terminating..." : "Terminate"}
+                                {isTerminating ? "Terminating..." : "Terminate"}
                             </button>
                         </div>
                     </div>

@@ -18,6 +18,7 @@ export interface CountdownActions {
 }
 
 export function useLabCountdown(expiresAt: string | null): [CountdownState, CountdownActions] {
+    console.log("[useLabCountdown] mounted with expiresAt:", expiresAt)
     const [timeRemainingMs, setTimeRemainingMs] = useState<number | null>(null)
     const [isExpired, setIsExpired] = useState(false)
     const [showWarning, setShowWarning] = useState(false)

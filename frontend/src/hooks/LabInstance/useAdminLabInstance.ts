@@ -11,7 +11,6 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
 interface UseAdminLabInstanceReturn {
     listAllInstances: (skip?: number, limit?: number) => Promise<LabInstanceListResponse>
     getInstanceAdmin: (instanceId: string) => Promise<LabInstance>
-    terminateInstanceAdmin: (instanceId: string) => Promise<LabInstance>
     isLoading: boolean
     error: string | null
     resetError: () => void
@@ -175,86 +174,9 @@ export function useAdminLabInstance(): UseAdminLabInstanceReturn {
         [getToken]
     )
 
-    // -------------------------------------------------------------------------
-    // DELETE /lab-instances/{instance_id}/admin — Terminate any instance (admin/moderator)
-    // -------------------------------------------------------------------------   
-    const terminateInstanceAdmin = useCallback(
-        async (instanceId: string): Promise<LabInstance> => {
-            setIsLoading(true)
-            setError(null)
-
-            const loadingToast = toast.loading("Terminating instance (admin)...")
-
-            try {
-                const token = getToken()
-                const url = `${API_BASE_URL}/lab-instances/${instanceId}/admin`
-
-                console.log("ADMIN TERMINATE CALL →", url)
-
-                const response = await fetch(url, {
-                    method: "DELETE",
-                    headers: {
-                        Accept: "application/json",
-                        Authorization: `Bearer ${token}`,
-                    },
-                })
-
-                if (!response.ok) {
-                    toast.dismiss(loadingToast)
-
-                    if (response.status === 401) {
-                        const msg = "Unauthorized. Please log in."
-                        toast.error(msg)
-                        throw new Error(msg)
-                    }
-                    if (response.status === 403) {
-                        const msg = "Forbidden — admin required."
-                        toast.error(msg)
-                        throw new Error(msg)
-                    }
-                    if (response.status === 404) {
-                        const errorData = await response.json().catch(() => ({}))
-                        const msg = errorData.detail || "Instance not found"
-                        toast.error(msg)
-                        throw new Error(msg)
-                    }
-
-                    const msg = `Failed to terminate instance: ${response.statusText}`
-                    toast.error(msg)
-                    throw new Error(msg)
-                }
-
-                // Handle 202 (no body) safely
-                let instance: LabInstance | null = null
-                try {
-                    instance = await response.json()
-                } catch {
-                    // backend returned empty body → that's fine
-                }
-
-                toast.dismiss(loadingToast)
-                toast.success("Instance termination started")
-
-                return instance as LabInstance
-            } catch (err) {
-                const message =
-                    err instanceof Error ? err.message : "Failed to terminate instance"
-
-                toast.dismiss(loadingToast)
-                toast.error(message)
-                setError(message)
-
-                throw new Error(message)
-            } finally {
-                setIsLoading(false)
-            }
-        },
-        [getToken]
-    )
     return {
         listAllInstances,
         getInstanceAdmin,
-        terminateInstanceAdmin,
         isLoading,
         error,
         resetError,
