@@ -246,10 +246,8 @@ def instance_health_check(self) -> Dict[str, Any]:
     ignore_result=False,
 )
 def session_timeout_enforcer(self) -> Dict[str, Any]:
-    """
-    Reads expired instance IDs from Redis ZSET instead of scanning Postgres.
-    Only touches the database when there is actual work to do.
-    """
+    """Reads expired instance IDs from Redis ZSET instead of scanning Postgres.
+    Only touches the database when there is actual work to do."""
     task_logger = log_monitor_task(
         logger,
         task_id=self.request.id,
@@ -291,9 +289,13 @@ def session_timeout_enforcer(self) -> Dict[str, Any]:
                 remove_instance_expiry(instance_id_str)
                 continue
 
-            # ← FIX: Correct grace period logic
+            # ← FIX: Normalize DB datetime to UTC to avoid naive/aware comparison
+            expires_at = instance.expires_at
+            if expires_at and expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+
             # If instance hasn't actually expired yet (clock skew), re-register and skip
-            if instance.expires_at and instance.expires_at > now:
+            if expires_at and expires_at > now:
                 register_instance_expiry(instance.id, instance.expires_at)
                 task_logger.warning(
                     "Instance %s popped early from Redis (clock skew), re-queued",
@@ -316,10 +318,10 @@ def session_timeout_enforcer(self) -> Dict[str, Any]:
                 lab_instance_id=instance.id,
                 event_type="expired_instance_detected",
                 message=(
-                    f"Instance expired at {instance.expires_at.isoformat() if instance.expires_at else 'unknown'}"
+                    f"Instance expired at {expires_at.isoformat() if expires_at else 'unknown'}"
                 ),
                 metadata={
-                    "expires_at": instance.expires_at.isoformat() if instance.expires_at else None,
+                    "expires_at": expires_at.isoformat() if expires_at else None,
                     "grace_seconds": EXPIRY_GRACE_SECONDS,
                     "previous_status": instance.status,
                     "celery_task_id": celery_task_id,
@@ -332,13 +334,12 @@ def session_timeout_enforcer(self) -> Dict[str, Any]:
                 task_logger.info(
                     "Auto-terminating expired instance | id=%s expired_at=%s trainee=%s",
                     instance.id,
-                    instance.expires_at,
+                    expires_at,
                     instance.trainee_id,
                 )
 
                 terminate_instance(db, instance.id, instance.trainee_id)
 
-                # ← FIX: timezone-aware UTC
                 audit_task.status = "completed"
                 audit_task.finished_at = datetime.now(timezone.utc)
 
@@ -350,7 +351,7 @@ def session_timeout_enforcer(self) -> Dict[str, Any]:
                     message="Instance automatically terminated due to session expiry",
                     metadata={
                         "terminated_at": datetime.now(timezone.utc).isoformat(),
-                        "expires_at": instance.expires_at.isoformat() if instance.expires_at else None,
+                        "expires_at": expires_at.isoformat() if expires_at else None,
                     },
                 )
                 db.commit()
@@ -365,7 +366,6 @@ def session_timeout_enforcer(self) -> Dict[str, Any]:
                     exc_info=True,
                 )
 
-                # ← FIX: timezone-aware UTC
                 audit_task.status = "failed"
                 audit_task.finished_at = datetime.now(timezone.utc)
                 audit_task.error_message = str(e)[:500]
@@ -378,7 +378,7 @@ def session_timeout_enforcer(self) -> Dict[str, Any]:
                     message=f"Failed to auto-terminate expired instance: {str(e)}",
                     metadata={
                         "error": str(e),
-                        "expires_at": instance.expires_at.isoformat() if instance.expires_at else None,
+                        "expires_at": expires_at.isoformat() if expires_at else None,
                     },
                 )
                 db.commit()

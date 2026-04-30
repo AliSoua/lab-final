@@ -193,7 +193,7 @@ def stop_instance(
 
     # ── Update DB state ─────────────────────────────────────────────────
     instance.status = "stopped"
-    instance.stopped_at = datetime.utcnow()
+    instance.stopped_at = datetime.now(timezone.utc)
 
     # Pause session state if runtime data exists
     if instance.session_state:
@@ -438,7 +438,7 @@ def terminate_instance(
 
     # ── Update DB ─────────────────────────────────────────────────────
     instance.status = "terminated"
-    instance.stopped_at = datetime.utcnow()
+    instance.stopped_at = datetime.now(timezone.utc)
     instance.guacamole_connections = {}
 
     if instance.session_state:

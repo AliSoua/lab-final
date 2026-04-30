@@ -162,6 +162,7 @@ export function LabRunPage({ instanceId }: LabRunPageProps) {
                 status={runtime.status}
                 powerState={runtime.power_state}
                 formattedTime={formattedTime}
+                minutesRemaining={minutesRemaining}
                 connectionCount={entries.length}
                 isRefreshing={isRefreshing}
                 isTerminating={isTerminating}

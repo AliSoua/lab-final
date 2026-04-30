@@ -358,6 +358,14 @@ def run_terminate_worker(
             e,
             exc_info=True,
         )
+
+        _fail_instance(
+            instance_uuid,
+            task_uuid,
+            f"Failed to destroy VM on vCenter: {e}",
+            task_logger,
+        )
+
         # Re-raise to trigger the outer exception handler
         raise
 

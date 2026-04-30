@@ -422,7 +422,7 @@ export function useLabInstance(): UseLabInstanceReturn {
     // DELETE /lab-instances/{instance_id} — Terminate instance
     // -------------------------------------------------------------------------
     const terminateInstance = useCallback(
-        async (instanceId: string): Promise<LabInstance> => {   // CHANGED: void → LabInstance
+        async (instanceId: string): Promise<LabInstance> => {
             setIsLoading(true)
             setError(null)
 

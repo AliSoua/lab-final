@@ -10,6 +10,7 @@ interface LabHeaderProps {
     status: string
     powerState: string | null | undefined
     formattedTime: string | null
+    minutesRemaining: number | null
     connectionCount: number
     isRefreshing: boolean
     isTerminating: boolean
@@ -24,6 +25,7 @@ export function LabHeader({
     status,
     powerState,
     formattedTime,
+    minutesRemaining,
     connectionCount,
     isRefreshing,
     isTerminating,
@@ -65,7 +67,7 @@ export function LabHeader({
                     </div>
                 )}
 
-                <TimeDisplay formattedTime={formattedTime} />
+                <TimeDisplay formattedTime={formattedTime} minutesRemaining={minutesRemaining} />
 
                 <div className="flex items-center gap-1.5 border-l border-[#e8e8e8] pl-4">
                     <Power className="h-3.5 w-3.5" />

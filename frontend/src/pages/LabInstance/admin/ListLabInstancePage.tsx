@@ -17,9 +17,10 @@ export default function ListLabInstancePage() {
     // ── Mutations (stop / terminate) ──────────────────────────────────────
     const {
         stopInstance,
-        terminateInstance,
         isLoading: isMutating,
     } = useLabInstance()
+
+    const { terminateInstanceAdmin } = useAdminLabInstance()
 
     const [instances, setInstances] = useState<LabInstance[]>([])
     const [total, setTotal] = useState(0)
@@ -76,14 +77,14 @@ export default function ListLabInstancePage() {
     const confirmTerminate = useCallback(
         async (instance: LabInstance) => {
             try {
-                await terminateInstance(instance.id)
+                await terminateInstanceAdmin(instance.id)
                 setTerminateConfirm(null)
                 fetchInstances(0, 100)
             } catch {
                 // Error toast handled by mutation hook
             }
         },
-        [terminateInstance, fetchInstances]
+        [terminateInstanceAdmin, fetchInstances]
     )
 
     return (

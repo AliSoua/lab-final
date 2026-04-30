@@ -214,6 +214,17 @@ def init_db() -> None:
             ADD COLUMN IF NOT EXISTS error_message TEXT;
         """))
 
+        # ==========================================
+        # FIX: Convert existing naive timestamps to timezone-aware UTC
+        # ==========================================
+        conn.execute(text("""
+            ALTER TABLE lab_instances
+            ALTER COLUMN created_at TYPE TIMESTAMP WITH TIME ZONE,
+            ALTER COLUMN started_at TYPE TIMESTAMP WITH TIME ZONE,
+            ALTER COLUMN stopped_at TYPE TIMESTAMP WITH TIME ZONE,
+            ALTER COLUMN expires_at TYPE TIMESTAMP WITH TIME ZONE;
+        """))
+
         # Composite indexes for lab_instance_tasks (plan §7.1)
         conn.execute(text("""
             CREATE INDEX IF NOT EXISTS ix_lab_instance_tasks_instance_status
@@ -234,7 +245,7 @@ def init_db() -> None:
             ON lab_instance_event_logs (lab_instance_id, created_at);
         """))
 
-    logger.info("✅ Database initialized with audit schema.")
+    logger.info("✅ Database initialized with audit schema and timezone fixes.")
 
 
 # ── FastAPI dependency (synchronous) ───────────────────────────────────────────
