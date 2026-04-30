@@ -88,7 +88,7 @@ def _reap_unsent_tasks() -> None:
 async def lifespan(app: FastAPI):
     # ── Startup ────────────────────────────────────────────────────────────────
     init_db()
-    #_reap_unsent_tasks()
+    _reap_unsent_tasks()
 
     yield
 
