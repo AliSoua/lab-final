@@ -121,7 +121,7 @@ export default function LabInstanceListPage() {
                         {instances.map((instance) => (
                             <button
                                 key={instance.id}
-                                onClick={() => navigate(`/lab-instances/${instance.id}/run`)}
+                                onClick={() => navigate(`/lab-instances/${instance.id}`)}
                                 className={cn(
                                     "group rounded-xl border border-[#e8e8e8] bg-white p-5 text-left",
                                     "transition-all duration-200 hover:border-[#c4c4c4]"

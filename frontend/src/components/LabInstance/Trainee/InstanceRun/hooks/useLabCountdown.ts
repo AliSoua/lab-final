@@ -18,25 +18,21 @@ export interface CountdownActions {
 }
 
 export function useLabCountdown(expiresAt: string | null): [CountdownState, CountdownActions] {
-    console.log("[useLabCountdown] mounted with expiresAt:", expiresAt)
     const [timeRemainingMs, setTimeRemainingMs] = useState<number | null>(null)
     const [isExpired, setIsExpired] = useState(false)
     const [showWarning, setShowWarning] = useState(false)
 
-    // Use refs for warning flags so the interval is NOT recreated when they change
     const hasWarned5MinRef = useRef(false)
     const hasWarned1MinRef = useRef(false)
-    const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+    const timerRef = useRef<number | null>(null)
 
     const clearTimer = useCallback(() => {
         if (timerRef.current !== null) {
-            clearInterval(timerRef.current)
+            window.clearInterval(timerRef.current)
             timerRef.current = null
         }
     }, [])
 
-
-    // Reset warning flags whenever expiresAt changes (e.g. backend extends time)
     useEffect(() => {
         hasWarned5MinRef.current = false
         hasWarned1MinRef.current = false
@@ -79,11 +75,11 @@ export function useLabCountdown(expiresAt: string | null): [CountdownState, Coun
             }
         }
 
-        tick() // immediate first render
-        timerRef.current = setInterval(tick, 1000)
+        tick()
+        timerRef.current = window.setInterval(tick, 1000)
 
         return clearTimer
-    }, [expiresAt, clearTimer]) // ← stable: only recreates if expiresAt changes
+    }, [expiresAt, clearTimer])
 
     const formattedTime = formatCountdownTime(timeRemainingMs)
 
@@ -123,5 +119,5 @@ function formatCountdownTime(ms: number | null): string | null {
         return `${h}:${mm}:${ss}`
     }
 
-    return `${m}:${ss}` // e.g. "4:00", "3:59", "0:05", "0:00"
+    return `${m}:${ss}`
 }

@@ -1,8 +1,9 @@
 // src/components/LabInstance/Trainee/InstanceRun/hooks/useLabPolling.ts
-import { useRef, useCallback, useEffect } from "react"
+import { useRef, useCallback, useEffect, useState } from "react"
 import type { LabInstanceRuntimeResponse } from "@/types/LabInstance/Trainee/LabRuntime"
 
 const POLL_INTERVAL_MS = 30_000
+const POLL_INTERVAL_WITH_CONNECTIONS_MS = 60_000
 
 interface PollingOptions {
     instanceId: string | undefined
@@ -22,8 +23,8 @@ export function useLabPolling({
     const inFlightRef = useRef(false)
     const isMountedRef = useRef(true)
     const pollTimerRef = useRef<number | null>(null)
+    const [isRefreshing, setIsRefreshing] = useState(false)
 
-    // Keep latest callbacks in refs so tick() never changes identity
     const onRefreshRef = useRef(onRefresh)
     const refreshFnRef = useRef(refreshFn)
     useEffect(() => {
@@ -38,7 +39,6 @@ export function useLabPolling({
         }
     }, [])
 
-    // Cleanup on unmount
     useEffect(() => {
         isMountedRef.current = true
         return () => {
@@ -50,6 +50,7 @@ export function useLabPolling({
     const tick = useCallback(async () => {
         if (!instanceId || inFlightRef.current) return
         inFlightRef.current = true
+        setIsRefreshing(true)
 
         try {
             const fresh = await refreshFnRef.current(instanceId)
@@ -59,15 +60,20 @@ export function useLabPolling({
             // Silent fail on background poll
         } finally {
             inFlightRef.current = false
+            if (isMountedRef.current) setIsRefreshing(false)
         }
-    }, [instanceId]) // ← ONLY depends on instanceId
+    }, [instanceId])
 
     useEffect(() => {
         if (!instanceId || isBootstrapping) return
-        if (hasConnections) return // stop polling once connections ready
 
+        // Run immediately
         tick()
-        pollTimerRef.current = window.setInterval(tick, POLL_INTERVAL_MS)
+
+        // Use slower interval when connections are established to reduce load
+        // but keep polling for status/expiry updates
+        const interval = hasConnections ? POLL_INTERVAL_WITH_CONNECTIONS_MS : POLL_INTERVAL_MS
+        pollTimerRef.current = window.setInterval(tick, interval)
 
         return stopPolling
     }, [instanceId, isBootstrapping, hasConnections, tick, stopPolling])
@@ -75,14 +81,16 @@ export function useLabPolling({
     const manualRefresh = useCallback(async () => {
         if (!instanceId || inFlightRef.current) return
         inFlightRef.current = true
+        setIsRefreshing(true)
         try {
             const fresh = await refreshFnRef.current(instanceId)
             if (isMountedRef.current) onRefreshRef.current(fresh)
             return fresh
         } finally {
             inFlightRef.current = false
+            if (isMountedRef.current) setIsRefreshing(false)
         }
     }, [instanceId])
 
-    return { manualRefresh, isRefreshing: inFlightRef.current, stopPolling }
+    return { manualRefresh, isRefreshing, stopPolling }
 }
