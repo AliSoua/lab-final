@@ -31,7 +31,7 @@ from app.services.LabInstance.shared import (
 )
 from app.services.LabInstance.utils import (
     _call_with_timeout, _find_vcenter_for_template, _find_vcenter_credentials,
-    _compute_max_score, _build_initial_session_state,
+    _compute_max_score, _build_initial_session_state, _sync_guacamole_connections,
 )
 
 logger = logging.getLogger(__name__)
@@ -315,10 +315,6 @@ def run_discover_ip(
     trainee_id: str,
     task_id: str,
 ) -> Dict[str, Any]:
-    """
-    Discovers VM IP address and ESXi host.
-    Idempotent: skips if launch_stage >= 'ip_discovered'.
-    """
     task_uuid = uuid.UUID(task_id)
     instance_uuid = uuid.UUID(instance_id)
     task_logger = log_task(logger, task_id=task_id, instance_id=instance_id, trainee_id=trainee_id)
@@ -360,16 +356,42 @@ def run_discover_ip(
     try:
         task_logger.info("Discovering IP | vm_uuid=%s", vm_uuid)
         
-        # Get power state
+        # Get power state (fast, single call)
         power_state_raw = _call_with_timeout(client.get_vm_power_state, 40, vm_uuid)
-        power_state = PowerState.POWERED_ON.value if power_state_raw == "poweredOn" else PowerState.UNKNOWN.value
-        
-        # Get IP
-        ip_address = _call_with_timeout(client.get_vm_ip, 120, vm_uuid)
-        task_logger.info("IP discovered | ip=%s", ip_address)
+        power_state = (
+            PowerState.POWERED_ON.value if power_state_raw == "poweredOn" 
+            else PowerState.POWERED_OFF.value if power_state_raw == "poweredOff" 
+            else PowerState.UNKNOWN.value
+        )
 
-        # ── NEW: Discover ESXi host ────────────────────────────────────────
-        esxi_host = client.get_vm_esxi_host(vm_uuid)  # You'll need to add this to VCenterClient
+        if power_state != PowerState.POWERED_ON.value:
+            fail_instance(instance_uuid, task_uuid, f"VM not powered on (state={power_state})", "vm_not_powered_on")
+            return {"status": "failed"}
+
+        # ── POLL for IP with retries ─────────────────────────────────────
+        # get_vm_ip returns None if VM tools aren't ready yet — we need to poll
+        max_wait_seconds = 180  # 3 minutes total
+        poll_interval = 20       # Check every 20 seconds
+        elapsed = 0
+
+        while elapsed < max_wait_seconds:
+            ip_address = _call_with_timeout(client.get_vm_ip, 30, vm_uuid)
+            
+            if ip_address:
+                task_logger.info("IP discovered | ip=%s after %ds", ip_address, elapsed)
+                break
+            
+            task_logger.info("IP not ready yet, retrying in %ds... (%d/%d)", poll_interval, elapsed, max_wait_seconds)
+            import time
+            time.sleep(poll_interval)
+            elapsed += poll_interval
+
+        if not ip_address:
+            fail_instance(instance_uuid, task_uuid, f"IP discovery timed out after {max_wait_seconds}s", "ip_discovery_timeout")
+            return {"status": "failed"}
+
+        # ── Discover ESXi host ────────────────────────────────────────────
+        esxi_host = client.get_vm_esxi_host(vm_uuid)
         task_logger.info("ESXi host discovered | host=%s", esxi_host)
 
     except Exception as e:
@@ -428,24 +450,38 @@ def run_guacamole_connection(
 
         # Capture needed fields
         ip_address = instance.ip_address
-        vm_name = instance.vm_name
-        db.commit()
+        lab = instance.lab_definition
+        
+        if not ip_address:
+            fail_instance(instance_uuid, task_uuid, "No IP address for Guacamole connections", "missing_ip")
+            return {"status": "failed"}
+        
+        if not lab:
+            fail_instance(instance_uuid, task_uuid, "No lab definition for Guacamole", "missing_lab")
+            return {"status": "failed"}
+
+        db.commit()  # Release row lock before external I/O
 
     # External action: create Guacamole connections
-    # (Replace with your actual Guacamole service calls)
     try:
         task_logger.info("Creating Guacamole connections")
-        connections = _create_guacamole_connections(instance_uuid, ip_address, vm_name)
+        
+        # _sync_guacamole_connections handles everything: slots, protocols, Vault creds, permissions
+        # It commits internally and updates instance.guacamole_connections
+        _sync_guacamole_connections(db, instance, lab, ip_address)
+        
+        # Reload connections from the now-committed instance
+        connections = dict(instance.guacamole_connections or {})
         task_logger.info("Guacamole connections created | count=%d", len(connections))
+        
     except Exception as e:
         fail_instance(instance_uuid, task_uuid, f"Guacamole connection failed: {e}", "guacamole_failed")
         return {"status": "failed"}
 
-    # Persist
+    # Persist stage — _sync_guacamole_connections already committed the connections
     persist_stage(
         instance_uuid,
         LaunchStage.GUACAMOLE_CONNECTED,
-        updates={"guacamole_connections": connections},
         task_id=task_uuid,
     )
 
@@ -581,13 +617,3 @@ def _enqueue_next(
     next_task_fn.apply_async(args=args, task_id=str(next_task_id), queue="lab.provisioning")
 
     return {"status": "enqueued", "next_stage": next_stage, "next_task_id": str(next_task_id)}
-
-
-def _create_guacamole_connections(instance_id, ip_address, vm_name):
-    """
-    Stub — replace with your actual Guacamole connection creation logic.
-    Returns dict like {"slug_ssh": "conn_id_1", "slug_rdp": "conn_id_2"}
-    """
-    # Import and call your existing Guacamole service
-    from app.services.LabInstance.utils import _create_guacamole_connection as create_conn
-    return create_conn(instance_id, ip_address, vm_name)

@@ -28,6 +28,7 @@ def _wrap_task(self, worker_fn, args, kwargs, task_name):
         logging.getLogger(__name__),
         task_id=self.request.id,
         instance_id=args[0] if args else None,
+        trainee_id=args[1] if len(args) > 1 else "N/A",
     )
     task_logger.info(
         "Task %s started | attempt=%d/%d",

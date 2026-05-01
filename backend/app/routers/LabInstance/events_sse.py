@@ -61,7 +61,7 @@ async def _event_stream(
     last_seen: Optional[datetime],
     severity_filter: Optional[str],
     source_filter: Optional[str],
-    poll_interval: float = 2.0,
+    poll_interval: float = 5.0,
 ):
     """
     Async generator that polls the DB for new events and yields SSE lines.

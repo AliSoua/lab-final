@@ -34,9 +34,6 @@ def run_validate_terminate(
     task_id: str,
     termination_reason: str = "user_requested",
 ) -> Dict[str, Any]:
-    """
-    Validates termination request, marks instance as 'terminating'.
-    """
     task_uuid = uuid.UUID(task_id)
     instance_uuid = uuid.UUID(instance_id)
     task_logger = log_task(logger, task_id=task_id, instance_id=instance_id, trainee_id=trainee_id)
@@ -64,8 +61,13 @@ def run_validate_terminate(
         )
         finish_task(task_uuid, "completed", db=db)
 
-    # Short-circuit: no VM to destroy
-    if not instance.vm_uuid:
+        # ── CAPTURE all attributes needed outside session ──
+        vm_uuid = instance.vm_uuid
+        # Force load any potentially deferred attributes
+        db.refresh(instance, attribute_names=["vm_uuid", "vcenter_host", "status"])
+
+    # Session closed — use captured values only
+    if not vm_uuid:
         return _enqueue_next(instance_uuid, trainee_id, task_id, "cleanup", skip_destroy=True)
 
     return _enqueue_next(instance_uuid, trainee_id, task_id, "destroy_vm")

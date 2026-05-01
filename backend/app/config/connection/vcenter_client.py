@@ -486,7 +486,7 @@ class VCenterClient:
         return str(vm.runtime.powerState)
 
     def get_vm_ip(self, vm_uuid: str) -> Optional[str]:
-        """Return guest IP if available."""
+        """Return guest IP if available, None if not ready."""
         vm = self.find_vm_by_uuid(vm_uuid)
         if not vm or not vm.guest:
             return None

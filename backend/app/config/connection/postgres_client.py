@@ -84,31 +84,14 @@ def create_db_tables() -> None:
     logger.info("✅ Database tables created (or already exist).")
 
 
-def drop_db_tables() -> dict:
-    """
-    Drop all SQLAlchemy-managed tables from the database.
-    Drops indexes first, then tables, to avoid orphaned index errors.
-    """
+def drop_db_tables():
     Base = _import_all_models()
-    
-    # Drop all indexes first (to avoid DuplicateTable on index recreation)
+
     with engine.begin() as conn:
-        inspector = inspect(engine)
-        for table_name in inspector.get_table_names():
-            indexes = inspector.get_indexes(table_name)
-            for index in indexes:
-                index_name = index["name"]
-                try:
-                    conn.execute(f"DROP INDEX IF EXISTS {index_name} CASCADE")
-                except Exception:
-                    pass  # Ignore if index doesn't exist or is system-owned
-    
-    # Now drop tables
-    Base.metadata.drop_all(bind=engine)
-    
-    table_names = [t.name for t in Base.metadata.sorted_tables]
-    logger.warning("⚠️  All database tables dropped (CASCADE): %s", table_names)
-    return {"dropped_tables": table_names}
+        conn.execute(text("DROP SCHEMA public CASCADE"))
+        conn.execute(text("CREATE SCHEMA public"))
+
+    return {"dropped": "schema reset"}
 
 
 def sync_db_tables() -> dict:
