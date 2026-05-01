@@ -47,7 +47,7 @@ export function LabHeader({
                 </button>
                 <span className="text-[#c4c4c4]">•</span>
                 <h1 className="text-[14px] font-semibold text-[#3a3a3a] truncate">
-                    {labName || "Lab Instance"}  // ← Fallback if undefined
+                    {labName || "Lab Instance"}
                 </h1>
                 <StatusBadge status={status} />
             </div>

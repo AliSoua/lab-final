@@ -81,3 +81,6 @@ celerybeat-schedule*
 
 # guacamole extensions
 guacamole/extensions/
+
+# others
+task_to_implement.txt

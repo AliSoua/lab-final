@@ -181,7 +181,7 @@ export default function GuacamoleClient({
         resizeObserverRef.current = resizeObserver
 
         // ── THE FIX: Use id=c/<connectionId> not connection=<connectionId> ──
-        client.connect(`token=${guacToken}&id=c/${connectionId}`)
+        client.connect(`token=${guacToken}&GUAC_TYPE=c&GUAC_DATA_SOURCE=postgresql&GUAC_ID=${connectionId}`)
 
         return () => {
             // Cleanup resize observer
