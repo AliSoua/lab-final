@@ -1,153 +1,165 @@
 # backend/app/tasks/lab_instance_tasks.py
 """
-Celery task definitions for lab instance lifecycle operations.
-
-Each task wraps the worker function with:
-- Structured logging (task_id, instance_id, trainee_id bound to every log line)
-- Explicit lifecycle logging (start, success, failure, retry)
-- Exception capture before Celery's retry mechanism swallows the traceback
-- Return values for result backend verification
+Celery task definitions for the new task-chain architecture.
+Each task wraps one stage worker with retry logic.
 """
 
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from celery.exceptions import MaxRetriesExceededError, SoftTimeLimitExceeded
 
 from app.core.celery import celery_app
 from app.core.logging import log_task
-from app.services.LabInstance.LaunchInstance import run_launch_worker
-from app.services.LabInstance.TerminateInstance import run_terminate_worker
+from app.services.LabInstance.tasks.launch_chain import (
+    run_validate_instance, run_discover_vcenter, run_clone_vm,
+    run_power_on_vm, run_discover_ip, run_guacamole_connection, run_finalize_instance,
+)
+from app.services.LabInstance.tasks.terminate_chain import (
+    run_validate_terminate, run_destroy_vm, run_cleanup,
+)
 
 logger = logging.getLogger(__name__)
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-#  LAUNCH INSTANCE TASK
-# ═══════════════════════════════════════════════════════════════════════════════
+# ── Launch Chain Tasks ───────────────────────────────────────────────────────
+
+def _wrap_task(self, worker_fn, args, kwargs, task_name):
+    task_logger = log_task(
+        logging.getLogger(__name__),
+        task_id=self.request.id,
+        instance_id=args[0] if args else None,
+    )
+    task_logger.info(
+        "Task %s started | attempt=%d/%d",
+        task_name,
+        self.request.retries + 1,
+        self.max_retries + 1,
+    )
+    try:
+        result = worker_fn(*args, **kwargs)
+        task_logger.info("Task %s completed", task_name)
+        return result
+    except SoftTimeLimitExceeded:
+        task_logger.error("Soft time limit exceeded")
+        raise
+    except Exception as exc:
+        task_logger.exception("Task %s failed: %s", task_name, exc)
+        raise
+
 
 @celery_app.task(
-    name="lab.provisioning.launch_instance",
+    name="lab.provisioning.validate_instance",
     bind=True,
     autoretry_for=(ConnectionError, TimeoutError),
     retry_backoff=True,
     retry_backoff_max=60,
     max_retries=3,
 )
-def launch_instance_task(self, instance_id: str, trainee_id: str) -> Dict[str, Any]:
-    """
-    Celery worker entry-point for launching a lab instance.
+def validate_instance_task(self, instance_id: str, trainee_id: str, task_id: str):
+    return _wrap_task(self, run_validate_instance, [instance_id, trainee_id, task_id], {}, "validate")
 
-    Called by the API router via `launch_instance_task.apply_async(...)`.
-    The audit row's UUID is reused as Celery's task_id.
-
-    Returns:
-        Dict with instance state after provisioning (vm_uuid, ip_address, etc.)
-    """
-    task_logger = log_task(
-        logging.getLogger(__name__),
-        task_id=self.request.id,
-        instance_id=instance_id,
-        trainee_id=trainee_id,
-    )
-
-    task_logger.info(
-        "Task started | attempt=%d/%d",
-        self.request.retries + 1,
-        self.max_retries + 1,
-    )
-
-    try:
-        result = run_launch_worker(
-            instance_id=instance_id,
-            trainee_id=trainee_id,
-            task_id=self.request.id,
-        )
-        task_logger.info("Task completed successfully")
-        return result or {"status": "unknown", "instance_id": instance_id}
-
-    except SoftTimeLimitExceeded:
-        task_logger.error(
-            "Soft time limit exceeded (20 min) — task will be retried or marked failed"
-        )
-        raise
-
-    except (ConnectionError, TimeoutError) as exc:
-        if self.request.retries < self.max_retries:
-            task_logger.warning(
-                "Transient error (will retry) | error=%s",
-                exc,
-            )
-        else:
-            task_logger.error(
-                "Transient error (max retries exceeded) | error=%s",
-                exc,
-            )
-        raise
-
-    except MaxRetriesExceededError:
-        task_logger.error("Max retries exceeded — task permanently failed")
-        raise
-
-    except Exception as exc:
-        task_logger.exception(
-            "Unexpected error during launch | error=%s",
-            exc,
-        )
-        raise
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  TERMINATE INSTANCE TASK
-# ═══════════════════════════════════════════════════════════════════════════════
 
 @celery_app.task(
-    name="lab.cleanup.terminate_instance",
+    name="lab.provisioning.discover_vcenter",
+    bind=True,
+    autoretry_for=(ConnectionError, TimeoutError),
+    retry_backoff=True,
+    retry_backoff_max=60,
+    max_retries=3,
+)
+def discover_vcenter_task(self, instance_id: str, trainee_id: str, task_id: str):
+    return _wrap_task(self, run_discover_vcenter, [instance_id, trainee_id, task_id], {}, "discover_vcenter")
+
+
+@celery_app.task(
+    name="lab.provisioning.clone_vm",
+    bind=True,
+    autoretry_for=(ConnectionError, TimeoutError),
+    retry_backoff=True,
+    retry_backoff_max=120,
+    max_retries=3,
+    soft_time_limit=300,  # 5 min for clone
+)
+def clone_vm_task(self, instance_id: str, trainee_id: str, task_id: str, vcenter_host: str = None):
+    return _wrap_task(self, run_clone_vm, [instance_id, trainee_id, task_id], {"vcenter_host": vcenter_host}, "clone_vm")
+
+
+@celery_app.task(
+    name="lab.provisioning.power_on_vm",
+    bind=True,
+    autoretry_for=(ConnectionError, TimeoutError),
+    retry_backoff=True,
+    retry_backoff_max=60,
+    max_retries=3,
+)
+def power_on_vm_task(self, instance_id: str, trainee_id: str, task_id: str):
+    return _wrap_task(self, run_power_on_vm, [instance_id, trainee_id, task_id], {}, "power_on_vm")
+
+
+@celery_app.task(
+    name="lab.provisioning.discover_ip",
+    bind=True,
+    autoretry_for=(ConnectionError, TimeoutError),
+    retry_backoff=True,
+    retry_backoff_max=60,
+    max_retries=3,
+)
+def discover_ip_task(self, instance_id: str, trainee_id: str, task_id: str):
+    return _wrap_task(self, run_discover_ip, [instance_id, trainee_id, task_id], {}, "discover_ip")
+
+
+@celery_app.task(
+    name="lab.provisioning.guacamole_connection",
+    bind=True,
+    autoretry_for=(ConnectionError, TimeoutError),
+    retry_backoff=True,
+    retry_backoff_max=60,
+    max_retries=3,
+)
+def guacamole_connection_task(self, instance_id: str, trainee_id: str, task_id: str):
+    return _wrap_task(self, run_guacamole_connection, [instance_id, trainee_id, task_id], {}, "guacamole_connection")
+
+
+@celery_app.task(
+    name="lab.provisioning.finalize_instance",
+    bind=True,
+    autoretry_for=(ConnectionError, TimeoutError),
+    retry_backoff=True,
+    retry_backoff_max=60,
+    max_retries=3,
+)
+def finalize_instance_task(self, instance_id: str, trainee_id: str, task_id: str):
+    return _wrap_task(self, run_finalize_instance, [instance_id, trainee_id, task_id], {}, "finalize")
+
+
+# ── Terminate Chain Tasks ────────────────────────────────────────────────────
+
+@celery_app.task(
+    name="lab.cleanup.validate_terminate",
     bind=True,
     max_retries=3,
     retry_backoff=True,
 )
-def terminate_instance_task(self, instance_id: str, trainee_id: str) -> Dict[str, Any]:
-    """
-    Celery worker entry-point for terminating a lab instance.
+def validate_terminate_task(self, instance_id: str, trainee_id: str, task_id: str, termination_reason: str = "user_requested"):
+    return _wrap_task(self, run_validate_terminate, [instance_id, trainee_id, task_id], {"termination_reason": termination_reason}, "validate_terminate")
 
-    Called by the API router via `terminate_instance_task.apply_async(...)`.
 
-    Returns:
-        Dict with termination confirmation and cleanup status.
-    """
-    task_logger = log_task(
-        logging.getLogger(__name__),
-        task_id=self.request.id,
-        instance_id=instance_id,
-        trainee_id=trainee_id,
-    )
+@celery_app.task(
+    name="lab.cleanup.destroy_vm",
+    bind=True,
+    max_retries=3,
+    retry_backoff=True,
+    soft_time_limit=300,
+)
+def destroy_vm_task(self, instance_id: str, trainee_id: str, task_id: str):
+    return _wrap_task(self, run_destroy_vm, [instance_id, trainee_id, task_id], {}, "destroy_vm")
 
-    task_logger.info(
-        "Task started | attempt=%d/%d",
-        self.request.retries + 1,
-        self.max_retries + 1,
-    )
 
-    try:
-        result = run_terminate_worker(
-            instance_id=instance_id,
-            trainee_id=trainee_id,
-            task_id=self.request.id,
-        )
-        task_logger.info("Task completed successfully")
-        return result or {"status": "unknown", "instance_id": instance_id}
-
-    except SoftTimeLimitExceeded:
-        task_logger.error(
-            "Soft time limit exceeded during cleanup — resources may be leaked"
-        )
-        raise
-
-    except Exception as exc:
-        task_logger.exception(
-            "Error during terminate | error=%s | retries_used=%d/%d",
-            exc,
-            self.request.retries,
-            self.max_retries,
-        )
-        raise
+@celery_app.task(
+    name="lab.cleanup.cleanup",
+    bind=True,
+    max_retries=3,
+    retry_backoff=True,
+)
+def cleanup_task(self, instance_id: str, trainee_id: str, task_id: str, vm_destroyed: bool = False, skip_destroy: bool = False):
+    return _wrap_task(self, run_cleanup, [instance_id, trainee_id, task_id], {"vm_destroyed": vm_destroyed, "skip_destroy": skip_destroy}, "cleanup")

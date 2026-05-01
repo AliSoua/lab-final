@@ -15,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from sqlalchemy.orm import Session
 
 from app.core.logging import log_task
+from app.models.LabInstance.enums import InstanceStatus
 from app.models.LabDefinition.LabInstance import LabInstance
 from app.models.LabDefinition.LabGuide import GuideVersion
 from app.config.connection.vcenter_client import VCenterClient
@@ -350,7 +351,11 @@ def _sync_guacamole_connections(
 ) -> None:
     from app.services.guacamole_service import guacamole_service
 
-    if instance.status in ("terminating", "terminated", "stopped"):
+    if instance.status in (
+        InstanceStatus.TERMINATING.value,
+        InstanceStatus.TERMINATED.value,
+        InstanceStatus.STOPPED.value,
+    ):
         logger.info(
             "Instance %s is in terminal state '%s'; skipping sync",
             instance.id,

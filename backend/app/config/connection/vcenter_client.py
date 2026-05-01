@@ -492,6 +492,26 @@ class VCenterClient:
             return None
         return vm.guest.ipAddress
 
+    def get_vm_esxi_host(self, vm_uuid: str) -> Optional[str]:
+        """
+        Return the ESXi host name where the VM is currently running.
+        Returns None if the VM is not found or host info is unavailable.
+        """
+        if not self._service_instance:
+            raise RuntimeError("Not connected to vCenter")
+
+        vm = self.find_vm_by_uuid(vm_uuid)
+        if not vm:
+            return None
+
+        # runtime.host is a ManagedObjectReference to HostSystem
+        host_ref = vm.runtime.host
+        if not host_ref:
+            return None
+
+        # host_ref.name is the ESXi hostname (FQDN or short name)
+        return host_ref.name
+
     def _get_parent_datacenter_obj(self, entity):
         """Walk up parents and return the datacenter object."""
         current = entity

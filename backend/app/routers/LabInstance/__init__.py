@@ -6,6 +6,7 @@ from app.routers.LabInstance.audit import router as audit_router
 from app.routers.LabInstance.lifecycle import router as lifecycle_router
 from app.routers.LabInstance.runtime import router as runtime_router
 from app.routers.LabInstance.core import router as core_router
+from app.routers.LabInstance.events_sse import router as sse_router
 
 # Main router with prefix and tags
 router = APIRouter(
@@ -20,3 +21,5 @@ router.include_router(core_router)
 router.include_router(lifecycle_router)
 router.include_router(runtime_router)
 router.include_router(audit_router)
+router.include_router(sse_router)
+

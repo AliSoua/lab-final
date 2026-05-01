@@ -60,10 +60,21 @@ class User(Base):
     # Relationships
     instances = relationship(
         "LabInstance",
+        foreign_keys="LabInstance.trainee_id",
         back_populates="user",
-        cascade="all, delete-orphan",
-        order_by="desc(LabInstance.created_at)"
-    )   
+    )
+
+    launched_instances = relationship(
+        "LabInstance",
+        foreign_keys="LabInstance.launched_by_user_id",
+        back_populates="launched_by",
+    )
+
+    terminated_instances = relationship(
+        "LabInstance",
+        foreign_keys="LabInstance.terminated_by_user_id",
+        back_populates="terminated_by",
+    )
 
     # Composite index for common queries
     __table_args__ = (

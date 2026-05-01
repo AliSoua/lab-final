@@ -29,9 +29,6 @@ from app.routers.LabGuide import guides_router
 
 from app.config.connection.postgres_client import init_db
 from app.utils.db_session import background_session
-from app.models.LabDefinition.LabInstanceTask import LabInstanceTask
-from app.models.LabDefinition.LabInstance import LabInstance
-from app.models.LabDefinition.LabInstanceEventLog import LabInstanceEventLog
 from app.routers.database import router as db_admin_router
 from app.routers.LabInstance import router as LabInstance_router
 from app.config.settings import settings
@@ -42,45 +39,61 @@ def _reap_unsent_tasks() -> None:
     Startup reaper: tasks queued in our audit table but never published
     to Redis (API crashed between INSERT and apply_async).
     Celery handles all other orphan cases via acks_late.
+    
+    Safe-fail: never blocks startup if DB/models are not ready.
     """
-    with background_session() as db:
-        stuck = (
-            db.query(LabInstanceTask)
-            .filter(
-                LabInstanceTask.status == "queued",
-                LabInstanceTask.enqueued_at < datetime.now(timezone.utc) - timedelta(seconds=60),
+    try:
+        # Defer imports to avoid mapper config issues at module load time
+        from app.models.LabDefinition.LabInstanceTask import LabInstanceTask
+        from app.models.LabDefinition.LabInstance import LabInstance
+        from app.models.LabDefinition.LabInstanceEventLog import LabInstanceEventLog
+
+        with background_session() as db:
+            stuck = (
+                db.query(LabInstanceTask)
+                .filter(
+                    LabInstanceTask.status == "queued",
+                    LabInstanceTask.enqueued_at < datetime.now(timezone.utc) - timedelta(seconds=60),
+                )
+                .all()
             )
-            .all()
-        )
 
-        for task in stuck:
-            task.status = "failed"
-            task.error_message = "task never published"
-            task.finished_at = datetime.now(timezone.utc)
+            for task in stuck:
+                task.status = "failed"
+                task.error_message = "task never published"
+                task.finished_at = datetime.now(timezone.utc)
 
-            instance = (
-                db.query(LabInstance)
-                .filter(LabInstance.id == task.lab_instance_id)
-                .first()
-            )
-            if instance and instance.status in ("provisioning", "terminating"):
-                instance.status = "failed"
-                instance.error_message = "task never published"
+                instance = (
+                    db.query(LabInstance)
+                    .filter(LabInstance.id == task.lab_instance_id)
+                    .first()
+                )
+                if instance and instance.status in ("provisioning", "terminating"):
+                    instance.status = "failed"
+                    instance.error_message = "task never published"
 
-            event = LabInstanceEventLog(
-                task_id=task.id,
-                lab_instance_id=task.lab_instance_id,
-                event_type="task_failed",
-                message="Task was queued but never published to Redis (API crash during enqueue)",
-                metadata_={},
-            )
-            db.add(event)
+                event = LabInstanceEventLog(
+                    task_id=task.id,
+                    lab_instance_id=task.lab_instance_id,
+                    event_type="task_failed",
+                    message="Task was queued but never published to Redis (API crash during enqueue)",
+                    metadata_={},
+                )
+                db.add(event)
 
-        db.commit()
+            db.commit()
 
-        logger.warning(
-            "Marked %d stuck task(s) as failed (never published to Redis)",
-            len(stuck),
+            if stuck:
+                logger.warning(
+                    "Marked %d stuck task(s) as failed (never published to Redis)",
+                    len(stuck),
+                )
+    except Exception as e:
+        # Never crash startup because of the reaper
+        logger.error(
+            "Reaper failed during startup (non-fatal): %s",
+            e,
+            exc_info=True,
         )
 
 

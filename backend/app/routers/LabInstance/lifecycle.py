@@ -20,6 +20,7 @@ from app.services.LabInstance.LaunchInstance import enqueue_launch
 from app.services.LabInstance.ManageInstance import stop_instance
 from app.services.LabInstance.TerminateInstance import enqueue_terminate
 from app.models.LabDefinition.LabInstance import LabInstance
+from app.models.LabInstance.enums import TerminationReason
 from .common import get_trainee_id
 
 require_all = require_any_role(["trainee", "moderator", "admin"])
@@ -54,6 +55,7 @@ def launch_lab_instance(
             db=db,
             lab_definition_id=data.lab_definition_id,
             trainee_id=trainee_id,
+            launched_by_user_id=trainee_id,
         )
         return instance
     except ValueError as e:
@@ -108,7 +110,13 @@ def terminate_lab_instance(
 ):
     trainee_id = get_trainee_id(userinfo, db)
     try:
-        instance = enqueue_terminate(db, instance_id, trainee_id)
+        instance = enqueue_terminate(
+            db,
+            instance_id,
+            trainee_id,
+            terminated_by_user_id=trainee_id,
+            reason=TerminationReason.USER_REQUESTED.value,
+        )
         return instance
     except ValueError as e:
         raise HTTPException(
@@ -124,45 +132,50 @@ def terminate_lab_instance(
             detail=f"Failed to terminate instance: {str(e)}",
         )
 
-# ═══════════════════════════════════════════════════════════════════════════════
-#  ADMIN TERMINATE — moderator/admin can terminate any instance
-# ═══════════════════════════════════════════════════════════════════════════════
 
 @router.delete(
-  "/{instance_id}/admin",
-  response_model=LabInstanceResponse,
-  status_code=status.HTTP_202_ACCEPTED,
-  summary="Terminate any lab instance (admin/moderator)",
+    "/{instance_id}/admin",
+    response_model=LabInstanceResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Terminate any lab instance (admin/moderator)",
 )
 def terminate_lab_instance_admin(
-  instance_id: uuid.UUID,
-  db: Session = Depends(get_db),
-  userinfo: dict = Depends(require_admin),
+    instance_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    userinfo: dict = Depends(require_admin),
 ):
-  """
-  Admin/moderator endpoint to terminate any instance regardless of ownership.
-  Uses the instance's actual trainee_id from the database.
-  """
-  instance = db.query(LabInstance).filter(LabInstance.id == instance_id).first()
-  if not instance:
-      raise HTTPException(
-          status_code=status.HTTP_404_NOT_FOUND,
-          detail="Instance not found",
-      )
+    """
+    Admin/moderator endpoint to terminate any instance regardless of ownership.
+    Uses the instance's actual trainee_id from the database.
+    """
+    instance = db.query(LabInstance).filter(LabInstance.id == instance_id).first()
+    if not instance:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Instance not found",
+        )
 
-  try:
-      terminated = enqueue_terminate(db, instance_id, instance.trainee_id)
-      return terminated
-  except ValueError as e:
-      raise HTTPException(
-          status_code=status.HTTP_404_NOT_FOUND, detail=str(e)
-      )
-  except RuntimeError as e:
-      raise HTTPException(
-          status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)
-      )
-  except Exception as e:
-      raise HTTPException(
-          status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-          detail=f"Failed to terminate instance: {str(e)}",
-      )
+    admin_user_id = get_trainee_id(userinfo, db)
+
+    try:
+        terminated = enqueue_terminate(
+            db,
+            instance_id,
+            instance.trainee_id,
+            terminated_by_user_id=admin_user_id,
+            reason=TerminationReason.ADMIN_ACTION.value,
+        )
+        return terminated
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(e)
+        )
+    except RuntimeError as e:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to terminate instance: {str(e)}",
+        )

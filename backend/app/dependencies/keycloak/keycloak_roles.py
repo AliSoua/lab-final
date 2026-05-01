@@ -137,3 +137,16 @@ def require_any_role(required_roles: list[str]):
         return user
 
     return role_checker
+
+def verify_token(token: str) -> dict:
+    """
+    Standalone token verification for non-HTTP contexts (SSE, WebSockets, etc.)
+    that don't use FastAPI's Depends() system.
+    """
+    from fastapi.security import HTTPAuthorizationCredentials
+    
+    credentials = HTTPAuthorizationCredentials(
+        scheme="Bearer",
+        credentials=token,
+    )
+    return _authenticate(credentials)

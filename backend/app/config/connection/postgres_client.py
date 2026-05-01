@@ -86,26 +86,27 @@ def create_db_tables() -> None:
 
 def drop_db_tables() -> dict:
     """
-    Drop ALL application tables from the database using CASCADE.
- 
-    Bypasses SQLAlchemy's default DROP TABLE (which fails on FK dependencies)
-    by issuing a single raw SQL statement that drops all managed tables at once
-    with CASCADE, removing dependent constraints automatically.
- 
-    Returns a summary dict with the list of dropped table names.
+    Drop all SQLAlchemy-managed tables from the database.
+    Drops indexes first, then tables, to avoid orphaned index errors.
     """
     Base = _import_all_models()
-    table_names = [t.name for t in Base.metadata.sorted_tables]
- 
-    if not table_names:
-        logger.warning("⚠️  No tables found in metadata to drop.")
-        return {"dropped_tables": []}
- 
-    # Build a comma-separated quoted list and drop everything in one shot
-    tables_str = ", ".join(f'"{name}"' for name in table_names)
+    
+    # Drop all indexes first (to avoid DuplicateTable on index recreation)
     with engine.begin() as conn:
-        conn.execute(text(f"DROP TABLE IF EXISTS {tables_str} CASCADE"))
- 
+        inspector = inspect(engine)
+        for table_name in inspector.get_table_names():
+            indexes = inspector.get_indexes(table_name)
+            for index in indexes:
+                index_name = index["name"]
+                try:
+                    conn.execute(f"DROP INDEX IF EXISTS {index_name} CASCADE")
+                except Exception:
+                    pass  # Ignore if index doesn't exist or is system-owned
+    
+    # Now drop tables
+    Base.metadata.drop_all(bind=engine)
+    
+    table_names = [t.name for t in Base.metadata.sorted_tables]
     logger.warning("⚠️  All database tables dropped (CASCADE): %s", table_names)
     return {"dropped_tables": table_names}
 
@@ -113,20 +114,23 @@ def drop_db_tables() -> dict:
 def sync_db_tables() -> dict:
     """
     Sync tables: drop everything, then recreate from current models.
-
-    Equivalent to a full schema reset. All existing data will be lost.
-    Returns a summary dict with the recreated table names.
+    Handles circular FK dependencies and orphaned indexes gracefully.
     """
     drop_result = drop_db_tables()
     Base = _import_all_models()
-    Base.metadata.create_all(bind=engine)
-    table_names = [t.name for t in Base.metadata.sorted_tables]
+    
+    # Use checkfirst=True to skip already-existing objects
+    Base.metadata.create_all(bind=engine, checkfirst=True)
+    
+    from sqlalchemy import inspect
+    inspector = inspect(engine)
+    table_names = inspector.get_table_names()
+    
     logger.info("🔄 Database tables synced (dropped & recreated): %s", table_names)
     return {
         "dropped_tables": drop_result["dropped_tables"],
         "created_tables": table_names,
     }
-
 
 def backup_db_tables(backup_dir: str = "backup-db") -> dict:
     """
@@ -206,46 +210,7 @@ def backup_db_tables(backup_dir: str = "backup-db") -> dict:
 def init_db() -> None:
     """Initialize database on application startup."""
     create_db_tables()
-
-    # ── Idempotent schema migrations (Option A from plan §7.6) ──
-    with engine.begin() as conn:
-        conn.execute(text("""
-            ALTER TABLE lab_instances
-            ADD COLUMN IF NOT EXISTS error_message TEXT;
-        """))
-
-        # ==========================================
-        # FIX: Convert existing naive timestamps to timezone-aware UTC
-        # ==========================================
-        conn.execute(text("""
-            ALTER TABLE lab_instances
-            ALTER COLUMN created_at TYPE TIMESTAMP WITH TIME ZONE,
-            ALTER COLUMN started_at TYPE TIMESTAMP WITH TIME ZONE,
-            ALTER COLUMN stopped_at TYPE TIMESTAMP WITH TIME ZONE,
-            ALTER COLUMN expires_at TYPE TIMESTAMP WITH TIME ZONE;
-        """))
-
-        # Composite indexes for lab_instance_tasks (plan §7.1)
-        conn.execute(text("""
-            CREATE INDEX IF NOT EXISTS ix_lab_instance_tasks_instance_status
-            ON lab_instance_tasks (lab_instance_id, status);
-        """))
-        conn.execute(text("""
-            CREATE INDEX IF NOT EXISTS ix_lab_instance_tasks_status_enqueued
-            ON lab_instance_tasks (status, enqueued_at);
-        """))
-
-        # Composite indexes for lab_instance_event_logs (plan §7.2)
-        conn.execute(text("""
-            CREATE INDEX IF NOT EXISTS ix_lab_instance_event_logs_task_created
-            ON lab_instance_event_logs (task_id, created_at);
-        """))
-        conn.execute(text("""
-            CREATE INDEX IF NOT EXISTS ix_lab_instance_event_logs_instance_created
-            ON lab_instance_event_logs (lab_instance_id, created_at);
-        """))
-
-    logger.info("✅ Database initialized with audit schema and timezone fixes.")
+    logger.info("✅ Database initialized.")
 
 
 # ── FastAPI dependency (synchronous) ───────────────────────────────────────────

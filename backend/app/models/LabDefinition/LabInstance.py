@@ -1,9 +1,10 @@
 # app/models/LabDefinition/LabInstance.py
 import uuid
-from datetime import datetime, timezone  # ← Added timezone
+from datetime import datetime, timezone
 
 from sqlalchemy import Column, String, DateTime, Integer, ForeignKey, Text
 from sqlalchemy.dialects.postgresql import UUID, JSONB
+from app.models.LabInstance.enums import InstanceStatus, PowerState
 from sqlalchemy.orm import relationship
 from app.db.base import Base
 
@@ -27,9 +28,13 @@ class LabInstance(Base):
         index=True,
     )
 
-    # ── NEW: Snapshot the guide version at launch time ─────────────────────
-    # If the lab definition's guide_version changes later, this instance
-    # remains pinned to the version that was current at launch.
+    launched_by_user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     guide_version_id = Column(
         UUID(as_uuid=True),
         ForeignKey("guide_versions.id", ondelete="SET NULL"),
@@ -40,17 +45,29 @@ class LabInstance(Base):
     vm_uuid = Column(String(255), nullable=True)
     vm_name = Column(String(255), nullable=True)
     vcenter_host = Column(String(255), nullable=True)
+    
+    # ── NEW: ESXi host where the VM is running ─────────────────────────────
+    esxi_host = Column(String(255), nullable=True)
 
-    status = Column(String(50), default="provisioning", nullable=False)
-    power_state = Column(String(50), default="unknown")
+    # ── NEW: Unified status enum (string-backed) ───────────────────────────
+    status = Column(
+        String(50),
+        default=InstanceStatus.PENDING.value,
+        nullable=False,
+    )
+    
+    # ── NEW: Unified power_state enum ──────────────────────────────────────
+    power_state = Column(
+        String(50),
+        default=PowerState.UNKNOWN.value,
+        nullable=False,
+    )
+
     ip_address = Column(String(100))
 
-    # Legacy single-connection fields (kept for backward compatibility)
     connection_url = Column(Text)
     guacamole_connection_id = Column(String(100), nullable=True, index=True)
 
-    # NEW: JSON mapping of all Guacamole connections per slot/protocol
-    # Example: { "postgre-test_ssh": "1", "postgre-test_rdp": "2" }
     guacamole_connections = Column(
         JSONB,
         default=lambda: {},
@@ -58,9 +75,6 @@ class LabInstance(Base):
         server_default="{}",
     )
 
-    # ── NEW: Runtime session state (step progress, scores, command results) ─
-    # Mirrors frontend LabGuideSessionState structure.
-    # Stores: { step_states: [...], total_score: 0, max_score: 0, status: "active" }
     session_state = Column(
         JSONB,
         default=lambda: {
@@ -73,30 +87,68 @@ class LabInstance(Base):
         server_default='{"step_states": [], "total_score": 0, "max_score": 0, "status": "active"}',
     )
 
-    # ── NEW: Current step index for the trainee's active session ────────────
     current_step_index = Column(Integer, default=0, nullable=False, server_default="0")
+
+    # ── NEW: Launch stage tracking for resumability ────────────────────────
+    launch_stage = Column(
+        String(50),
+        nullable=True,
+        index=True,
+    )
+
+    # ── NEW: Termination metadata ──────────────────────────────────────────
+    termination_reason = Column(String(50), nullable=True)
+    terminated_by_user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    failure_reason = Column(Text, nullable=True)
+    cleanup_at = Column(DateTime(timezone=True), nullable=True)
 
     created_at = Column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
     )
-    started_at = Column(DateTime(timezone=True))
-    stopped_at = Column(DateTime(timezone=True))
-    expires_at = Column(DateTime(timezone=True))
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    stopped_at = Column(DateTime(timezone=True), nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    
+    # ── NEW: Auto-updating timestamp ───────────────────────────────────────
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
 
     duration_minutes = Column(Integer, nullable=True)
 
-    # Relationships
+    # Relationships — explicitly specify foreign_keys
     lab_definition = relationship("LabDefinition", back_populates="instances")
-    user = relationship("User", back_populates="instances")
 
-    # ── NEW: Relationship to the pinned guide version ───────────────────────
+    user = relationship(
+        "User",
+        foreign_keys=[trainee_id],
+        back_populates="instances",
+    )
+
+    launched_by = relationship(
+        "User",
+        foreign_keys=[launched_by_user_id],
+        back_populates="launched_instances",
+    )
+
+    terminated_by = relationship(
+        "User",
+        foreign_keys=[terminated_by_user_id],
+        back_populates="terminated_instances",
+    )
+
     guide_version = relationship("GuideVersion", back_populates="instances")
 
-    # ── NEW: error_message for terminal failed states ──
     error_message = Column(Text, nullable=True)
 
-    # ── NEW: audit relationships ──
     tasks = relationship(
         "LabInstanceTask",
         back_populates="lab_instance",
@@ -112,5 +164,5 @@ class LabInstance(Base):
         return (
             f"<LabInstance(id={self.id}, lab={self.lab_definition_id}, "
             f"trainee={self.trainee_id}, status={self.status}, "
-            f"guide_version={self.guide_version_id})>"
+            f"stage={self.launch_stage})>"
         )

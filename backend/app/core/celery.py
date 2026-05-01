@@ -30,13 +30,28 @@ celery_app.conf.update(
     task_acks_late=True,
     task_reject_on_worker_lost=True,
     worker_prefetch_multiplier=1,
-    task_time_limit=1500,
-    task_soft_time_limit=1200,
+    # Global limits — individual chain tasks override these via decorators
+    task_time_limit=600,        # 10 min hard (was 25m; chain tasks are smaller)
+    task_soft_time_limit=480,   # 8 min soft (was 20m)
     task_default_queue="default",
+    # ═══════════════════════════════════════════════════════════════════
+    #  TASK ROUTES — explicit mapping for the new task-chain architecture
+    # ═══════════════════════════════════════════════════════════════════
     task_routes={
-        "lab.provisioning.*": {"queue": "lab.provisioning"},
-        "lab.cleanup.*":      {"queue": "lab.cleanup"},
-        "lab.monitoring.*":   {"queue": "lab.monitoring"},
+        # Launch chain (lab.provisioning)
+        "lab.provisioning.validate_instance":    {"queue": "lab.provisioning"},
+        "lab.provisioning.discover_vcenter":     {"queue": "lab.provisioning"},
+        "lab.provisioning.clone_vm":             {"queue": "lab.provisioning"},
+        "lab.provisioning.power_on_vm":          {"queue": "lab.provisioning"},
+        "lab.provisioning.discover_ip":          {"queue": "lab.provisioning"},
+        "lab.provisioning.guacamole_connection": {"queue": "lab.provisioning"},
+        "lab.provisioning.finalize_instance":    {"queue": "lab.provisioning"},
+        # Terminate chain (lab.cleanup)
+        "lab.cleanup.validate_terminate":        {"queue": "lab.cleanup"},
+        "lab.cleanup.destroy_vm":                {"queue": "lab.cleanup"},
+        "lab.cleanup.cleanup":                   {"queue": "lab.cleanup"},
+        # Monitoring
+        "lab.monitoring.*":                      {"queue": "lab.monitoring"},
     },
     result_expires=3600,
 

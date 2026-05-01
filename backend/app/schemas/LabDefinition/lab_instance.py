@@ -64,6 +64,14 @@ class LabInstanceResponse(BaseModel):
         description="Copied from LabDefinition at launch. Used to compute expires_at.",
     )
     
+    esxi_host: Optional[str] = Field(None, description="ESXi host running the VM")
+    launch_stage: Optional[str] = None
+    termination_reason: Optional[str] = None
+    failure_reason: Optional[str] = None
+    terminated_by_user_id: Optional[uuid.UUID] = None
+    launched_by_user_id: Optional[uuid.UUID] = None
+    cleanup_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
     error_message: Optional[str] = None
 
     class Config:

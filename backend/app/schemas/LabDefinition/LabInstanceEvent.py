@@ -10,6 +10,9 @@ class LabInstanceEventLogResponse(BaseModel):
     task_id: UUID
     lab_instance_id: UUID
     event_type: str
+    event_code: Optional[str] = None
+    source: Optional[str] = None
+    severity: Optional[str] = None
     message: str
     metadata: Optional[Dict[str, Any]] = Field(default_factory=dict, alias="metadata_")
     created_at: Optional[datetime] = None

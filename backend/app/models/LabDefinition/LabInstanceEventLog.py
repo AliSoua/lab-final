@@ -27,11 +27,20 @@ class LabInstanceEventLog(Base):
         index=True,
     )
 
-    event_type = Column(String(100), nullable=False)  # e.g. "clone_started", "power_on", "ip_discovered"
+    event_type = Column(String(100), nullable=False)
     message = Column(Text, nullable=False)
+
+    # ── NEW: Event source subsystem ────────────────────────────────────────
+    source = Column(String(50), nullable=False, default="system")
+
+    # ── NEW: Severity level ────────────────────────────────────────────────
+    severity = Column(String(50), nullable=False, default="info")
+
+    # ── NEW: Machine-readable event code ───────────────────────────────────
+    event_code = Column(String(100), nullable=True, index=True)
+
     metadata_ = Column("metadata", JSONB, nullable=True, default=dict)
 
-    # ← FIX: timezone-aware + lambda (per-row evaluation)
     created_at = Column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
@@ -44,10 +53,12 @@ class LabInstanceEventLog(Base):
     __table_args__ = (
         Index("ix_lab_instance_event_logs_task_created", "task_id", "created_at"),
         Index("ix_lab_instance_event_logs_instance_created", "lab_instance_id", "created_at"),
+        Index("ix_lab_instance_event_logs_code", "event_code", "created_at"),
+        Index("ix_lab_instance_event_logs_severity", "severity", "created_at"),
     )
 
     def __repr__(self):
         return (
             f"<LabInstanceEventLog(id={self.id}, task={self.task_id}, "
-            f"type={self.event_type})>"
+            f"code={self.event_code}, severity={self.severity})>"
         )

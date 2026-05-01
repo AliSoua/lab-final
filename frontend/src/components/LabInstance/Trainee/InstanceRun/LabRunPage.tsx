@@ -2,16 +2,16 @@
 import { useState, useEffect, useCallback } from "react"
 import { useNavigate } from "react-router-dom"
 import { useTraineeLabRuntime } from "@/hooks/LabInstance/Trainee/useTraineeLabRuntime"
+import { useLabInstanceEvents } from "@/hooks/LabInstance/Trainee/useLabInstanceEvents"
 import { useLabCountdown } from "./hooks/useLabCountdown"
 import { useLabConnections } from "./hooks/useLabConnections"
-import { useLabPolling } from "./hooks/useLabPolling"
 import type { LabInstanceRuntimeResponse } from "@/types/LabInstance/Trainee/LabRuntime"
 import type { GuideVersion } from "@/types/LabGuide"
 import { FullPageLoader, FullPageError } from "./shared/FullPageStates"
 import { LabHeader } from "./sections/LabHeader"
 import { LabWorkspace } from "./sections/LabWorkspace"
 import { ExpiryWarningModal, ExpiredModal } from "./sections/LabModals"
-import { AlertCircle } from "lucide-react"
+import { AlertCircle, Loader2 } from "lucide-react"
 
 interface LabRunPageProps {
     instanceId: string
@@ -36,19 +36,34 @@ export function LabRunPage({ instanceId }: LabRunPageProps) {
     // ── Connections ───────────────────────────────────────────────────
     const { entries, activeKey, activeConnectionId, hasConnections } = useLabConnections(runtime?.guacamole_connections)
 
-    // ── Polling (fixed: callbacks passed via refs, no effect churn) ───
-    const handlePollRefresh = useCallback((fresh: LabInstanceRuntimeResponse) => {
-        setRuntime(fresh)
-        if (fresh.expires_at) setExpiresAt(fresh.expires_at)
-    }, [])
+    // ── SSE: Live provisioning & status events ────────────────────────
+    const needsProvisioning = runtime?.status === "provisioning" || runtime?.status === "pending"
+    const {
+        provisioningMessage,
+        provisioningStage,
+        isConnected: sseConnected,
+        isReady: sseReady,
+        hasFailed: sseFailed,
+        failureMessage: sseFailureMessage,
+        close: closeSse,
+    } = useLabInstanceEvents(instanceId, needsProvisioning && !hasConnections)
 
-    const { manualRefresh, isRefreshing } = useLabPolling({
-        instanceId,
-        isBootstrapping,
-        hasConnections,
-        onRefresh: handlePollRefresh,
-        refreshFn: refreshInstance,
-    })
+    // When SSE signals ready, fetch full state to get connections
+    useEffect(() => {
+        if (sseReady && !hasConnections) {
+            refreshInstance(instanceId)
+                .then((fresh) => {
+                    setRuntime(fresh)
+                    if (fresh.expires_at) setExpiresAt(fresh.expires_at)
+                })
+                .catch(() => {
+                    // Error handled by hook
+                })
+                .finally(() => {
+                    closeSse()
+                })
+        }
+    }, [sseReady, hasConnections, instanceId, refreshInstance, closeSse])
 
     // ── Bootstrap: Load once ──────────────────────────────────────────
     useEffect(() => {
@@ -93,18 +108,26 @@ export function LabRunPage({ instanceId }: LabRunPageProps) {
     const handleBack = useCallback(() => navigate(`/lab-instances/${instanceId}`), [navigate, instanceId])
 
     const handleManualRefresh = useCallback(async () => {
-        await manualRefresh()
-    }, [manualRefresh])
+        try {
+            const fresh = await refreshInstance(instanceId)
+            setRuntime(fresh)
+            if (fresh.expires_at) setExpiresAt(fresh.expires_at)
+            return fresh
+        } catch {
+            // Error handled by hook
+        }
+    }, [instanceId, refreshInstance])
 
     const handleTerminate = useCallback(async () => {
         if (!window.confirm("Are you sure you want to terminate this lab instance? This action cannot be undone.")) return
         try {
+            closeSse()
             await terminateInstance(instanceId)
             navigate("/labs")
         } catch {
             // Error handled by hook
         }
-    }, [instanceId, terminateInstance, navigate])
+    }, [instanceId, terminateInstance, navigate, closeSse])
 
     const handleStepChange = useCallback((index: number) => {
         setRuntime(prev => prev ? { ...prev, current_step_index: index } : prev)
@@ -117,12 +140,15 @@ export function LabRunPage({ instanceId }: LabRunPageProps) {
     // ── Render States ───────────────────────────────────────────────
     if (isBootstrapping) return <FullPageLoader message="Loading lab environment..." />
 
-    const displayError = bootstrapError || hookError
+    const displayError = bootstrapError || hookError || (sseFailed ? sseFailureMessage : null)
     if (displayError || !runtime) {
         return <FullPageError message={displayError || "Instance not found."} onBack={() => navigate("/labs")} />
     }
 
     const activeEntry = entries.find(e => e.key === activeKey)
+
+    // Determine if we should show the provisioning overlay
+    const showProvisioning = needsProvisioning && !hasConnections && !sseFailed
 
     return (
         <div className="flex h-full flex-col bg-[#f9f9f9]">
@@ -141,7 +167,7 @@ export function LabRunPage({ instanceId }: LabRunPageProps) {
                 formattedTime={formattedTime}
                 minutesRemaining={minutesRemaining}
                 connectionCount={entries.length}
-                isRefreshing={isRefreshing}
+                isRefreshing={false}
                 isTerminating={isTerminating}
                 onBack={handleBack}
                 onRefresh={handleManualRefresh}
@@ -159,6 +185,35 @@ export function LabRunPage({ instanceId }: LabRunPageProps) {
                 </div>
             )}
 
+            {/* SSE Provisioning Banner (replaces silent polling) */}
+            {showProvisioning && (
+                <div className="mx-4 mt-3 flex items-center gap-3 rounded-xl border border-[#1ca9b1]/20 bg-[#1ca9b1]/5 px-4 py-3 text-[#1ca9b1]">
+                    <Loader2 className="h-5 w-5 shrink-0 animate-spin" />
+                    <div className="min-w-0">
+                        <p className="text-[13px] font-semibold">Provisioning lab</p>
+                        <p className="mt-0.5 text-[12px] text-[#1ca9b1]/80 break-words">
+                            {provisioningMessage}
+                            {sseConnected && (
+                                <span className="ml-2 inline-flex h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse" />
+                            )}
+                        </p>
+                        {provisioningStage && (
+                            <div className="mt-2 flex gap-1">
+                                {["validated", "vcenter_discovered", "vm_cloned", "vm_powered_on", "ip_discovered", "guacamole_connected", "finalized"].map((stage, i) => {
+                                    const reached = ["validated", "vcenter_discovered", "vm_cloned", "vm_powered_on", "ip_discovered", "guacamole_connected", "finalized"].indexOf(provisioningStage ?? "") >= i
+                                    return (
+                                        <div
+                                            key={stage}
+                                            className={`h-1 flex-1 rounded-full ${reached ? "bg-[#1ca9b1]" : "bg-[#1ca9b1]/20"}`}
+                                        />
+                                    )
+                                })}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
             {/* Workspace */}
             <LabWorkspace
                 guide={guide}
@@ -166,7 +221,7 @@ export function LabRunPage({ instanceId }: LabRunPageProps) {
                 currentStepIndex={runtime.current_step_index ?? 0}
                 connectionId={activeConnectionId}
                 connectionTitle={activeEntry?.key ?? "Console"}
-                isProvisioning={runtime.status === "provisioning" && !hasConnections}
+                isProvisioning={showProvisioning}
                 onStepChange={handleStepChange}
                 onRunCommand={handleRunCommand}
             />

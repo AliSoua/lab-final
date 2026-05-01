@@ -9,7 +9,9 @@ class LabInstanceTaskResponse(BaseModel):
     id: UUID
     lab_instance_id: UUID
     task_type: str
+    stage: Optional[str] = None
     status: str
+    progress_percent: Optional[int] = None
     enqueued_at: Optional[datetime] = None
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
