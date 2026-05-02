@@ -71,6 +71,9 @@ export default function LabInstanceDetailPage() {
     const isRunning = instance.status === "running"
     const isProvisioning = instance.status === "provisioning"
 
+    // ── Defensive: lab_definition may be stripped after termination ────
+    const labDef = instance.lab_definition
+
     // ── Expiry guards ───────────────────────────────────────────────────
     const timeRemaining = instance.time_remaining_minutes
     const isExpired = timeRemaining !== undefined && timeRemaining !== null && timeRemaining <= 0
@@ -95,10 +98,10 @@ export default function LabInstanceDetailPage() {
                     <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                         <div>
                             <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.2em] text-[#1ca9b1]">
-                                {instance.lab_definition.category?.replace("_", " ") ?? "Lab Instance"}
+                                {labDef?.category?.replace("_", " ") ?? "Lab Instance"}
                             </p>
                             <h1 className="font-serif font-light text-2xl tracking-tight text-[#1a1a1a] lg:text-3xl">
-                                {instance.lab_definition.name}
+                                {labDef?.name ?? "Untitled Lab"}
                             </h1>
                             <div className="mt-3 flex items-center gap-3">
                                 <StatusBadge status={instance.status} />
@@ -253,15 +256,15 @@ export default function LabInstanceDetailPage() {
                             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                                 <InfoItem
                                     label="Difficulty"
-                                    value={instance.lab_definition.difficulty ?? "N/A"}
+                                    value={labDef?.difficulty ?? "N/A"}
                                 />
                                 <InfoItem
                                     label="Category"
-                                    value={instance.lab_definition.category?.replace("_", " ") ?? "N/A"}
+                                    value={labDef?.category?.replace("_", " ") ?? "N/A"}
                                 />
                                 <InfoItem
                                     label="Track"
-                                    value={instance.lab_definition.track ?? "N/A"}
+                                    value={labDef?.track ?? "N/A"}
                                 />
                                 <InfoItem
                                     label="Duration"

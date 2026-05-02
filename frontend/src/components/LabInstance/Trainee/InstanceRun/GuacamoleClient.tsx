@@ -296,7 +296,8 @@ export default function GuacamoleClient({
             reader.ontext = (text: string) => { data += text }
             reader.onend = () => {
                 setClipboardText(data)
-                if (navigator.clipboard && data) {
+                // Only sync to local clipboard if API is available (requires HTTPS/localhost)
+                if (typeof navigator !== "undefined" && navigator.clipboard && data) {
                     navigator.clipboard.writeText(data).catch(() => { })
                 }
             }
@@ -449,24 +450,32 @@ export default function GuacamoleClient({
                         placeholder="Paste here to send to VM. Remote copies appear here."
                     />
                     <div className="mt-2 flex items-center justify-between">
-                        <button
-                            onClick={() =>
-                                navigator.clipboard.readText().then((t) => {
-                                    setClipboardText(t)
-                                    sendClipboardToRemote(t)
-                                })
-                            }
-                            className="text-[11px] font-medium text-[#1ca9b1] hover:underline"
-                        >
-                            Paste from PC
-                        </button>
-                        <div className="flex gap-2">
+                        {typeof navigator !== "undefined" && navigator.clipboard ? (
                             <button
-                                onClick={() => navigator.clipboard.writeText(clipboardText)}
-                                className="text-[11px] font-medium text-[#727373] hover:text-[#3a3a3a]"
+                                onClick={() =>
+                                    navigator.clipboard.readText().then((t) => {
+                                        setClipboardText(t)
+                                        sendClipboardToRemote(t)
+                                    }).catch(() => { })
+                                }
+                                className="text-[11px] font-medium text-[#1ca9b1] hover:underline"
                             >
-                                Copy to PC
+                                Paste from PC
                             </button>
+                        ) : (
+                            <span className="text-[11px] text-[#c4c4c4] italic">
+                                Clipboard unavailable (needs HTTPS)
+                            </span>
+                        )}
+                        <div className="flex gap-2">
+                            {typeof navigator !== "undefined" && navigator.clipboard && (
+                                <button
+                                    onClick={() => navigator.clipboard.writeText(clipboardText).catch(() => { })}
+                                    className="text-[11px] font-medium text-[#727373] hover:text-[#3a3a3a]"
+                                >
+                                    Copy to PC
+                                </button>
+                            )}
                             <button
                                 onClick={() => sendClipboardToRemote(clipboardText)}
                                 className="rounded-md bg-[#1ca9b1] px-2.5 py-1 text-[11px] font-medium text-white hover:bg-[#169199]"
