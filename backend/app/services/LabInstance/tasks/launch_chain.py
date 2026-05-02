@@ -856,14 +856,17 @@ def run_finalize_instance(
             db=db,
         )
         finish_task(task_uuid, "completed", db=db)
+        result_vm_uuid = instance.vm_uuid
+        result_ip_address = instance.ip_address
+        result_esxi_host = instance.esxi_host
 
     task_logger.info("Launch chain completed successfully")
     return {
         "status": "success",
         "instance_id": instance_id,
-        "vm_uuid": instance.vm_uuid,
-        "ip_address": instance.ip_address,
-        "esxi_host": instance.esxi_host,
+        "vm_uuid": result_vm_uuid,
+        "ip_address": result_ip_address,
+        "esxi_host": result_esxi_host,
     }
 
 
