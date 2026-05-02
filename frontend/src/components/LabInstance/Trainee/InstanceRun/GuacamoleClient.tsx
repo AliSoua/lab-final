@@ -286,7 +286,8 @@ export default function GuacamoleClient({
         }
 
         // Clipboard from remote
-        client.onclipboard = (stream: any, mimetype: string) => {
+        const clientAny = client as any
+        clientAny.onclipboard = (stream: any, mimetype: string) => {
             if (!mimetype.startsWith("text/")) return
             const Reader = (Guacamole as any).StringReader
             if (!Reader) return
@@ -295,7 +296,6 @@ export default function GuacamoleClient({
             reader.ontext = (text: string) => { data += text }
             reader.onend = () => {
                 setClipboardText(data)
-                // Auto-sync to local clipboard if permitted
                 if (navigator.clipboard && data) {
                     navigator.clipboard.writeText(data).catch(() => { })
                 }
@@ -389,9 +389,12 @@ export default function GuacamoleClient({
     const currentStageIndex = provisioningStage ? STAGE_ORDER.indexOf(provisioningStage) : -1
 
     return (
-        <div className="relative h-full w-full bg-black" ref={containerRef}>
-            {/* Guacamole display mount point */}
-            <div className="h-full w-full" />
+        <div className="relative h-full w-full bg-black">
+            {/* 
+                CRITICAL: containerRef must be on a dedicated div with NO React children.
+                React manages all siblings/overlays. We mutate only this inner div.
+            */}
+            <div ref={containerRef} className="h-full w-full" />
 
             {/* ── Floating Toolbar ── */}
             {!isProvisioning && connectionId && status !== "error" && (
