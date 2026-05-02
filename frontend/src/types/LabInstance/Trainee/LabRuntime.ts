@@ -18,7 +18,7 @@ export interface LabInstanceRuntimeResponse {
     session_state_status?: string | null  // "active" | "completed" | "paused" | "abandoned"
 
     /** Timing */
-    time_remaining_minutes?: number | null
+    time_remaining_seconds?: number | null
     expires_at?: string | null  // ISO 8601 datetime from backend
 
     /** Lab metadata (denormalized for convenience) */

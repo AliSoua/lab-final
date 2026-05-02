@@ -143,7 +143,7 @@ class LabInstanceRuntimeResponse(BaseModel):
     session_state_status: Optional[str] = None  # "active" | "completed" | etc.
 
     # Timing
-    time_remaining_minutes: Optional[int] = None
+    time_remaining_seconds: Optional[int] = None
     expires_at: Optional[datetime] = None
 
     # Lab metadata (denormalized for convenience)

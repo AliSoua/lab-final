@@ -1,8 +1,21 @@
 // src/components/LabInstance/Trainee/InstanceRun/sections/LabHeader.tsx
-import { ArrowLeft, Monitor, Power, RefreshCw, PowerOff, Loader2 } from "lucide-react"
+import { useState, useEffect, useRef } from "react"
+import {
+    ArrowLeft,
+    Monitor,
+    Power,
+    RefreshCw,
+    PowerOff,
+    Loader2,
+    Terminal,
+    Laptop,
+    ChevronDown,
+    Check,
+} from "lucide-react"
 import { cn } from "@/lib/utils"
 import { StatusBadge } from "../shared/StatusBadge"
 import { TimeDisplay } from "../shared/TimeDisplay"
+import type { ConnectionEntry, ConnectionProtocol } from "../hooks/useLabConnections"
 
 interface LabHeaderProps {
     instanceId: string
@@ -11,13 +24,27 @@ interface LabHeaderProps {
     powerState: string | null | undefined
     formattedTime: string | null
     minutesRemaining: number | null
-    connectionCount: number
     isReady: boolean
     isRefreshing: boolean
     isTerminating: boolean
+    entries: ConnectionEntry[]
+    activeKey: string | null
     onBack: () => void
     onRefresh: () => void
     onTerminate: () => void
+    onSelectConnection: (key: string) => void
+}
+
+const PROTOCOL_ICONS: Record<ConnectionProtocol, React.ElementType> = {
+    ssh: Terminal,
+    vnc: Monitor,
+    rdp: Laptop,
+    unknown: Monitor,
+}
+
+function ProtocolIcon({ protocol, className }: { protocol: ConnectionProtocol; className?: string }) {
+    const Icon = PROTOCOL_ICONS[protocol] || Monitor
+    return <Icon className={className} />
 }
 
 export function LabHeader({
@@ -27,15 +54,32 @@ export function LabHeader({
     powerState,
     formattedTime,
     minutesRemaining,
-    connectionCount,
     isReady,
     isRefreshing,
     isTerminating,
+    entries,
+    activeKey,
     onBack,
     onRefresh,
     onTerminate,
+    onSelectConnection,
 }: LabHeaderProps) {
-    const hasConnections = connectionCount > 0
+    const [dropdownOpen, setDropdownOpen] = useState(false)
+    const dropdownRef = useRef<HTMLDivElement>(null)
+    const hasConnections = entries.length > 0
+    const activeEntry = entries.find(e => e.key === activeKey)
+
+    // Close dropdown on outside click
+    useEffect(() => {
+        if (!dropdownOpen) return
+        const handleClick = (e: MouseEvent) => {
+            if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+                setDropdownOpen(false)
+            }
+        }
+        document.addEventListener("mousedown", handleClick)
+        return () => document.removeEventListener("mousedown", handleClick)
+    }, [dropdownOpen])
 
     return (
         <header className="flex shrink-0 items-center justify-between gap-3 border-b border-[#e8e8e8] bg-white px-4 py-2.5">
@@ -55,12 +99,62 @@ export function LabHeader({
             </div>
 
             <div className="flex items-center gap-4 text-[12px] text-[#727373]">
+                {/* Connection Switcher */}
                 {hasConnections ? (
-                    <div className="flex items-center gap-1.5">
-                        <Monitor className="h-3.5 w-3.5" />
-                        <span>
-                            {connectionCount} connection{connectionCount !== 1 ? "s" : ""}
-                        </span>
+                    <div className="relative" ref={dropdownRef}>
+                        <button
+                            onClick={() => setDropdownOpen(prev => !prev)}
+                            className={cn(
+                                "flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 transition-colors",
+                                dropdownOpen
+                                    ? "border-[#1ca9b1] bg-[#1ca9b1]/5 text-[#1ca9b1]"
+                                    : "border-[#e8e8e8] bg-white hover:border-[#1ca9b1] hover:text-[#1ca9b1]"
+                            )}
+                            title="Switch connection"
+                        >
+                            {activeEntry ? (
+                                <>
+                                    <ProtocolIcon protocol={activeEntry.protocol} className="h-3.5 w-3.5" />
+                                    <span className="max-w-[120px] truncate">{activeEntry.key}</span>
+                                </>
+                            ) : (
+                                <>
+                                    <Monitor className="h-3.5 w-3.5" />
+                                    <span>Select connection</span>
+                                </>
+                            )}
+                            <ChevronDown className={cn("h-3 w-3 transition-transform", dropdownOpen && "rotate-180")} />
+                        </button>
+
+                        {dropdownOpen && (
+                            <div className="absolute right-0 top-full z-50 mt-1 w-56 rounded-xl border border-[#e8e8e8] bg-white py-1 shadow-lg">
+                                <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#c4c4c4]">
+                                    {entries.length} connection{entries.length !== 1 ? "s" : ""} available
+                                </div>
+                                {entries.map(entry => {
+                                    const isActive = entry.key === activeKey
+                                    return (
+                                        <button
+                                            key={entry.key}
+                                            onClick={() => {
+                                                onSelectConnection(entry.key)
+                                                setDropdownOpen(false)
+                                            }}
+                                            className={cn(
+                                                "flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] transition-colors",
+                                                isActive
+                                                    ? "bg-[#1ca9b1]/5 text-[#1ca9b1]"
+                                                    : "text-[#3a3a3a] hover:bg-[#f9f9f9]"
+                                            )}
+                                        >
+                                            <ProtocolIcon protocol={entry.protocol} className="h-3.5 w-3.5 shrink-0" />
+                                            <span className="flex-1 truncate">{entry.key}</span>
+                                            {isActive && <Check className="h-3.5 w-3.5 shrink-0" />}
+                                        </button>
+                                    )
+                                })}
+                            </div>
+                        )}
                     </div>
                 ) : (
                     <div className="flex items-center gap-1.5">
@@ -69,7 +163,7 @@ export function LabHeader({
                     </div>
                 )}
 
-                {/* Timer — shows "Waiting..." until lab is ready */}
+                {/* Timer */}
                 {isReady ? (
                     <TimeDisplay formattedTime={formattedTime} minutesRemaining={minutesRemaining} />
                 ) : (

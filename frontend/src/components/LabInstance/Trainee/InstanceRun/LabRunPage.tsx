@@ -30,17 +30,15 @@ export function LabRunPage({ instanceId }: LabRunPageProps) {
     const [bootstrapError, setBootstrapError] = useState<string | null>(null)
 
     // ── Ready State ───────────────────────────────────────────────────
-    // CRITICAL: Only true after INSTANCE_RUNNING event. Gates countdown and UI.
     const [isReady, setIsReady] = useState(false)
     const [readyExpiresAt, setReadyExpiresAt] = useState<string | null>(null)
 
     // ── Countdown ─────────────────────────────────────────────────────
-    // Only starts when isReady=true and readyExpiresAt is set
     const [countdownState, countdownActions] = useLabCountdown(readyExpiresAt, isReady)
     const { isExpired, formattedTime, minutesRemaining, showWarning } = countdownState
 
     // ── Connections ───────────────────────────────────────────────────
-    const { entries, activeKey, activeConnectionId, hasConnections } = useLabConnections(runtime?.guacamole_connections)
+    const { entries, activeKey, activeConnectionId, selectConnection, hasConnections } = useLabConnections(runtime?.guacamole_connections)
 
     // ── SSE: Live provisioning & status events ────────────────────────
     const needsProvisioning = runtime?.status === "provisioning" || runtime?.status === "pending"
@@ -57,13 +55,15 @@ export function LabRunPage({ instanceId }: LabRunPageProps) {
     // When SSE signals ready, fetch full state ONCE, then freeze
     useEffect(() => {
         if (!sseReady || isReady) return
-
         refreshInstance(instanceId)
             .then((fresh) => {
                 setRuntime(fresh)
                 setIsReady(true)
-                // Freeze expiresAt — never update from subsequent refreshes
-                if (fresh.expires_at) setReadyExpiresAt(fresh.expires_at)
+                if (fresh.time_remaining_seconds) {
+                    setReadyExpiresAt(
+                        new Date(Date.now() + fresh.time_remaining_seconds * 1000).toISOString()
+                    )
+                }
             })
             .catch(() => {
                 // Error handled by hook
@@ -84,10 +84,11 @@ export function LabRunPage({ instanceId }: LabRunPageProps) {
 
                 setRuntime(rt)
 
-                // If already running (page refresh after ready), set ready immediately
-                if (rt.status === "running" && rt.expires_at) {
+                if (rt.status === "running" && rt.time_remaining_seconds) {
                     setIsReady(true)
-                    setReadyExpiresAt(rt.expires_at)
+                    setReadyExpiresAt(
+                        new Date(Date.now() + rt.time_remaining_seconds * 1000).toISOString()
+                    )
                 }
 
                 try {
@@ -122,7 +123,6 @@ export function LabRunPage({ instanceId }: LabRunPageProps) {
         try {
             const fresh = await refreshInstance(instanceId)
             setRuntime(fresh)
-            // Never update readyExpiresAt from manual refresh — keep frozen
         } catch {
             // Error handled by hook
         }
@@ -160,17 +160,14 @@ export function LabRunPage({ instanceId }: LabRunPageProps) {
 
     return (
         <div className="flex h-full flex-col bg-[#f9f9f9]">
-            {/* Expiry Toast — non-blocking, inside header area */}
             {showWarning && minutesRemaining !== null && (
                 <div className="shrink-0 px-4 pt-3">
                     <ExpiryToast minutesRemaining={minutesRemaining} onDismiss={countdownActions.dismissWarning} />
                 </div>
             )}
 
-            {/* Expired Modal — blocking, unavoidable */}
             {isExpired && <ExpiredModal onExit={() => navigate("/labs")} />}
 
-            {/* Header */}
             <LabHeader
                 instanceId={instanceId}
                 labName={runtime.lab_name ?? undefined}
@@ -178,16 +175,17 @@ export function LabRunPage({ instanceId }: LabRunPageProps) {
                 powerState={runtime.power_state}
                 formattedTime={formattedTime}
                 minutesRemaining={minutesRemaining}
-                connectionCount={entries.length}
                 isReady={isReady}
                 isRefreshing={false}
                 isTerminating={isTerminating}
+                entries={entries}
+                activeKey={activeKey}
                 onBack={handleBack}
                 onRefresh={handleManualRefresh}
                 onTerminate={handleTerminate}
+                onSelectConnection={selectConnection}
             />
 
-            {/* Error Banner — only for failed status */}
             {runtime.status === "failed" && runtime.error_message && (
                 <div className="mx-4 mt-3 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-red-800">
                     <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-red-600" />
@@ -198,7 +196,6 @@ export function LabRunPage({ instanceId }: LabRunPageProps) {
                 </div>
             )}
 
-            {/* Workspace — provisioning overlay is now inside GuacamoleClient */}
             <LabWorkspace
                 guide={guide}
                 guideError={guideError}

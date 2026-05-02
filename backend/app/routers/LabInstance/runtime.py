@@ -59,11 +59,11 @@ def refresh_instance(
             )
 
         # ── Compute time remaining ──
-        time_remaining = None
-        if instance.expires_at and instance.started_at:
+        time_remaining_seconds = None
+        if instance.expires_at:
             now = datetime.now(timezone.utc)
             if instance.expires_at > now:
-                time_remaining = int((instance.expires_at - now).total_seconds() / 60)
+                time_remaining_seconds = int((instance.expires_at - now).total_seconds())
 
         # ── Resolve session state status safely ──
         session_state_status = None
@@ -90,7 +90,7 @@ def refresh_instance(
             guacamole_connections=instance.guacamole_connections or {},
             current_step_index=instance.current_step_index,
             session_state_status=session_state_status,
-            time_remaining_minutes=time_remaining,
+            time_remaining_seconds=time_remaining_seconds,
             expires_at=instance.expires_at,
             lab_name=lab_name,
             lab_definition_id=instance.lab_definition_id,

@@ -496,7 +496,7 @@ def run_discover_ip(
                 task_uuid, instance_uuid, "ip_discovery_started",
                 f"Starting IP discovery for VM {vm_uuid}",
                 event_code="IP_POLL_STARTED",
-                metadata={"vm_uuid": vm_uuid, "vcenter_host": creds["host"], "max_wait_seconds": 180},
+                metadata={"vm_uuid": vm_uuid, "vcenter_host": creds["host"], "max_wait_seconds": 360},
                 db=db,
             )
             db.commit()
@@ -514,8 +514,8 @@ def run_discover_ip(
             return {"status": "failed"}
 
         # ── POLL for IP with retries ─────────────────────────────────────
-        max_wait_seconds = 180  # 3 minutes total
-        poll_interval = 20       # Check every 20 seconds
+        max_wait_seconds = 360  # 6 minutes total
+        poll_interval = 20      # Check every 20 seconds
         elapsed = 0
         attempt = 0
 

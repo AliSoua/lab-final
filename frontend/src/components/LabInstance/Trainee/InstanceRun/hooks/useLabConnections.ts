@@ -1,15 +1,30 @@
 // src/components/LabInstance/Trainee/InstanceRun/hooks/useLabConnections.ts
 import { useState, useMemo, useEffect, useCallback } from "react"
 
-interface ConnectionEntry {
+export type ConnectionProtocol = "ssh" | "vnc" | "rdp" | "unknown"
+
+export interface ConnectionEntry {
     key: string
     connectionId: string
+    protocol: ConnectionProtocol
+}
+
+function detectProtocol(key: string): ConnectionProtocol {
+    const lower = key.toLowerCase()
+    if (lower.includes("ssh")) return "ssh"
+    if (lower.includes("vnc")) return "vnc"
+    if (lower.includes("rdp") || lower.includes("remote desktop")) return "rdp"
+    return "unknown"
 }
 
 export function useLabConnections(connectionsMap: Record<string, string> | undefined) {
     const entries = useMemo<ConnectionEntry[]>(() => {
         if (!connectionsMap) return []
-        return Object.entries(connectionsMap).map(([key, connectionId]) => ({ key, connectionId }))
+        return Object.entries(connectionsMap).map(([key, connectionId]) => ({
+            key,
+            connectionId,
+            protocol: detectProtocol(key),
+        }))
     }, [connectionsMap])
 
     const [activeKey, setActiveKey] = useState<string | null>(null)
