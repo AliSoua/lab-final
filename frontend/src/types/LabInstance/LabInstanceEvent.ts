@@ -11,6 +11,9 @@ export interface LabInstanceEventLog {
     message: string
     metadata?: Record<string, unknown> | null
     created_at: string | null
+    source?: string
+    event_code?: string
+    severity?: string
 }
 
 export interface LabInstanceEventLogList {

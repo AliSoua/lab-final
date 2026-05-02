@@ -15,6 +15,10 @@ export interface LabInstanceTask {
     worker_host: string | null
     error_message: string | null
     created_at: string | null
+    progress_percent?: number
+    stage?: string
+    failure_reason?: string
+    failure_code?: string
 }
 
 export interface LabInstanceTaskList {

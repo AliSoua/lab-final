@@ -8,6 +8,8 @@ import uuid
 import os
 import socket
 import logging
+import json
+import time
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 
@@ -26,7 +28,7 @@ from app.services.LabDefinition.task_audit import (
     start_task, finish_task, mark_running, record_event, update_task_progress,
 )
 from app.services.LabInstance.shared import (
-    load_instance_locked, is_stage_reached, persist_stage, 
+    load_instance_locked, is_stage_reached, persist_stage,
     fail_instance, check_termination_race,
 )
 from app.services.LabInstance.utils import (
@@ -56,7 +58,7 @@ def run_validate_instance(
 
     with background_session() as db:
         mark_running(task_uuid, worker_pid=os.getpid(), worker_host=socket.gethostname(), db=db)
-        
+
         instance = load_instance_locked(db, instance_uuid)
         if not instance:
             finish_task(task_uuid, "failed", "Instance not found", db=db)
@@ -65,6 +67,13 @@ def run_validate_instance(
         # Idempotency: already validated?
         if is_stage_reached(instance, LaunchStage.VALIDATED):
             task_logger.info("Stage already validated, skipping")
+            record_event(
+                task_uuid, instance_uuid, "instance_validation_skipped",
+                "Validation stage already completed, skipping",
+                event_code="VALIDATION_SKIPPED",
+                metadata={"reason": "already_validated", "launch_stage": instance.launch_stage},
+                db=db,
+            )
             finish_task(task_uuid, "completed", db=db)
             return _enqueue_next(instance_uuid, trainee_id, task_id, "discover_vcenter")
 
@@ -93,7 +102,13 @@ def run_validate_instance(
 
         record_event(
             task_uuid, instance_uuid, "instance_validated", "Validation passed",
-            event_code="VALIDATION_PASSED", db=db,
+            event_code="VALIDATION_PASSED",
+            metadata={
+                "lab_definition_id": str(lab.id),
+                "guide_version_id": str(lab.guide_version_id) if lab.guide_version_id else None,
+                "vm_count": len(lab.vms) if lab.vms else 0,
+            },
+            db=db,
         )
         finish_task(task_uuid, "completed", db=db)
 
@@ -119,7 +134,7 @@ def run_discover_vcenter(
 
     with background_session() as db:
         mark_running(task_uuid, worker_pid=os.getpid(), worker_host=socket.gethostname(), db=db)
-        
+
         instance = load_instance_locked(db, instance_uuid)
         if not instance:
             finish_task(task_uuid, "failed", "Instance not found", db=db)
@@ -127,6 +142,13 @@ def run_discover_vcenter(
 
         if is_stage_reached(instance, LaunchStage.VCENTER_DISCOVERED):
             task_logger.info("Stage already vcenter_discovered, skipping")
+            record_event(
+                task_uuid, instance_uuid, "vcenter_discovery_skipped",
+                "vCenter discovery already completed, skipping",
+                event_code="VCENTER_SKIPPED",
+                metadata={"reason": "already_discovered", "vcenter_host": instance.vcenter_host},
+                db=db,
+            )
             finish_task(task_uuid, "completed", db=db)
             return _enqueue_next(instance_uuid, trainee_id, task_id, "clone_vm")
 
@@ -151,11 +173,23 @@ def run_discover_vcenter(
 
     # Persist result
     persist_stage(
-        instance_uuid, 
+        instance_uuid,
         LaunchStage.VCENTER_DISCOVERED,
         updates={"vcenter_host": creds["host"]},
         task_id=task_uuid,
     )
+
+    # Record discovery event outside the session (persist_stage manages its own DB)
+    # We open a short session just for the event so metadata is captured
+    with background_session() as db:
+        record_event(
+            task_uuid, instance_uuid, "vcenter_discovered",
+            f"Template {source_vm_id} located on vCenter {creds['host']}",
+            event_code="VCENTER_FOUND",
+            metadata={"vcenter_host": creds["host"], "source_vm_id": source_vm_id},
+            db=db,
+        )
+        db.commit()
 
     return _enqueue_next(instance_uuid, trainee_id, task_id, "clone_vm", vcenter_creds=creds)
 
@@ -180,7 +214,7 @@ def run_clone_vm(
 
     with background_session() as db:
         mark_running(task_uuid, worker_pid=os.getpid(), worker_host=socket.gethostname(), db=db)
-        
+
         instance = load_instance_locked(db, instance_uuid)
         if not instance:
             finish_task(task_uuid, "failed", "Instance not found", db=db)
@@ -188,6 +222,13 @@ def run_clone_vm(
 
         if is_stage_reached(instance, LaunchStage.VM_CLONED) or instance.vm_uuid:
             task_logger.info("VM already cloned, skipping | vm_uuid=%s", instance.vm_uuid)
+            record_event(
+                task_uuid, instance_uuid, "clone_skipped",
+                "VM clone already completed, skipping",
+                event_code="CLONE_SKIPPED",
+                metadata={"reason": "already_cloned", "existing_vm_uuid": instance.vm_uuid},
+                db=db,
+            )
             finish_task(task_uuid, "completed", db=db)
             return _enqueue_next(instance_uuid, trainee_id, task_id, "power_on_vm")
 
@@ -212,16 +253,49 @@ def run_clone_vm(
         fail_instance(instance_uuid, task_uuid, f"Cannot connect to vCenter {vcenter_host}", "vcenter_connect_failed")
         return {"status": "failed"}
 
+    new_vm_name = f"{lab_slug}-{trainee_id[:8]}-{uuid.uuid4().hex[:8]}"
+    clone_start_ts = datetime.now(timezone.utc)
+
     try:
-        new_vm_name = f"{lab_slug}-{trainee_id[:8]}-{uuid.uuid4().hex[:8]}"
         task_logger.info("Cloning VM | template=%s name=%s", source_vm_id, new_vm_name)
-        
+
+        # Emit start event
+        with background_session() as db:
+            record_event(
+                task_uuid, instance_uuid, "clone_started",
+                f"Starting VM clone from template {source_vm_id}",
+                event_code="CLONE_STARTED",
+                metadata={
+                    "template_uuid": source_vm_id,
+                    "new_vm_name": new_vm_name,
+                    "vcenter_host": creds["host"],
+                },
+                db=db,
+            )
+            db.commit()
+
         update_task_progress(task_uuid, 10)
         clone_result = _call_with_timeout(client.clone_vm, 220, template_uuid=source_vm_id, new_vm_name=new_vm_name)
         vm_uuid = clone_result["uuid"]
-        
+
         task_logger.info("Clone completed | vm_uuid=%s", vm_uuid)
         update_task_progress(task_uuid, 100)
+
+        # Emit completion event
+        with background_session() as db:
+            record_event(
+                task_uuid, instance_uuid, "clone_completed",
+                f"VM clone completed successfully",
+                event_code="CLONE_COMPLETED",
+                metadata={
+                    "vm_uuid": vm_uuid,
+                    "vm_name": new_vm_name,
+                    "vcenter_host": creds["host"],
+                    "duration_seconds": (datetime.now(timezone.utc) - clone_start_ts).total_seconds(),
+                },
+                db=db,
+            )
+            db.commit()
     except Exception as e:
         fail_instance(instance_uuid, task_uuid, f"Clone failed: {e}", "clone_failed")
         return {"status": "failed"}
@@ -258,7 +332,7 @@ def run_power_on_vm(
 
     with background_session() as db:
         mark_running(task_uuid, worker_pid=os.getpid(), worker_host=socket.gethostname(), db=db)
-        
+
         instance = load_instance_locked(db, instance_uuid)
         if not instance:
             finish_task(task_uuid, "failed", "Instance not found", db=db)
@@ -266,6 +340,13 @@ def run_power_on_vm(
 
         if is_stage_reached(instance, LaunchStage.VM_POWERED_ON):
             task_logger.info("VM already powered on, skipping")
+            record_event(
+                task_uuid, instance_uuid, "power_on_skipped",
+                "VM power-on already completed, skipping",
+                event_code="POWER_ON_SKIPPED",
+                metadata={"reason": "already_powered_on", "vm_uuid": instance.vm_uuid},
+                db=db,
+            )
             finish_task(task_uuid, "completed", db=db)
             return _enqueue_next(instance_uuid, trainee_id, task_id, "discover_ip")
 
@@ -288,8 +369,29 @@ def run_power_on_vm(
 
     try:
         task_logger.info("Powering on VM | vm_uuid=%s", vm_uuid)
+
+        with background_session() as db:
+            record_event(
+                task_uuid, instance_uuid, "power_on_started",
+                f"Powering on VM {vm_uuid}",
+                event_code="POWER_ON_STARTED",
+                metadata={"vm_uuid": vm_uuid, "vcenter_host": creds["host"]},
+                db=db,
+            )
+            db.commit()
+
         _call_with_timeout(client.power_on_vm, 120, vm_uuid)
         task_logger.info("VM powered on")
+
+        with background_session() as db:
+            record_event(
+                task_uuid, instance_uuid, "power_on_completed",
+                "VM powered on successfully",
+                event_code="POWER_ON_COMPLETED",
+                metadata={"vm_uuid": vm_uuid, "vcenter_host": creds["host"]},
+                db=db,
+            )
+            db.commit()
     except Exception as e:
         fail_instance(instance_uuid, task_uuid, f"Power on failed: {e}", "power_on_failed")
         return {"status": "failed"}
@@ -321,7 +423,7 @@ def run_discover_ip(
 
     with background_session() as db:
         mark_running(task_uuid, worker_pid=os.getpid(), worker_host=socket.gethostname(), db=db)
-        
+
         instance = load_instance_locked(db, instance_uuid)
         if not instance:
             finish_task(task_uuid, "failed", "Instance not found", db=db)
@@ -329,6 +431,17 @@ def run_discover_ip(
 
         if is_stage_reached(instance, LaunchStage.IP_DISCOVERED):
             task_logger.info("IP already discovered, skipping")
+            record_event(
+                task_uuid, instance_uuid, "ip_discovery_skipped",
+                "IP discovery already completed, skipping",
+                event_code="IP_SKIPPED",
+                metadata={
+                    "reason": "already_discovered",
+                    "ip_address": instance.ip_address,
+                    "esxi_host": instance.esxi_host,
+                },
+                db=db,
+            )
             finish_task(task_uuid, "completed", db=db)
             return _enqueue_next(instance_uuid, trainee_id, task_id, "guacamole_connection")
 
@@ -355,12 +468,22 @@ def run_discover_ip(
 
     try:
         task_logger.info("Discovering IP | vm_uuid=%s", vm_uuid)
-        
+
+        with background_session() as db:
+            record_event(
+                task_uuid, instance_uuid, "ip_discovery_started",
+                f"Starting IP discovery for VM {vm_uuid}",
+                event_code="IP_POLL_STARTED",
+                metadata={"vm_uuid": vm_uuid, "vcenter_host": creds["host"], "max_wait_seconds": 180},
+                db=db,
+            )
+            db.commit()
+
         # Get power state (fast, single call)
         power_state_raw = _call_with_timeout(client.get_vm_power_state, 40, vm_uuid)
         power_state = (
-            PowerState.POWERED_ON.value if power_state_raw == "poweredOn" 
-            else PowerState.POWERED_OFF.value if power_state_raw == "poweredOff" 
+            PowerState.POWERED_ON.value if power_state_raw == "poweredOn"
+            else PowerState.POWERED_OFF.value if power_state_raw == "poweredOff"
             else PowerState.UNKNOWN.value
         )
 
@@ -369,20 +492,37 @@ def run_discover_ip(
             return {"status": "failed"}
 
         # ── POLL for IP with retries ─────────────────────────────────────
-        # get_vm_ip returns None if VM tools aren't ready yet — we need to poll
         max_wait_seconds = 180  # 3 minutes total
         poll_interval = 20       # Check every 20 seconds
         elapsed = 0
+        attempt = 0
 
         while elapsed < max_wait_seconds:
+            attempt += 1
             ip_address = _call_with_timeout(client.get_vm_ip, 30, vm_uuid)
-            
+
             if ip_address:
                 task_logger.info("IP discovered | ip=%s after %ds", ip_address, elapsed)
                 break
-            
+
             task_logger.info("IP not ready yet, retrying in %ds... (%d/%d)", poll_interval, elapsed, max_wait_seconds)
-            import time
+
+            # Update progress so the task doesn't look stuck
+            progress = min(10 + int((elapsed / max_wait_seconds) * 80), 90)
+            update_task_progress(task_uuid, progress)
+
+            # Emit retry event every 2 attempts (every 40s) to avoid spam
+            if attempt % 2 == 0:
+                with background_session() as db:
+                    record_event(
+                        task_uuid, instance_uuid, "ip_poll_retry",
+                        f"IP not ready yet, retrying (elapsed={elapsed}s)",
+                        event_code="IP_POLL_RETRY",
+                        metadata={"elapsed_seconds": elapsed, "attempt": attempt, "vm_uuid": vm_uuid},
+                        db=db,
+                    )
+                    db.commit()
+
             time.sleep(poll_interval)
             elapsed += poll_interval
 
@@ -393,6 +533,23 @@ def run_discover_ip(
         # ── Discover ESXi host ────────────────────────────────────────────
         esxi_host = client.get_vm_esxi_host(vm_uuid)
         task_logger.info("ESXi host discovered | host=%s", esxi_host)
+
+        with background_session() as db:
+            record_event(
+                task_uuid, instance_uuid, "ip_discovered",
+                f"IP and ESXi host discovered after {elapsed}s",
+                event_code="IP_FOUND",
+                metadata={
+                    "ip_address": ip_address,
+                    "esxi_host": esxi_host,
+                    "power_state": power_state,
+                    "elapsed_seconds": elapsed,
+                    "attempts": attempt,
+                    "vm_uuid": vm_uuid,
+                },
+                db=db,
+            )
+            db.commit()
 
     except Exception as e:
         fail_instance(instance_uuid, task_uuid, f"IP discovery failed: {e}", "ip_discovery_failed")
@@ -434,7 +591,7 @@ def run_guacamole_connection(
 
     with background_session() as db:
         mark_running(task_uuid, worker_pid=os.getpid(), worker_host=socket.gethostname(), db=db)
-        
+
         instance = load_instance_locked(db, instance_uuid)
         if not instance:
             finish_task(task_uuid, "failed", "Instance not found", db=db)
@@ -442,6 +599,16 @@ def run_guacamole_connection(
 
         if is_stage_reached(instance, LaunchStage.GUACAMOLE_CONNECTED):
             task_logger.info("Guacamole already connected, skipping")
+            record_event(
+                task_uuid, instance_uuid, "guacamole_sync_skipped",
+                "Guacamole sync already completed, skipping",
+                event_code="GUAC_SYNC_SKIPPED",
+                metadata={
+                    "reason": "already_connected",
+                    "existing_connections": dict(instance.guacamole_connections or {}),
+                },
+                db=db,
+            )
             finish_task(task_uuid, "completed", db=db)
             return _enqueue_next(instance_uuid, trainee_id, task_id, "finalize")
 
@@ -451,32 +618,94 @@ def run_guacamole_connection(
         # Capture needed fields
         ip_address = instance.ip_address
         lab = instance.lab_definition
-        
+
         if not ip_address:
             fail_instance(instance_uuid, task_uuid, "No IP address for Guacamole connections", "missing_ip")
             return {"status": "failed"}
-        
+
         if not lab:
             fail_instance(instance_uuid, task_uuid, "No lab definition for Guacamole", "missing_lab")
             return {"status": "failed"}
 
-        db.commit()  # Release row lock before external I/O
+        slots = getattr(lab, "connection_slots", None) or []
+        if isinstance(slots, str):
+            try:
+                slots = json.loads(slots)
+            except json.JSONDecodeError:
+                slots = []
 
-    # External action: create Guacamole connections
-    try:
-        task_logger.info("Creating Guacamole connections")
-        
-        # _sync_guacamole_connections handles everything: slots, protocols, Vault creds, permissions
-        # It commits internally and updates instance.guacamole_connections
-        _sync_guacamole_connections(db, instance, lab, ip_address)
-        
-        # Reload connections from the now-committed instance
-        connections = dict(instance.guacamole_connections or {})
-        task_logger.info("Guacamole connections created | count=%d", len(connections))
-        
-    except Exception as e:
-        fail_instance(instance_uuid, task_uuid, f"Guacamole connection failed: {e}", "guacamole_failed")
-        return {"status": "failed"}
+        keycloak_username = None
+        try:
+            from app.services.LabInstance.utils import _resolve_keycloak_username
+            keycloak_username = _resolve_keycloak_username(db, instance.trainee_id)
+        except Exception:
+            pass
+
+        db.commit()  # Release row lock before external I/O, BUT keep session open
+
+        # Emit start event
+        record_event(
+            task_uuid, instance_uuid, "guacamole_sync_started",
+            f"Starting Guacamole connection sync for IP {ip_address}",
+            event_code="GUAC_SYNC_STARTED",
+            metadata={
+                "ip_address": ip_address,
+                "slot_count": len(slots),
+                "keycloak_username": keycloak_username,
+                "lab_slug": lab.slug,
+            },
+            db=db,
+        )
+        db.commit()  # Persist start event before external I/O
+
+        # ── External action: create Guacamole connections ──
+        try:
+            task_logger.info("Creating Guacamole connections for lab | ip=%s", ip_address)
+
+            # _sync_guacamole_connections handles everything: slots, protocols, Vault creds, permissions
+            # It commits internally and updates instance.guacamole_connections
+            _sync_guacamole_connections(db, instance, lab, ip_address)
+
+            # Reload connections from the now-committed instance
+            connections = dict(instance.guacamole_connections or {})
+            task_logger.info("Guacamole connections created | count=%d", len(connections))
+
+            # Emit completion event with full connection map
+            record_event(
+                task_uuid, instance_uuid, "guacamole_sync_completed",
+                f"Guacamole sync completed with {len(connections)} connection(s)",
+                event_code="GUAC_SYNC_COMPLETED",
+                metadata={
+                    "ip_address": ip_address,
+                    "connection_count": len(connections),
+                    "connection_ids": connections,
+                    "protocols": list({k.rsplit("_", 1)[-1] for k in connections.keys()}),
+                    "keycloak_username": keycloak_username,
+                },
+                db=db,
+            )
+            db.commit()  # Persist completion event
+
+        except Exception as e:
+            # Log full traceback so you see the real failure in Celery logs
+            task_logger.exception("Guacamole connection failed: %s", e)
+
+            # Emit failure event before calling fail_instance so we capture context
+            record_event(
+                task_uuid, instance_uuid, "guacamole_sync_failed",
+                f"Guacamole sync failed: {e}",
+                event_code="GUAC_SYNC_FAILED",
+                metadata={
+                    "ip_address": ip_address,
+                    "error": str(e),
+                    "lab_slug": lab.slug,
+                    "slot_count": len(slots),
+                },
+                db=db,
+            )
+            db.commit()  # Persist failure event
+            fail_instance(instance_uuid, task_uuid, f"Guacamole connection failed: {e}", "guacamole_failed")
+            return {"status": "failed"}
 
     # Persist stage — _sync_guacamole_connections already committed the connections
     persist_stage(
@@ -507,7 +736,7 @@ def run_finalize_instance(
 
     with background_session() as db:
         mark_running(task_uuid, worker_pid=os.getpid(), worker_host=socket.gethostname(), db=db)
-        
+
         instance = load_instance_locked(db, instance_uuid)
         if not instance:
             finish_task(task_uuid, "failed", "Instance not found", db=db)
@@ -515,6 +744,13 @@ def run_finalize_instance(
 
         if is_stage_reached(instance, LaunchStage.FINALIZED):
             task_logger.info("Already finalized, skipping")
+            record_event(
+                task_uuid, instance_uuid, "instance_finalization_skipped",
+                "Finalization already completed, skipping",
+                event_code="FINALIZE_SKIPPED",
+                metadata={"reason": "already_finalized", "instance_status": instance.status},
+                db=db,
+            )
             finish_task(task_uuid, "completed", db=db)
             return {"status": "success", "instance_id": instance_id}
 
@@ -524,12 +760,12 @@ def run_finalize_instance(
         # Update session_state with VM mapping
         session_state = dict(instance.session_state) if instance.session_state else {}
         runtime = dict(session_state.get("runtime_context", {}))
-        
+
         vm_mapping = {
             "vm_name": instance.vm_name or "lab-vm",
             "instance_id": instance.vm_uuid,
             "ip_address": instance.ip_address,
-            "hostname": instance.esxi_host,  # Include ESXi host
+            "hostname": instance.esxi_host,
             "status": "running",
         }
         runtime["vm_mappings"] = [vm_mapping]
@@ -541,20 +777,33 @@ def run_finalize_instance(
         instance.status = InstanceStatus.RUNNING.value
         instance.started_at = datetime.now(timezone.utc)
         instance.launch_stage = LaunchStage.FINALIZED.value
-        
+
         db.commit()
 
         # Register Redis expiry
+        redis_registered = False
+        redis_error = None
         try:
             if instance.expires_at:
                 register_instance_expiry(instance.id, instance.expires_at)
                 task_logger.info("Redis expiry registered")
+                redis_registered = True
         except Exception as e:
             task_logger.warning("Failed to register Redis expiry: %s", e)
+            redis_error = str(e)
 
         record_event(
             task_uuid, instance_uuid, "instance_finalized", "Instance is now running",
-            event_code="INSTANCE_RUNNING", db=db,
+            event_code="INSTANCE_RUNNING",
+            metadata={
+                "vm_mapping": vm_mapping,
+                "started_at": instance.started_at.isoformat(),
+                "expires_at": instance.expires_at.isoformat() if instance.expires_at else None,
+                "redis_expiry_registered": redis_registered,
+                "redis_error": redis_error,
+                "session_state_status": session_state.get("status"),
+            },
+            db=db,
         )
         finish_task(task_uuid, "completed", db=db)
 
@@ -615,5 +864,25 @@ def _enqueue_next(
         args.append(kwargs["vcenter_creds"]["host"])
 
     next_task_fn.apply_async(args=args, task_id=str(next_task_id), queue="lab.provisioning")
+
+    # Record chain advancement event in the current task's context
+    # We use a fresh session since this helper is called outside any task's with-block
+    from app.utils.db_session import background_session
+    with background_session() as db:
+        record_event(
+            uuid.UUID(current_task_id),
+            instance_uuid,
+            "task_enqueued",
+            f"Enqueued next stage: {next_stage}",
+            event_code="CHAIN_ADVANCED",
+            metadata={
+                "next_stage": next_stage,
+                "next_task_id": str(next_task_id),
+                "previous_task_id": current_task_id,
+                "queue": "lab.provisioning",
+            },
+            db=db,
+        )
+        db.commit()
 
     return {"status": "enqueued", "next_stage": next_stage, "next_task_id": str(next_task_id)}
