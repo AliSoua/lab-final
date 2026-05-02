@@ -6,7 +6,7 @@ The actual work is handled by the task chain in tasks/launch_chain.py.
 
 import uuid
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy.orm import Session
 
@@ -15,7 +15,6 @@ from app.models.LabDefinition.LabInstance import LabInstance
 from app.models.LabInstance.enums import InstanceStatus
 from app.services.LabDefinition.task_audit import start_task
 from app.services.LabInstance.utils import _compute_max_score, _build_initial_session_state
-from app.utils.expiry_queue import register_instance_expiry
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +44,11 @@ def enqueue_launch(
         .filter(
             LabInstance.lab_definition_id == lab_definition_id,
             LabInstance.trainee_id == trainee_id,
-            LabInstance.status.in_([InstanceStatus.PENDING.value, InstanceStatus.PROVISIONING.value, InstanceStatus.RUNNING.value]),
+            LabInstance.status.in_([
+                InstanceStatus.PENDING.value,
+                InstanceStatus.PROVISIONING.value,
+                InstanceStatus.RUNNING.value,
+            ]),
         )
         .with_for_update()
         .first()
@@ -53,7 +56,7 @@ def enqueue_launch(
     if existing:
         raise ValueError("An active instance of this lab already exists.")
 
-    # 3. Create instance
+    # 3. Create instance — NO expires_at yet, NO Redis registration yet
     duration = lab.duration_minutes or 60
     now = datetime.now(timezone.utc)
     instance = LabInstance(
@@ -63,7 +66,8 @@ def enqueue_launch(
         guide_version_id=lab.guide_version_id,
         status=InstanceStatus.PENDING.value,
         created_at=now,
-        expires_at=now + timedelta(minutes=duration),
+        # ← FIX: expires_at is NULL until finalize
+        expires_at=None,
         duration_minutes=duration,
         guacamole_connections={},
         current_step_index=0,
@@ -79,16 +83,13 @@ def enqueue_launch(
         trainee_id=trainee_id,
         max_score=max_score,
     )
-    instance.session_state["runtime_context"]["expires_at"] = instance.expires_at.isoformat() if instance.expires_at else None
+    # ← FIX: no expires_at in session_state yet — will be set at finalize
+    instance.session_state["runtime_context"]["expires_at"] = None
 
     db.commit()
     db.refresh(instance)
 
-    # Register Redis expiry
-    try:
-        register_instance_expiry(instance.id, instance.expires_at)
-    except Exception as e:
-        logger.error("Failed to register Redis expiry: %s", e)
+    # ← FIX: Removed register_instance_expiry — will be called at finalize
 
     # Start audit and enqueue first task
     task_audit_id = start_task(

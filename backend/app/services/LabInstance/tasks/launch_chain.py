@@ -10,7 +10,7 @@ import socket
 import logging
 import json
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, Optional
 
 from sqlalchemy.orm import Session
@@ -815,13 +815,26 @@ def run_finalize_instance(
 
         db.commit()
 
-        # Register Redis expiry
+        # ← FIX: Calculate expires_at ONLY when lab is actually ready
+        duration = instance.duration_minutes or 60
+        instance.expires_at = datetime.now(timezone.utc) + timedelta(minutes=duration)
+        
+        # Update session_state with the REAL expiry
+        session_state = dict(instance.session_state) if instance.session_state else {}
+        runtime = dict(session_state.get("runtime_context", {}))
+        runtime["expires_at"] = instance.expires_at.isoformat()
+        session_state["runtime_context"] = runtime
+        instance.session_state = session_state
+
+        db.commit()  # Persist the new expires_at
+
+        # Register Redis expiry with the CORRECT time
         redis_registered = False
         redis_error = None
         try:
             if instance.expires_at:
                 register_instance_expiry(instance.id, instance.expires_at)
-                task_logger.info("Redis expiry registered")
+                task_logger.info("Redis expiry registered | expires_at=%s", instance.expires_at.isoformat())
                 redis_registered = True
         except Exception as e:
             task_logger.warning("Failed to register Redis expiry: %s", e)
