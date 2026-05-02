@@ -7,11 +7,12 @@ import { useLabCountdown } from "./hooks/useLabCountdown"
 import { useLabConnections } from "./hooks/useLabConnections"
 import type { LabInstanceRuntimeResponse } from "@/types/LabInstance/Trainee/LabRuntime"
 import type { GuideVersion } from "@/types/LabGuide"
+import type { ProvisioningStage } from "@/components/LabInstance/Trainee/InstanceRun/GuacamoleClient"
 import { FullPageLoader, FullPageError } from "./shared/FullPageStates"
 import { LabHeader } from "./sections/LabHeader"
 import { LabWorkspace } from "./sections/LabWorkspace"
-import { ExpiryWarningModal, ExpiredModal } from "./sections/LabModals"
-import { AlertCircle, Loader2 } from "lucide-react"
+import { ExpiryToast, ExpiredModal } from "./sections/LabModals"
+import { AlertCircle } from "lucide-react"
 
 interface LabRunPageProps {
     instanceId: string
@@ -28,10 +29,15 @@ export function LabRunPage({ instanceId }: LabRunPageProps) {
     const [isBootstrapping, setIsBootstrapping] = useState(true)
     const [bootstrapError, setBootstrapError] = useState<string | null>(null)
 
+    // ── Ready State ───────────────────────────────────────────────────
+    // CRITICAL: Only true after INSTANCE_RUNNING event. Gates countdown and UI.
+    const [isReady, setIsReady] = useState(false)
+    const [readyExpiresAt, setReadyExpiresAt] = useState<string | null>(null)
+
     // ── Countdown ─────────────────────────────────────────────────────
-    const [expiresAt, setExpiresAt] = useState<string | null>(null)
-    const [countdownState, countdownActions] = useLabCountdown(expiresAt)
-    const { isExpired, formattedTime, minutesRemaining } = countdownState
+    // Only starts when isReady=true and readyExpiresAt is set
+    const [countdownState, countdownActions] = useLabCountdown(readyExpiresAt, isReady)
+    const { isExpired, formattedTime, minutesRemaining, showWarning } = countdownState
 
     // ── Connections ───────────────────────────────────────────────────
     const { entries, activeKey, activeConnectionId, hasConnections } = useLabConnections(runtime?.guacamole_connections)
@@ -46,24 +52,26 @@ export function LabRunPage({ instanceId }: LabRunPageProps) {
         hasFailed: sseFailed,
         failureMessage: sseFailureMessage,
         close: closeSse,
-    } = useLabInstanceEvents(instanceId, needsProvisioning && !hasConnections)
+    } = useLabInstanceEvents(instanceId, needsProvisioning && !isReady)
 
-    // When SSE signals ready, fetch full state to get connections
+    // When SSE signals ready, fetch full state ONCE, then freeze
     useEffect(() => {
-        if (sseReady && !hasConnections) {
-            refreshInstance(instanceId)
-                .then((fresh) => {
-                    setRuntime(fresh)
-                    if (fresh.expires_at) setExpiresAt(fresh.expires_at)
-                })
-                .catch(() => {
-                    // Error handled by hook
-                })
-                .finally(() => {
-                    closeSse()
-                })
-        }
-    }, [sseReady, hasConnections, instanceId, refreshInstance, closeSse])
+        if (!sseReady || isReady) return
+
+        refreshInstance(instanceId)
+            .then((fresh) => {
+                setRuntime(fresh)
+                setIsReady(true)
+                // Freeze expiresAt — never update from subsequent refreshes
+                if (fresh.expires_at) setReadyExpiresAt(fresh.expires_at)
+            })
+            .catch(() => {
+                // Error handled by hook
+            })
+            .finally(() => {
+                closeSse()
+            })
+    }, [sseReady, isReady, instanceId, refreshInstance, closeSse])
 
     // ── Bootstrap: Load once ──────────────────────────────────────────
     useEffect(() => {
@@ -75,7 +83,12 @@ export function LabRunPage({ instanceId }: LabRunPageProps) {
                 if (cancelled) return
 
                 setRuntime(rt)
-                if (rt.expires_at) setExpiresAt(rt.expires_at)
+
+                // If already running (page refresh after ready), set ready immediately
+                if (rt.status === "running" && rt.expires_at) {
+                    setIsReady(true)
+                    setReadyExpiresAt(rt.expires_at)
+                }
 
                 try {
                     const gv = await getGuideVersion(instanceId)
@@ -97,9 +110,7 @@ export function LabRunPage({ instanceId }: LabRunPageProps) {
     // ── Auto-redirect on expiry ───────────────────────────────────────
     useEffect(() => {
         if (isExpired) {
-            const timer = window.setTimeout(() => {
-                navigate("/labs")
-            }, 5000)
+            const timer = window.setTimeout(() => navigate("/labs"), 5000)
             return () => window.clearTimeout(timer)
         }
     }, [isExpired, navigate])
@@ -111,8 +122,7 @@ export function LabRunPage({ instanceId }: LabRunPageProps) {
         try {
             const fresh = await refreshInstance(instanceId)
             setRuntime(fresh)
-            if (fresh.expires_at) setExpiresAt(fresh.expires_at)
-            return fresh
+            // Never update readyExpiresAt from manual refresh — keep frozen
         } catch {
             // Error handled by hook
         }
@@ -146,16 +156,18 @@ export function LabRunPage({ instanceId }: LabRunPageProps) {
     }
 
     const activeEntry = entries.find(e => e.key === activeKey)
-
-    // Determine if we should show the provisioning overlay
-    const showProvisioning = needsProvisioning && !hasConnections && !sseFailed
+    const showProvisioningOverlay = needsProvisioning && !isReady && !sseFailed
 
     return (
         <div className="flex h-full flex-col bg-[#f9f9f9]">
-            {/* Modals */}
-            {countdownState.showWarning && minutesRemaining !== null && (
-                <ExpiryWarningModal minutesRemaining={minutesRemaining} onContinue={countdownActions.dismissWarning} />
+            {/* Expiry Toast — non-blocking, inside header area */}
+            {showWarning && minutesRemaining !== null && (
+                <div className="shrink-0 px-4 pt-3">
+                    <ExpiryToast minutesRemaining={minutesRemaining} onDismiss={countdownActions.dismissWarning} />
+                </div>
             )}
+
+            {/* Expired Modal — blocking, unavoidable */}
             {isExpired && <ExpiredModal onExit={() => navigate("/labs")} />}
 
             {/* Header */}
@@ -167,6 +179,7 @@ export function LabRunPage({ instanceId }: LabRunPageProps) {
                 formattedTime={formattedTime}
                 minutesRemaining={minutesRemaining}
                 connectionCount={entries.length}
+                isReady={isReady}
                 isRefreshing={false}
                 isTerminating={isTerminating}
                 onBack={handleBack}
@@ -174,7 +187,7 @@ export function LabRunPage({ instanceId }: LabRunPageProps) {
                 onTerminate={handleTerminate}
             />
 
-            {/* Error Banner */}
+            {/* Error Banner — only for failed status */}
             {runtime.status === "failed" && runtime.error_message && (
                 <div className="mx-4 mt-3 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-red-800">
                     <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-red-600" />
@@ -185,43 +198,16 @@ export function LabRunPage({ instanceId }: LabRunPageProps) {
                 </div>
             )}
 
-            {/* SSE Provisioning Banner (replaces silent polling) */}
-            {showProvisioning && (
-                <div className="mx-4 mt-3 flex items-center gap-3 rounded-xl border border-[#1ca9b1]/20 bg-[#1ca9b1]/5 px-4 py-3 text-[#1ca9b1]">
-                    <Loader2 className="h-5 w-5 shrink-0 animate-spin" />
-                    <div className="min-w-0">
-                        <p className="text-[13px] font-semibold">Provisioning lab</p>
-                        <p className="mt-0.5 text-[12px] text-[#1ca9b1]/80 break-words">
-                            {provisioningMessage}
-                            {sseConnected && (
-                                <span className="ml-2 inline-flex h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse" />
-                            )}
-                        </p>
-                        {provisioningStage && (
-                            <div className="mt-2 flex gap-1">
-                                {["validated", "vcenter_discovered", "vm_cloned", "vm_powered_on", "ip_discovered", "guacamole_connected", "finalized"].map((stage, i) => {
-                                    const reached = ["validated", "vcenter_discovered", "vm_cloned", "vm_powered_on", "ip_discovered", "guacamole_connected", "finalized"].indexOf(provisioningStage ?? "") >= i
-                                    return (
-                                        <div
-                                            key={stage}
-                                            className={`h-1 flex-1 rounded-full ${reached ? "bg-[#1ca9b1]" : "bg-[#1ca9b1]/20"}`}
-                                        />
-                                    )
-                                })}
-                            </div>
-                        )}
-                    </div>
-                </div>
-            )}
-
-            {/* Workspace */}
+            {/* Workspace — provisioning overlay is now inside GuacamoleClient */}
             <LabWorkspace
                 guide={guide}
                 guideError={guideError}
                 currentStepIndex={runtime.current_step_index ?? 0}
                 connectionId={activeConnectionId}
                 connectionTitle={activeEntry?.key ?? "Console"}
-                isProvisioning={showProvisioning}
+                isProvisioning={showProvisioningOverlay}
+                provisioningMessage={provisioningMessage}
+                provisioningStage={provisioningStage as ProvisioningStage}
                 onStepChange={handleStepChange}
                 onRunCommand={handleRunCommand}
             />

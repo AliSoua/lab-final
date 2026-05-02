@@ -1,17 +1,18 @@
 // src/components/LabInstance/Trainee/InstanceRun/sections/LabHeader.tsx
-import { ArrowLeft, Monitor, Power, RefreshCw, PowerOff } from "lucide-react"
+import { ArrowLeft, Monitor, Power, RefreshCw, PowerOff, Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { StatusBadge } from "../shared/StatusBadge"
 import { TimeDisplay } from "../shared/TimeDisplay"
 
 interface LabHeaderProps {
     instanceId: string
-    labName?: string  // ← FIXED: Made optional
+    labName?: string
     status: string
     powerState: string | null | undefined
     formattedTime: string | null
     minutesRemaining: number | null
     connectionCount: number
+    isReady: boolean
     isRefreshing: boolean
     isTerminating: boolean
     onBack: () => void
@@ -27,6 +28,7 @@ export function LabHeader({
     formattedTime,
     minutesRemaining,
     connectionCount,
+    isReady,
     isRefreshing,
     isTerminating,
     onBack,
@@ -67,7 +69,15 @@ export function LabHeader({
                     </div>
                 )}
 
-                <TimeDisplay formattedTime={formattedTime} minutesRemaining={minutesRemaining} />
+                {/* Timer — shows "Waiting..." until lab is ready */}
+                {isReady ? (
+                    <TimeDisplay formattedTime={formattedTime} minutesRemaining={minutesRemaining} />
+                ) : (
+                    <div className="flex items-center gap-1.5 border-l border-[#e8e8e8] pl-4 text-[#c4c4c4]">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        <span className="text-[11px]">Waiting for lab...</span>
+                    </div>
+                )}
 
                 <div className="flex items-center gap-1.5 border-l border-[#e8e8e8] pl-4">
                     <Power className="h-3.5 w-3.5" />

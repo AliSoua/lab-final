@@ -2,6 +2,7 @@
 import { ResizableLabWorkspace } from "@/components/LabInstance/Trainee/InstanceRun/ResizableLabWorkspace"
 import { LabGuidePanel } from "@/components/LabInstance/Trainee/InstanceRun/LabGuidePanel/index"
 import GuacamoleClient from "@/components/LabInstance/Trainee/InstanceRun/GuacamoleClient"
+import type { ProvisioningStage } from "@/components/LabInstance/Trainee/InstanceRun/GuacamoleClient"
 import type { GuideVersion } from "@/types/LabGuide"
 
 interface LabWorkspaceProps {
@@ -11,6 +12,8 @@ interface LabWorkspaceProps {
     connectionId: string | null
     connectionTitle: string
     isProvisioning: boolean
+    provisioningMessage?: string
+    provisioningStage?: ProvisioningStage
     onStepChange: (index: number) => void
     onRunCommand: (stepId: string, commandIndex: number) => void
 }
@@ -22,6 +25,8 @@ export function LabWorkspace({
     connectionId,
     connectionTitle,
     isProvisioning,
+    provisioningMessage,
+    provisioningStage,
     onStepChange,
     onRunCommand,
 }: LabWorkspaceProps) {
@@ -45,6 +50,8 @@ export function LabWorkspace({
                         connectionId={connectionId}
                         title={connectionTitle}
                         isProvisioning={isProvisioning}
+                        provisioningMessage={provisioningMessage}
+                        provisioningStage={provisioningStage}
                         errorMessage={guideError}
                     />
                 }

@@ -25,7 +25,7 @@ from app.models.LabInstance.enums import (
 )
 from app.config.connection.vcenter_client import VCenterClient
 from app.services.LabDefinition.task_audit import (
-    start_task, finish_task, mark_running, record_event, update_task_progress,
+    start_task, finish_task, mark_running, record_event,
 )
 from app.services.LabInstance.shared import (
     load_instance_locked, is_stage_reached, persist_stage,
@@ -54,6 +54,7 @@ def run_validate_instance(
     """
     task_uuid = uuid.UUID(task_id)
     instance_uuid = uuid.UUID(instance_id)
+    task_start_ts = datetime.now(timezone.utc)
     task_logger = log_task(logger, task_id=task_id, instance_id=instance_id, trainee_id=trainee_id)
 
     with background_session() as db:
@@ -67,11 +68,12 @@ def run_validate_instance(
         # Idempotency: already validated?
         if is_stage_reached(instance, LaunchStage.VALIDATED):
             task_logger.info("Stage already validated, skipping")
+            duration = (datetime.now(timezone.utc) - task_start_ts).total_seconds()
             record_event(
                 task_uuid, instance_uuid, "instance_validation_skipped",
                 "Validation stage already completed, skipping",
                 event_code="VALIDATION_SKIPPED",
-                metadata={"reason": "already_validated", "launch_stage": instance.launch_stage},
+                metadata={"reason": "already_validated", "launch_stage": instance.launch_stage, "duration_seconds": duration},
                 db=db,
             )
             finish_task(task_uuid, "completed", db=db)
@@ -100,6 +102,7 @@ def run_validate_instance(
         instance.status = InstanceStatus.PROVISIONING.value
         db.commit()
 
+        duration = (datetime.now(timezone.utc) - task_start_ts).total_seconds()
         record_event(
             task_uuid, instance_uuid, "instance_validated", "Validation passed",
             event_code="VALIDATION_PASSED",
@@ -107,6 +110,7 @@ def run_validate_instance(
                 "lab_definition_id": str(lab.id),
                 "guide_version_id": str(lab.guide_version_id) if lab.guide_version_id else None,
                 "vm_count": len(lab.vms) if lab.vms else 0,
+                "duration_seconds": duration,
             },
             db=db,
         )
@@ -130,6 +134,7 @@ def run_discover_vcenter(
     """
     task_uuid = uuid.UUID(task_id)
     instance_uuid = uuid.UUID(instance_id)
+    task_start_ts = datetime.now(timezone.utc)
     task_logger = log_task(logger, task_id=task_id, instance_id=instance_id, trainee_id=trainee_id)
 
     with background_session() as db:
@@ -142,11 +147,12 @@ def run_discover_vcenter(
 
         if is_stage_reached(instance, LaunchStage.VCENTER_DISCOVERED):
             task_logger.info("Stage already vcenter_discovered, skipping")
+            duration = (datetime.now(timezone.utc) - task_start_ts).total_seconds()
             record_event(
                 task_uuid, instance_uuid, "vcenter_discovery_skipped",
                 "vCenter discovery already completed, skipping",
                 event_code="VCENTER_SKIPPED",
-                metadata={"reason": "already_discovered", "vcenter_host": instance.vcenter_host},
+                metadata={"reason": "already_discovered", "vcenter_host": instance.vcenter_host, "duration_seconds": duration},
                 db=db,
             )
             finish_task(task_uuid, "completed", db=db)
@@ -181,15 +187,19 @@ def run_discover_vcenter(
 
     # Record discovery event outside the session (persist_stage manages its own DB)
     # We open a short session just for the event so metadata is captured
+    duration = (datetime.now(timezone.utc) - task_start_ts).total_seconds()
     with background_session() as db:
         record_event(
             task_uuid, instance_uuid, "vcenter_discovered",
             f"Template {source_vm_id} located on vCenter {creds['host']}",
             event_code="VCENTER_FOUND",
-            metadata={"vcenter_host": creds["host"], "source_vm_id": source_vm_id},
+            metadata={"vcenter_host": creds["host"], "source_vm_id": source_vm_id, "duration_seconds": duration},
             db=db,
         )
         db.commit()
+
+    with background_session() as db:
+        finish_task(task_uuid, "completed", db=db)
 
     return _enqueue_next(instance_uuid, trainee_id, task_id, "clone_vm", vcenter_creds=creds)
 
@@ -210,6 +220,7 @@ def run_clone_vm(
     """
     task_uuid = uuid.UUID(task_id)
     instance_uuid = uuid.UUID(instance_id)
+    task_start_ts = datetime.now(timezone.utc)
     task_logger = log_task(logger, task_id=task_id, instance_id=instance_id, trainee_id=trainee_id)
 
     with background_session() as db:
@@ -222,11 +233,12 @@ def run_clone_vm(
 
         if is_stage_reached(instance, LaunchStage.VM_CLONED) or instance.vm_uuid:
             task_logger.info("VM already cloned, skipping | vm_uuid=%s", instance.vm_uuid)
+            duration = (datetime.now(timezone.utc) - task_start_ts).total_seconds()
             record_event(
                 task_uuid, instance_uuid, "clone_skipped",
                 "VM clone already completed, skipping",
                 event_code="CLONE_SKIPPED",
-                metadata={"reason": "already_cloned", "existing_vm_uuid": instance.vm_uuid},
+                metadata={"reason": "already_cloned", "existing_vm_uuid": instance.vm_uuid, "duration_seconds": duration},
                 db=db,
             )
             finish_task(task_uuid, "completed", db=db)
@@ -254,7 +266,6 @@ def run_clone_vm(
         return {"status": "failed"}
 
     new_vm_name = f"{lab_slug}-{trainee_id[:8]}-{uuid.uuid4().hex[:8]}"
-    clone_start_ts = datetime.now(timezone.utc)
 
     try:
         task_logger.info("Cloning VM | template=%s name=%s", source_vm_id, new_vm_name)
@@ -274,14 +285,13 @@ def run_clone_vm(
             )
             db.commit()
 
-        update_task_progress(task_uuid, 10)
         clone_result = _call_with_timeout(client.clone_vm, 220, template_uuid=source_vm_id, new_vm_name=new_vm_name)
         vm_uuid = clone_result["uuid"]
 
         task_logger.info("Clone completed | vm_uuid=%s", vm_uuid)
-        update_task_progress(task_uuid, 100)
 
         # Emit completion event
+        duration = (datetime.now(timezone.utc) - task_start_ts).total_seconds()
         with background_session() as db:
             record_event(
                 task_uuid, instance_uuid, "clone_completed",
@@ -291,7 +301,7 @@ def run_clone_vm(
                     "vm_uuid": vm_uuid,
                     "vm_name": new_vm_name,
                     "vcenter_host": creds["host"],
-                    "duration_seconds": (datetime.now(timezone.utc) - clone_start_ts).total_seconds(),
+                    "duration_seconds": duration,
                 },
                 db=db,
             )
@@ -309,6 +319,9 @@ def run_clone_vm(
         updates={"vm_uuid": vm_uuid, "vm_name": new_vm_name},
         task_id=task_uuid,
     )
+
+    with background_session() as db:
+        finish_task(task_uuid, "completed", db=db)
 
     return _enqueue_next(instance_uuid, trainee_id, task_id, "power_on_vm")
 
@@ -328,6 +341,7 @@ def run_power_on_vm(
     """
     task_uuid = uuid.UUID(task_id)
     instance_uuid = uuid.UUID(instance_id)
+    task_start_ts = datetime.now(timezone.utc)
     task_logger = log_task(logger, task_id=task_id, instance_id=instance_id, trainee_id=trainee_id)
 
     with background_session() as db:
@@ -340,11 +354,12 @@ def run_power_on_vm(
 
         if is_stage_reached(instance, LaunchStage.VM_POWERED_ON):
             task_logger.info("VM already powered on, skipping")
+            duration = (datetime.now(timezone.utc) - task_start_ts).total_seconds()
             record_event(
                 task_uuid, instance_uuid, "power_on_skipped",
                 "VM power-on already completed, skipping",
                 event_code="POWER_ON_SKIPPED",
-                metadata={"reason": "already_powered_on", "vm_uuid": instance.vm_uuid},
+                metadata={"reason": "already_powered_on", "vm_uuid": instance.vm_uuid, "duration_seconds": duration},
                 db=db,
             )
             finish_task(task_uuid, "completed", db=db)
@@ -383,12 +398,13 @@ def run_power_on_vm(
         _call_with_timeout(client.power_on_vm, 120, vm_uuid)
         task_logger.info("VM powered on")
 
+        duration = (datetime.now(timezone.utc) - task_start_ts).total_seconds()
         with background_session() as db:
             record_event(
                 task_uuid, instance_uuid, "power_on_completed",
                 "VM powered on successfully",
                 event_code="POWER_ON_COMPLETED",
-                metadata={"vm_uuid": vm_uuid, "vcenter_host": creds["host"]},
+                metadata={"vm_uuid": vm_uuid, "vcenter_host": creds["host"], "duration_seconds": duration},
                 db=db,
             )
             db.commit()
@@ -405,6 +421,9 @@ def run_power_on_vm(
         task_id=task_uuid,
     )
 
+    with background_session() as db:
+        finish_task(task_uuid, "completed", db=db)
+
     return _enqueue_next(instance_uuid, trainee_id, task_id, "discover_ip")
 
 
@@ -419,6 +438,7 @@ def run_discover_ip(
 ) -> Dict[str, Any]:
     task_uuid = uuid.UUID(task_id)
     instance_uuid = uuid.UUID(instance_id)
+    task_start_ts = datetime.now(timezone.utc)
     task_logger = log_task(logger, task_id=task_id, instance_id=instance_id, trainee_id=trainee_id)
 
     with background_session() as db:
@@ -431,6 +451,7 @@ def run_discover_ip(
 
         if is_stage_reached(instance, LaunchStage.IP_DISCOVERED):
             task_logger.info("IP already discovered, skipping")
+            duration = (datetime.now(timezone.utc) - task_start_ts).total_seconds()
             record_event(
                 task_uuid, instance_uuid, "ip_discovery_skipped",
                 "IP discovery already completed, skipping",
@@ -439,6 +460,7 @@ def run_discover_ip(
                     "reason": "already_discovered",
                     "ip_address": instance.ip_address,
                     "esxi_host": instance.esxi_host,
+                    "duration_seconds": duration,
                 },
                 db=db,
             )
@@ -507,10 +529,6 @@ def run_discover_ip(
 
             task_logger.info("IP not ready yet, retrying in %ds... (%d/%d)", poll_interval, elapsed, max_wait_seconds)
 
-            # Update progress so the task doesn't look stuck
-            progress = min(10 + int((elapsed / max_wait_seconds) * 80), 90)
-            update_task_progress(task_uuid, progress)
-
             # Emit retry event every 2 attempts (every 40s) to avoid spam
             if attempt % 2 == 0:
                 with background_session() as db:
@@ -534,6 +552,7 @@ def run_discover_ip(
         esxi_host = client.get_vm_esxi_host(vm_uuid)
         task_logger.info("ESXi host discovered | host=%s", esxi_host)
 
+        duration = (datetime.now(timezone.utc) - task_start_ts).total_seconds()
         with background_session() as db:
             record_event(
                 task_uuid, instance_uuid, "ip_discovered",
@@ -546,6 +565,7 @@ def run_discover_ip(
                     "elapsed_seconds": elapsed,
                     "attempts": attempt,
                     "vm_uuid": vm_uuid,
+                    "duration_seconds": duration,
                 },
                 db=db,
             )
@@ -569,6 +589,9 @@ def run_discover_ip(
         task_id=task_uuid,
     )
 
+    with background_session() as db:
+        finish_task(task_uuid, "completed", db=db)
+
     return _enqueue_next(instance_uuid, trainee_id, task_id, "guacamole_connection")
 
 
@@ -587,6 +610,7 @@ def run_guacamole_connection(
     """
     task_uuid = uuid.UUID(task_id)
     instance_uuid = uuid.UUID(instance_id)
+    task_start_ts = datetime.now(timezone.utc)
     task_logger = log_task(logger, task_id=task_id, instance_id=instance_id, trainee_id=trainee_id)
 
     with background_session() as db:
@@ -599,6 +623,7 @@ def run_guacamole_connection(
 
         if is_stage_reached(instance, LaunchStage.GUACAMOLE_CONNECTED):
             task_logger.info("Guacamole already connected, skipping")
+            duration = (datetime.now(timezone.utc) - task_start_ts).total_seconds()
             record_event(
                 task_uuid, instance_uuid, "guacamole_sync_skipped",
                 "Guacamole sync already completed, skipping",
@@ -606,6 +631,7 @@ def run_guacamole_connection(
                 metadata={
                     "reason": "already_connected",
                     "existing_connections": dict(instance.guacamole_connections or {}),
+                    "duration_seconds": duration,
                 },
                 db=db,
             )
@@ -671,6 +697,7 @@ def run_guacamole_connection(
             task_logger.info("Guacamole connections created | count=%d", len(connections))
 
             # Emit completion event with full connection map
+            duration = (datetime.now(timezone.utc) - task_start_ts).total_seconds()
             record_event(
                 task_uuid, instance_uuid, "guacamole_sync_completed",
                 f"Guacamole sync completed with {len(connections)} connection(s)",
@@ -681,6 +708,7 @@ def run_guacamole_connection(
                     "connection_ids": connections,
                     "protocols": list({k.rsplit("_", 1)[-1] for k in connections.keys()}),
                     "keycloak_username": keycloak_username,
+                    "duration_seconds": duration,
                 },
                 db=db,
             )
@@ -691,6 +719,7 @@ def run_guacamole_connection(
             task_logger.exception("Guacamole connection failed: %s", e)
 
             # Emit failure event before calling fail_instance so we capture context
+            duration = (datetime.now(timezone.utc) - task_start_ts).total_seconds()
             record_event(
                 task_uuid, instance_uuid, "guacamole_sync_failed",
                 f"Guacamole sync failed: {e}",
@@ -700,6 +729,7 @@ def run_guacamole_connection(
                     "error": str(e),
                     "lab_slug": lab.slug,
                     "slot_count": len(slots),
+                    "duration_seconds": duration,
                 },
                 db=db,
             )
@@ -713,6 +743,9 @@ def run_guacamole_connection(
         LaunchStage.GUACAMOLE_CONNECTED,
         task_id=task_uuid,
     )
+
+    with background_session() as db:
+        finish_task(task_uuid, "completed", db=db)
 
     return _enqueue_next(instance_uuid, trainee_id, task_id, "finalize")
 
@@ -732,6 +765,7 @@ def run_finalize_instance(
     """
     task_uuid = uuid.UUID(task_id)
     instance_uuid = uuid.UUID(instance_id)
+    task_start_ts = datetime.now(timezone.utc)
     task_logger = log_task(logger, task_id=task_id, instance_id=instance_id, trainee_id=trainee_id)
 
     with background_session() as db:
@@ -744,11 +778,12 @@ def run_finalize_instance(
 
         if is_stage_reached(instance, LaunchStage.FINALIZED):
             task_logger.info("Already finalized, skipping")
+            duration = (datetime.now(timezone.utc) - task_start_ts).total_seconds()
             record_event(
                 task_uuid, instance_uuid, "instance_finalization_skipped",
                 "Finalization already completed, skipping",
                 event_code="FINALIZE_SKIPPED",
-                metadata={"reason": "already_finalized", "instance_status": instance.status},
+                metadata={"reason": "already_finalized", "instance_status": instance.status, "duration_seconds": duration},
                 db=db,
             )
             finish_task(task_uuid, "completed", db=db)
@@ -792,6 +827,7 @@ def run_finalize_instance(
             task_logger.warning("Failed to register Redis expiry: %s", e)
             redis_error = str(e)
 
+        duration = (datetime.now(timezone.utc) - task_start_ts).total_seconds()
         record_event(
             task_uuid, instance_uuid, "instance_finalized", "Instance is now running",
             event_code="INSTANCE_RUNNING",
@@ -802,6 +838,7 @@ def run_finalize_instance(
                 "redis_expiry_registered": redis_registered,
                 "redis_error": redis_error,
                 "session_state_status": session_state.get("status"),
+                "duration_seconds": duration,
             },
             db=db,
         )

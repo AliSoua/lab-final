@@ -40,6 +40,14 @@ export interface LabInstance {
     expires_at?: string | null
 
     error_message?: string | null
+    updated_at?: string | null
+    launch_stage?: string | null
+    launched_by_user_id?: string | null
+    termination_reason?: string | null
+    failure_reason?: string | null
+    terminated_by_user_id?: string | null
+    cleanup_at?: string | null
+    esxi_host?: string | null
 }
 
 export interface LabInstanceCreate {

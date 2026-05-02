@@ -1,12 +1,46 @@
+// src/components/LabInstance/Trainee/InstanceRun/GuacamoleClient.tsx
 import { useEffect, useRef, useState } from "react"
 import Guacamole from "guacamole-common-js"
 import { Loader2, AlertCircle } from "lucide-react"
+import { cn } from "@/lib/utils"
+
+export type ProvisioningStage =
+    | "validated"
+    | "vcenter_discovered"
+    | "vm_cloned"
+    | "vm_powered_on"
+    | "ip_discovered"
+    | "guacamole_connected"
+    | "finalized"
+    | null
 
 interface GuacamoleClientProps {
     connectionId: string | null
     title: string
     isProvisioning: boolean
+    provisioningMessage?: string
+    provisioningStage?: ProvisioningStage
     errorMessage?: string | null
+}
+
+const STAGE_ORDER: ProvisioningStage[] = [
+    "validated",
+    "vcenter_discovered",
+    "vm_cloned",
+    "vm_powered_on",
+    "ip_discovered",
+    "guacamole_connected",
+    "finalized",
+]
+
+const STAGE_LABELS: Record<string, string> = {
+    validated: "Validate",
+    vcenter_discovered: "vCenter",
+    vm_cloned: "Clone",
+    vm_powered_on: "Power On",
+    ip_discovered: "Network",
+    guacamole_connected: "Connect",
+    finalized: "Ready",
 }
 
 function getGuacWebSocketUrl(): string {
@@ -26,6 +60,8 @@ export default function GuacamoleClient({
     connectionId,
     title,
     isProvisioning,
+    provisioningMessage,
+    provisioningStage,
     errorMessage,
 }: GuacamoleClientProps) {
     const containerRef = useRef<HTMLDivElement>(null)
@@ -50,7 +86,6 @@ export default function GuacamoleClient({
             let token = localStorage.getItem("guacamole_token")
             const tokenExpiry = localStorage.getItem("guacamole_token_expiry")
 
-            // Invalidate cached token if expired (Guacamole tokens last ~24h, we check 1h)
             if (token && tokenExpiry && Date.now() > parseInt(tokenExpiry, 10)) {
                 token = null
                 localStorage.removeItem("guacamole_token")
@@ -61,14 +96,10 @@ export default function GuacamoleClient({
                 try {
                     const res = await fetch("/guacamole/api/tokens", {
                         method: "POST",
-                        headers: {
-                            "Content-Type": "application/x-www-form-urlencoded",
-                        },
+                        headers: { "Content-Type": "application/x-www-form-urlencoded" },
                         body: "username=sso&password=sso",
                     })
-                    if (!res.ok) {
-                        throw new Error(`Token fetch failed: ${res.status} ${res.statusText}`)
-                    }
+                    if (!res.ok) throw new Error(`Token fetch failed: ${res.status}`)
                     const data = await res.json()
                     token = data.authToken ?? data.token ?? null
                     if (token) {
@@ -98,9 +129,7 @@ export default function GuacamoleClient({
         setStatus("connecting")
         setError(null)
 
-        const tunnel = new Guacamole.WebSocketTunnel(
-            `${GUAC_WS_BASE}/websocket-tunnel`
-        )
+        const tunnel = new Guacamole.WebSocketTunnel(`${GUAC_WS_BASE}/websocket-tunnel`)
         tunnelRef.current = tunnel
 
         const client = new Guacamole.Client(tunnel)
@@ -110,7 +139,8 @@ export default function GuacamoleClient({
         const display = client.getDisplay().getElement()
         display.style.width = "100%"
         display.style.height = "100%"
-        display.tabIndex = -1 // Make focusable for keyboard
+        display.style.pointerEvents = "auto" // ← Ensure mouse events pass through
+        display.tabIndex = -1
         containerRef.current.innerHTML = ""
         containerRef.current.appendChild(display)
 
@@ -129,7 +159,6 @@ export default function GuacamoleClient({
         display.addEventListener("click", () => display.focus())
 
         // Keyboard — bound to document but filtered by mouse hover
-        // This prevents typing in the guide panel from sending keystrokes to the VM
         const keyboard = new Guacamole.Keyboard(document)
         keyboard.onkeydown = (keysym: number) => {
             if (isMouseOverRef.current) client.sendKeyEvent(1, keysym)
@@ -141,31 +170,27 @@ export default function GuacamoleClient({
 
         // State changes
         client.onstatechange = (state: number) => {
-            // Guacamole states: 0=idle, 1=connecting, 2=waiting, 3=connected, 4=disconnecting, 5=disconnected
-            if (state === 3) {
-                setStatus("connected")
-            } else if (state === 4 || state === 5) {
-                setError(state === 4 ? "Session disconnecting" : "Disconnected from session")
+            if (state === 3) setStatus("connected")
+            else if (state === 4 || state === 5) {
+                setError(state === 4 ? "Session disconnecting" : "Disconnected")
                 setStatus("error")
             }
         }
 
         client.onerror = (err: any) => {
-            const msg = err?.message || "Connection failed"
-            setError(msg)
+            setError(err?.message || "Connection failed")
             setStatus("error")
         }
 
-        // Tunnel-level errors — CRITICAL for catching protocol rejections
         tunnel.onerror = (status: any) => {
             const msg = typeof status === "number"
                 ? `Tunnel error (HTTP ${status})`
-                : (status?.message || "Tunnel connection failed — check connection ID format")
+                : (status?.message || "Tunnel connection failed")
             setError(msg)
             setStatus("error")
         }
 
-        // Resize observer — sends display size to Guacamole when container changes
+        // Resize observer
         const resizeObserver = new ResizeObserver((entries) => {
             if (!clientRef.current) return
             for (const entry of entries) {
@@ -175,97 +200,116 @@ export default function GuacamoleClient({
                 }
             }
         })
-        if (containerRef.current) {
-            resizeObserver.observe(containerRef.current)
-        }
+        if (containerRef.current) resizeObserver.observe(containerRef.current)
         resizeObserverRef.current = resizeObserver
 
-        // ── THE FIX: Use id=c/<connectionId> not connection=<connectionId> ──
         client.connect(`token=${guacToken}&GUAC_TYPE=c&GUAC_DATA_SOURCE=postgresql&GUAC_ID=${connectionId}`)
 
         return () => {
-            // Cleanup resize observer
             resizeObserver.disconnect()
             resizeObserverRef.current = null
-
-            // Cleanup mouse hover listeners
             display.removeEventListener("mouseenter", onMouseEnter)
             display.removeEventListener("mouseleave", onMouseLeave)
-
-            // Cleanup keyboard
             if (keyboardRef.current) {
                 keyboardRef.current.onkeydown = null
                 keyboardRef.current.onkeyup = null
                 keyboardRef.current = null
             }
-
-            // Cleanup mouse
             if (mouseRef.current) {
                 mouseRef.current.onmousedown = null
                 mouseRef.current.onmouseup = null
                 mouseRef.current.onmousemove = null
                 mouseRef.current = null
             }
-
-            // Disconnect client (also disconnects tunnel)
             if (clientRef.current) {
                 clientRef.current.disconnect()
                 clientRef.current = null
             }
-
             tunnelRef.current = null
-
-            // Clear container
-            if (containerRef.current) {
-                containerRef.current.innerHTML = ""
-            }
+            if (containerRef.current) containerRef.current.innerHTML = ""
         }
     }, [connectionId, guacToken, tokenError])
 
-    if (isProvisioning) {
-        return (
-            <div className="flex h-full items-center justify-center bg-[#f9f9f9]">
-                <div className="flex flex-col items-center gap-3">
-                    <Loader2 className="h-8 w-8 animate-spin text-[#1ca9b1]" />
-                    <p className="text-[13px] text-[#727373]">Provisioning VM...</p>
-                </div>
-            </div>
-        )
-    }
-
-    if (tokenError || error) {
-        return (
-            <div className="flex h-full items-center justify-center bg-[#f9f9f9] p-6">
-                <div className="flex max-w-md flex-col items-center gap-3 rounded-xl border border-red-200 bg-red-50 p-6 text-center">
-                    <AlertCircle className="h-8 w-8 text-red-600" />
-                    <p className="text-[13px] text-red-700">{tokenError || error}</p>
-                    <button
-                        onClick={() => window.location.reload()}
-                        className="mt-2 rounded-lg bg-red-600 px-4 py-2 text-[12px] font-medium text-white hover:bg-red-700"
-                    >
-                        Retry Connection
-                    </button>
-                </div>
-            </div>
-        )
-    }
+    // ── Stage stepper helper ────────────────────────────────────────────
+    const currentStageIndex = provisioningStage ? STAGE_ORDER.indexOf(provisioningStage) : -1
+    const showOverlay = isProvisioning || !connectionId || status === "connecting"
 
     return (
         <div className="relative h-full w-full bg-black">
+            {/* Guacamole display — always rendered, even during provisioning */}
             <div ref={containerRef} className="h-full w-full" />
-            {status === "connecting" && (
-                <div className="absolute inset-0 flex items-center justify-center bg-black/50">
-                    <div className="flex flex-col items-center gap-2">
-                        <Loader2 className="h-6 w-6 animate-spin text-white" />
-                        <span className="text-[12px] text-white/80">Connecting...</span>
+
+            {/* Provisioning overlay — absolute positioned over display */}
+            {isProvisioning && (
+                <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-[#f9f9f9]/95 backdrop-blur-sm">
+                    <div className="flex flex-col items-center gap-4 max-w-md px-6">
+                        <Loader2 className="h-8 w-8 animate-spin text-[#1ca9b1]" />
+                        <p className="text-[14px] font-medium text-[#3a3a3a] text-center">
+                            {provisioningMessage || "Initializing lab environment..."}
+                        </p>
+
+                        {/* Stage stepper */}
+                        <div className="w-full mt-2">
+                            <div className="flex items-center justify-between gap-1">
+                                {STAGE_ORDER.map((stage, i) => {
+                                    const reached = currentStageIndex >= i
+                                    const current = currentStageIndex === i
+                                    return (
+                                        <div key={stage} className="flex flex-col items-center gap-1 flex-1">
+                                            <div className={cn(
+                                                "h-2 w-full rounded-full transition-all duration-500",
+                                                reached ? "bg-[#1ca9b1]" : "bg-[#e8e8e8]",
+                                                current && "ring-2 ring-[#1ca9b1] ring-offset-1"
+                                            )} />
+                                            <span className={cn(
+                                                "text-[9px] font-medium uppercase tracking-wider",
+                                                reached ? "text-[#1ca9b1]" : "text-[#c4c4c4]"
+                                            )}>
+                                                {STAGE_LABELS[stage || ""]}
+                                            </span>
+                                        </div>
+                                    )
+                                })}
+                            </div>
+                        </div>
                     </div>
                 </div>
             )}
-            <div className="absolute bottom-2 left-2 rounded bg-black/60 px-2 py-1 text-[10px] text-white/80">
+
+            {/* Connection loading overlay (before provisioning or after) */}
+            {!isProvisioning && status === "connecting" && (
+                <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/50">
+                    <div className="flex flex-col items-center gap-2">
+                        <Loader2 className="h-6 w-6 animate-spin text-white" />
+                        <span className="text-[12px] text-white/80">Connecting to session...</span>
+                    </div>
+                </div>
+            )}
+
+            {/* Error states */}
+            {(tokenError || error) && !isProvisioning && (
+                <div className="absolute inset-0 z-30 flex items-center justify-center bg-[#f9f9f9]/95 backdrop-blur-sm">
+                    <div className="flex max-w-md flex-col items-center gap-3 rounded-xl border border-red-200 bg-red-50 p-6 text-center">
+                        <AlertCircle className="h-8 w-8 text-red-600" />
+                        <p className="text-[13px] text-red-700">{tokenError || error}</p>
+                        <button
+                            onClick={() => window.location.reload()}
+                            className="mt-2 rounded-lg bg-red-600 px-4 py-2 text-[12px] font-medium text-white hover:bg-red-700"
+                        >
+                            Retry Connection
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* Bottom title label */}
+            <div className="absolute bottom-2 left-2 rounded bg-black/60 px-2 py-1 text-[10px] text-white/80 pointer-events-none">
                 {title}
             </div>
+
+            {/* Guide error toast */}
             {errorMessage && (
-                <div className="absolute top-2 right-2 max-w-xs rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+                <div className="absolute top-2 right-2 max-w-xs rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800 pointer-events-none">
                     Guide load failed: {errorMessage}
                 </div>
             )}

@@ -17,7 +17,10 @@ export interface CountdownActions {
     reset: () => void
 }
 
-export function useLabCountdown(expiresAt: string | null): [CountdownState, CountdownActions] {
+export function useLabCountdown(
+    expiresAt: string | null,
+    enabled: boolean = true
+): [CountdownState, CountdownActions] {
     const [timeRemainingMs, setTimeRemainingMs] = useState<number | null>(null)
     const [isExpired, setIsExpired] = useState(false)
     const [showWarning, setShowWarning] = useState(false)
@@ -25,6 +28,7 @@ export function useLabCountdown(expiresAt: string | null): [CountdownState, Coun
     const hasWarned5MinRef = useRef(false)
     const hasWarned1MinRef = useRef(false)
     const timerRef = useRef<number | null>(null)
+    const frozenExpiresAtRef = useRef<string | null>(null)
 
     const clearTimer = useCallback(() => {
         if (timerRef.current !== null) {
@@ -33,15 +37,27 @@ export function useLabCountdown(expiresAt: string | null): [CountdownState, Coun
         }
     }, [])
 
+    // Freeze expiresAt on first valid value — never update from subsequent refreshes
     useEffect(() => {
-        hasWarned5MinRef.current = false
-        hasWarned1MinRef.current = false
-        setShowWarning(false)
-        setIsExpired(false)
+        if (expiresAt && !frozenExpiresAtRef.current) {
+            frozenExpiresAtRef.current = expiresAt
+        }
     }, [expiresAt])
 
+    // Reset warning flags when explicitly disabled then re-enabled
     useEffect(() => {
-        if (!expiresAt) {
+        if (!enabled) {
+            hasWarned5MinRef.current = false
+            hasWarned1MinRef.current = false
+            setShowWarning(false)
+            setIsExpired(false)
+            setTimeRemainingMs(null)
+            clearTimer()
+        }
+    }, [enabled, clearTimer])
+
+    useEffect(() => {
+        if (!enabled || !frozenExpiresAtRef.current) {
             setTimeRemainingMs(null)
             setIsExpired(false)
             setShowWarning(false)
@@ -50,7 +66,7 @@ export function useLabCountdown(expiresAt: string | null): [CountdownState, Coun
         }
 
         const tick = () => {
-            const expiry = new Date(expiresAt).getTime()
+            const expiry = new Date(frozenExpiresAtRef.current!).getTime()
             const now = Date.now()
             const remaining = expiry - now
 
@@ -79,16 +95,18 @@ export function useLabCountdown(expiresAt: string | null): [CountdownState, Coun
         timerRef.current = window.setInterval(tick, 1000)
 
         return clearTimer
-    }, [expiresAt, clearTimer])
+    }, [enabled, clearTimer])
 
     const formattedTime = formatCountdownTime(timeRemainingMs)
 
     const dismissWarning = useCallback(() => setShowWarning(false), [])
     const reset = useCallback(() => {
+        frozenExpiresAtRef.current = null
         hasWarned5MinRef.current = false
         hasWarned1MinRef.current = false
         setShowWarning(false)
         setIsExpired(false)
+        setTimeRemainingMs(null)
     }, [])
 
     return [
