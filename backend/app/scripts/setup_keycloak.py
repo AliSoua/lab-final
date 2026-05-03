@@ -216,6 +216,7 @@ USERS = [
     {"username": "testmoderator2", "email": "testmoderator2@local.test", "firstName": "Test", "lastName": "Moderator", "password": "testmoderator123", "role": "moderator"},
     {"username": "testmoderator3", "email": "testmoderator3@local.test", "firstName": "Test", "lastName": "Moderator", "password": "testmoderator123", "role": "moderator"},
     {"username": "testtrainee", "email": "testtrainee@local.test", "firstName": "Test", "lastName": "Trainee", "password": "testtrainee123", "role": "trainee"},
+    {"username": "testtrainee1", "email": "testtrainee1@local.test", "firstName": "Test", "lastName": "Trainee", "password": "testtrainee123", "role": "trainee"},
 ]
 
 for user in USERS:

@@ -217,19 +217,29 @@ export function ReviewStep() {
                     {data.vms?.map((vm, index) => (
                         <div
                             key={index}
-                            className="flex items-center justify-between py-2 border-b border-[#f0f0f0] last:border-0"
+                            className="py-3 border-b border-[#f0f0f0] last:border-0"
                         >
-                            <div>
+                            <div className="flex items-center justify-between">
                                 <span className="text-[13px] font-medium text-[#3a3a3a]">
                                     {vm.name || `VM ${index + 1}`}
                                 </span>
-                                <p className="text-[11px] text-[#727373]">
-                                    {vm.description || "No description"}
-                                </p>
+                                <div className="text-[11px] text-[#727373] bg-[#f5f5f5] px-3 py-1 rounded-full">
+                                    {vm.cpu_cores} vCPU · {vm.memory_mb / 1024}GB RAM
+                                </div>
                             </div>
-                            <div className="text-[11px] text-[#727373] bg-[#f5f5f5] px-3 py-1 rounded-full">
-                                {vm.cpu_cores} vCPU · {vm.memory_mb / 1024}GB RAM ·{" "}
-                                {vm.disk_gb}GB
+                            <div className="mt-1.5 space-y-0.5">
+                                <p className="text-[11px] text-[#727373]">
+                                    <span className="text-[#c4c4c4]">Source:</span> {vm.source_vm_id}
+                                </p>
+                                <p className="text-[11px] text-[#727373]">
+                                    <span className="text-[#c4c4c4]">Snapshot:</span>{" "}
+                                    <span className="text-[#1ca9b1] font-medium">{vm.snapshot_name}</span>
+                                </p>
+                                {vm.esxi_host && (
+                                    <p className="text-[11px] text-[#727373]">
+                                        <span className="text-[#c4c4c4]">Host:</span> {vm.esxi_host}
+                                    </p>
+                                )}
                             </div>
                         </div>
                     ))}

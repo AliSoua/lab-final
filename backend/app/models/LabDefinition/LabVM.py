@@ -31,6 +31,13 @@ class LabVM(Base):
     # Optional: clone from a specific snapshot instead of current state
     snapshot_name = Column(String(255), nullable=True)
 
+    # Vault path to the moderator's ESXi credentials.
+    # e.g., "credentials/moderators/{mod_id}/{esxi_host}"
+    esxi_vault_path = Column(String(500), nullable=True)
+
+    # Optional: cache host address for UI display (non-sensitive)
+    esxi_host = Column(String(255), nullable=True)
+
     # Minimal resource overrides (nullable = use template defaults)
     cpu_cores = Column(Integer, nullable=True)
     memory_mb = Column(Integer, nullable=True)

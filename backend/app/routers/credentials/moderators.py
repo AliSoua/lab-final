@@ -541,3 +541,210 @@ def get_all_vcenter_templates(
             vc_client.disconnect()
 
     return templates_aggregate
+
+
+@router.get(
+    "/hosts/{esxi_host}/vms",
+    response_model=List[Dict[str, Any]],
+    summary="Get VMs on a specific ESXi host via vCenter",
+)
+def get_vms_on_host(
+    esxi_host: str,
+    request: Request,
+    vault_client: hvac.Client = Depends(require_vault_client),
+    userinfo=Depends(require_role("moderator")),
+):
+    """
+    List all non-template VMs that are currently running on the moderator's ESXi host.
+    Connects via vCenter (admin credentials) and filters by ESXi host name.
+    """
+    user_id = _get_user_id(userinfo)
+    safe_host = _validate_host_name(esxi_host)
+    esxi_path = _build_path(user_id, safe_host)
+
+    # 1. Read moderator's ESXi credentials
+    if not exists_credentials(esxi_path, vault_client):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="ESXi host credentials not found",
+        )
+
+    try:
+        esxi_creds = read_credentials(esxi_path, vault_client)
+    except Exception as e:
+        logger.error("Failed to read ESXi credentials for user=%s: %s", user_id, e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to read ESXi credentials",
+        )
+
+    # 2. Find which vCenter manages this ESXi host
+    #    We iterate all admin vCenters and check which one has this host.
+    admin_ids = _list_all_admin_ids(vault_client)
+    matching_vcenter = None
+
+    for admin_id in admin_ids:
+        try:
+            vcenter_hosts = list_admin_vcenters(admin_id, vault_client)
+            for vcenter_name in vcenter_hosts:
+                vcenter_path = f"credentials/admin/{admin_id}/{vcenter_name}"
+                try:
+                    vcenter_creds = read_credentials(vcenter_path, vault_client)
+                    vc_client = VCenterClient(
+                        host=vcenter_creds.get("host"),
+                        username=vcenter_creds.get("username"),
+                        password=vcenter_creds.get("password"),
+                    )
+                    if not vc_client.connect():
+                        continue
+
+                    # Check if this vCenter has our ESXi host
+                    hosts = vc_client.get_hosts()
+                    host_names = {h.get("name", "").lower() for h in hosts}
+                    
+                    if esxi_host.lower() in host_names or esxi_creds.get("host", "").lower() in host_names:
+                        matching_vcenter = vc_client
+                        break
+
+                    vc_client.disconnect()
+                except Exception:
+                    continue
+
+            if matching_vcenter:
+                break
+        except Exception:
+            continue
+
+    if not matching_vcenter:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Could not find a vCenter managing this ESXi host",
+        )
+
+    try:
+        # 3. Get all VMs and filter by ESXi host
+        all_vms = matching_vcenter.get_vms()
+        host_vms = [
+            vm for vm in all_vms
+            if vm.get("host", "").lower() == esxi_host.lower()
+            or vm.get("host", "").lower() == esxi_creds.get("host", "").lower()
+        ]
+
+        logger.info(
+            "Retrieved %d VMs on ESXi host %s for moderator %s",
+            len(host_vms),
+            esxi_host,
+            user_id,
+        )
+        return host_vms
+
+    except Exception as e:
+        logger.error(
+            "Failed to fetch VMs for host %s (moderator=%s): %s",
+            esxi_host,
+            user_id,
+            e,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch VMs from vCenter",
+        )
+    finally:
+        matching_vcenter.disconnect()
+
+
+@router.get(
+    "/hosts/{esxi_host}/vms/{vm_uuid}/snapshots",
+    response_model=List[Dict[str, Any]],
+    summary="Get snapshots for a specific VM",
+)
+def get_vm_snapshots(
+    esxi_host: str,
+    vm_uuid: str,
+    request: Request,
+    vault_client: hvac.Client = Depends(require_vault_client),
+    userinfo=Depends(require_role("moderator")),
+):
+    """
+    List all snapshots for a specific VM on the moderator's ESXi host.
+    """
+    user_id = _get_user_id(userinfo)
+    safe_host = _validate_host_name(esxi_host)
+    esxi_path = _build_path(user_id, safe_host)
+
+    if not exists_credentials(esxi_path, vault_client):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="ESXi host credentials not found",
+        )
+
+    # Find vCenter that manages this ESXi host (same logic as above)
+    admin_ids = _list_all_admin_ids(vault_client)
+    matching_vcenter = None
+
+    for admin_id in admin_ids:
+        try:
+            vcenter_hosts = list_admin_vcenters(admin_id, vault_client)
+            for vcenter_name in vcenter_hosts:
+                vcenter_path = f"credentials/admin/{admin_id}/{vcenter_name}"
+                try:
+                    vcenter_creds = read_credentials(vcenter_path, vault_client)
+                    vc_client = VCenterClient(
+                        host=vcenter_creds.get("host"),
+                        username=vcenter_creds.get("username"),
+                        password=vcenter_creds.get("password"),
+                    )
+                    if not vc_client.connect():
+                        continue
+
+                    hosts = vc_client.get_hosts()
+                    host_names = {h.get("name", "").lower() for h in hosts}
+                    
+                    if esxi_host.lower() in host_names:
+                        matching_vcenter = vc_client
+                        break
+
+                    vc_client.disconnect()
+                except Exception:
+                    continue
+
+            if matching_vcenter:
+                break
+        except Exception:
+            continue
+
+    if not matching_vcenter:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Could not find a vCenter managing this ESXi host",
+        )
+
+    try:
+        snapshots = matching_vcenter.get_snapshots(vm_uuid)
+        logger.info(
+            "Retrieved %d snapshots for VM %s on host %s (moderator=%s)",
+            len(snapshots),
+            vm_uuid,
+            esxi_host,
+            user_id,
+        )
+        return snapshots
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error(
+            "Failed to fetch snapshots for VM %s (moderator=%s): %s",
+            vm_uuid,
+            user_id,
+            e,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch snapshots from vCenter",
+        )
+    finally:
+        matching_vcenter.disconnect()

@@ -223,8 +223,9 @@ class VCenterClient:
 
         return templates
 
+
     def get_vms(self) -> List[Dict]:
-        """Get all non-template VMs with power status across vCenter."""
+        """Get all non-template VMs across vCenter."""
         if not self._service_instance:
             raise RuntimeError("Not connected to vCenter")
 
@@ -236,28 +237,21 @@ class VCenterClient:
         try:
             for vm in container.view:
                 try:
-                    summary = vm.summary
-
-                    if summary.config and summary.config.template:
+                    config = vm.config
+                    if not config or config.template:
                         continue
 
-                    guest = summary.guest
-                    runtime = summary.runtime
-                    config = summary.config
-
                     vms.append({
-                        "uuid": vm.config.uuid if vm.config else None,
+                        "uuid": config.uuid,
                         "name": vm.name,
-                        "power_state": str(runtime.powerState) if runtime else "unknown",
-                        "guest_os": config.guestFullName if config else None,
-                        "cpu_count": getattr(config, "numCpu", 0) if config else 0,
-                        "memory_mb": getattr(config, "memorySizeMB", 0) if config else 0,
-                        "ip_address": guest.ipAddress if guest else None,
-                        "tools_status": str(guest.toolsStatus) if guest else "toolsNotInstalled",
-                        "is_template": summary.config.template if summary.config else False,
+                        "guest_os": config.guestFullName,
+                        "cpu_count": getattr(config.hardware, "numCPU", 0) if config.hardware else 0,
+                        "memory_mb": getattr(config.hardware, "memoryMB", 0) if config.hardware else 0,
+                        "path": getattr(config.files, "vmPathName", None) if config.files else None,
                         "datacenter": self._get_parent_datacenter_name(vm),
                         "cluster": self._get_parent_cluster_name(vm),
-                        "host": self.host,
+                        "host": self._get_parent_host_name(vm),
+                        "has_snapshots": vm.snapshot is not None,
                     })
                 except Exception as e:
                     vm_name = getattr(vm, "name", "unknown")
@@ -267,6 +261,49 @@ class VCenterClient:
             container.Destroy()
 
         return vms
+
+    def get_snapshots(self, vm_uuid: str) -> List[Dict]:
+        """Get all snapshots for a VM by UUID. Returns list of {name, moid, description, create_time, path}."""
+        if not self._service_instance:
+            raise RuntimeError("Not connected to vCenter")
+
+        vm = self.find_vm_by_uuid(vm_uuid)
+        if not vm:
+            raise ValueError(f"VM with UUID {vm_uuid} not found on {self.host}")
+        if not vm.snapshot:
+            return []
+
+        snapshots = []
+
+        def traverse(node, parent_path=""):
+            current_path = f"{parent_path}/{node.name}" if parent_path else node.name
+            snapshots.append({
+                "name": node.name,
+                "moid": node.snapshot._moId,
+                "description": node.description or "",
+                "create_time": node.createTime.isoformat() if node.createTime else None,
+                "path": current_path,
+            })
+            for child in node.childSnapshotList:
+                traverse(child, current_path)
+
+        for root in vm.snapshot.rootSnapshotList:
+            traverse(root)
+
+        return snapshots
+
+
+    def _get_parent_host_name(self, entity) -> Optional[str]:
+        """Walk up the parent chain to find the ESXi host name."""
+        current = entity
+        while current:
+            if isinstance(current, vim.HostSystem):
+                return current.name
+            if hasattr(current, 'parent'):
+                current = current.parent
+            else:
+                break
+        return None
 
     def get_datastores(self) -> List[Dict]:
         """Get all datastores in vCenter."""

@@ -60,13 +60,12 @@ export interface LabConnectionSlot {
 // VM Template Item for creation
 export interface LabVMItemCreate {
     name: string
-    description?: string
-    source_vm_id: string // UUID as string
+    source_vm_id: string
+    snapshot_name: string
+    esxi_vault_path: string
+    esxi_host?: string
     cpu_cores: number
     memory_mb: number
-    disk_gb: number
-    network_config?: Record<string, any>
-    startup_delay: number
     order: number
 }
 
@@ -151,13 +150,12 @@ export interface CreateFullLabDefinitionFormData {
 
 export const DEFAULT_LAB_VM_ITEM: LabVMItemCreate = {
     name: "",
-    description: "",
     source_vm_id: "",
+    snapshot_name: "",
+    esxi_vault_path: "",
+    esxi_host: "",
     cpu_cores: 2,
     memory_mb: 4096,
-    disk_gb: 50,
-    network_config: {},
-    startup_delay: 0,
     order: 0
 }
 
@@ -248,7 +246,7 @@ export function isValidFullLabForm(data: CreateFullLabDefinitionFormData): boole
     )
 
     const vmsValid = data.vms.length > 0 && data.vms.every(vm =>
-        vm.name && vm.source_vm_id
+        vm.name && vm.source_vm_id && vm.snapshot_name && vm.esxi_vault_path
     )
 
     return basicValid && vmsValid
