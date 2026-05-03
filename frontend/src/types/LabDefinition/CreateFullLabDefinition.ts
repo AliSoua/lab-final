@@ -62,7 +62,6 @@ export interface LabVMItemCreate {
     name: string
     source_vm_id: string
     snapshot_name: string
-    esxi_vault_path: string
     esxi_host?: string
     cpu_cores: number
     memory_mb: number
@@ -152,7 +151,6 @@ export const DEFAULT_LAB_VM_ITEM: LabVMItemCreate = {
     name: "",
     source_vm_id: "",
     snapshot_name: "",
-    esxi_vault_path: "",
     esxi_host: "",
     cpu_cores: 2,
     memory_mb: 4096,
@@ -246,7 +244,7 @@ export function isValidFullLabForm(data: CreateFullLabDefinitionFormData): boole
     )
 
     const vmsValid = data.vms.length > 0 && data.vms.every(vm =>
-        vm.name && vm.source_vm_id && vm.snapshot_name && vm.esxi_vault_path
+        vm.name && vm.source_vm_id && vm.snapshot_name
     )
 
     return basicValid && vmsValid

@@ -1,4 +1,5 @@
 # app/routers/LabDefinition/CreateLabDefinition.py
+
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
@@ -167,6 +168,11 @@ def _validate_connection_slots(
     return resolved
 
 
+def _build_esxi_vault_path(moderator_id: str, esxi_host: str) -> str:
+    """Construct the Vault path for moderator ESXi credentials."""
+    return f"credentials/moderators/{moderator_id}/{esxi_host}"
+
+
 # ==============================================================================
 # FULL LAB DEFINITION ENDPOINTS (With VMs + Connection Slots + Guide)
 # ==============================================================================
@@ -189,6 +195,8 @@ def create_full_lab_definition(
     Connections are NOT created here — they must already exist. Only the slot
     assignments (slug + enabled protocols) are stored on the lab definition.
     """
+    moderator_id = current_user["sub"]
+    
     try:
         # Reject duplicate slug early with a clean message (race still covered by IntegrityError below)
         if db.query(LabDefinition).filter(LabDefinition.slug == data.slug).first():
@@ -218,7 +226,7 @@ def create_full_lab_definition(
             tags=data.tags or [],
             track=data.track,
             thumbnail_url=data.thumbnail_url,
-            created_by=current_user["sub"],
+            created_by=moderator_id,
             status=data.status or "draft",
             is_featured=data.is_featured or False,
             featured_priority=data.featured_priority or 0,
@@ -230,14 +238,20 @@ def create_full_lab_definition(
         db.add(lab)
         db.flush()
         
-        # Create VMs (clones from vCenter/ESXi source VMs)
+        # Create VMs with ESXi vault path resolved from moderator ID
         created_vms = []
         for idx, vm_data in enumerate(data.vms):
+            esxi_vault_path = None
+            if vm_data.esxi_host:
+                esxi_vault_path = _build_esxi_vault_path(moderator_id, vm_data.esxi_host)
+            
             vm = LabVM(
                 lab_id=lab.id,
                 source_vm_id=str(vm_data.source_vm_id),
                 name=vm_data.name,
                 snapshot_name=vm_data.snapshot_name,
+                esxi_vault_path=esxi_vault_path,
+                esxi_host=vm_data.esxi_host,
                 cpu_cores=vm_data.cpu_cores,
                 memory_mb=vm_data.memory_mb,
                 order=vm_data.order if vm_data.order is not None else idx,
@@ -325,6 +339,8 @@ async def create_full_lab_definition_with_thumbnail(
     - **connections**: JSON array of LabConnectionSlot objects (slug + protocol flags)
     - **guide_version_id**: Optional existing guide UUID (must be created separately)
     """
+    moderator_id = current_user["sub"]
+
     def _parse_json_field(field_name: str, raw: Optional[str]):
         if not raw:
             return []
@@ -414,7 +430,7 @@ async def create_full_lab_definition_with_thumbnail(
             tags=tags_list,
             track=track,
             thumbnail_url=None,
-            created_by=current_user["sub"],
+            created_by=moderator_id,
             status="draft",
             is_featured=False,
             featured_priority=0,
@@ -426,14 +442,20 @@ async def create_full_lab_definition_with_thumbnail(
         db.add(lab)
         db.flush()
 
-        # Create VMs
+        # Create VMs with ESXi vault path resolved from moderator ID
         created_vms = []
         for idx, vm_data in enumerate(vms_validated):
+            esxi_vault_path = None
+            if vm_data.esxi_host:
+                esxi_vault_path = _build_esxi_vault_path(moderator_id, vm_data.esxi_host)
+            
             vm = LabVM(
                 lab_id=lab.id,
                 source_vm_id=str(vm_data.source_vm_id),
                 name=vm_data.name,
                 snapshot_name=vm_data.snapshot_name,
+                esxi_vault_path=esxi_vault_path,
+                esxi_host=vm_data.esxi_host,
                 cpu_cores=vm_data.cpu_cores,
                 memory_mb=vm_data.memory_mb,
                 order=vm_data.order if vm_data.order is not None else idx,

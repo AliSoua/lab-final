@@ -84,13 +84,10 @@ export function VMsStep() {
     const handleSelectSnapshot = (vm: typeof selectedVM, snapshot: typeof selectedSnapshot) => {
         if (!vm || !snapshot || !selectedHost) return
 
-        const esxiVaultPath = `credentials/moderators/{mod_id}/${selectedHost}`
-
         setValue("vms", [{
             name: vm.name,
             source_vm_id: vm.uuid,
             snapshot_name: snapshot.name,
-            esxi_vault_path: esxiVaultPath,
             esxi_host: selectedHost,
             cpu_cores: vm.cpu_count,
             memory_mb: vm.memory_mb,
