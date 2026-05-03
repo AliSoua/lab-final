@@ -4,8 +4,9 @@ Lab Monitoring Tasks — Celery Beat scheduled + on-demand triggers.
 
 Improvements:
   - Session timeout enforcer uses Redis ZSET instead of DB polling.
-  - Audit records (LabInstanceTask + EventLog) are ONLY created when an
-    instance is actually acted upon.
+  - Audit records (LabInstanceTask + EventLog) use the standardized
+    task_audit API (start_task, mark_running, record_event, finish_task)
+    for full parity with launch/termination chains.
   - If the expiry queue is empty, the task exits in <1ms with zero DB writes.
 """
 
@@ -21,11 +22,13 @@ from app.utils.db_session import background_session
 from app.utils.expiry_queue import (
     pop_expired_instances as pop_expired_instances_lua,
     remove_instance_expiry,
-    register_instance_expiry,  # ← Added for race condition fix
+    register_instance_expiry,
 )
 from app.models.LabDefinition.LabInstance import LabInstance
-from app.models.LabDefinition.LabInstanceTask import LabInstanceTask
-from app.models.LabDefinition.LabInstanceEventLog import LabInstanceEventLog
+from app.models.LabInstance.enums import EventSeverity, EventSource
+from app.services.LabDefinition.task_audit import (
+    start_task, mark_running, record_event, finish_task,
+)
 from app.services.LabInstance.ManageInstance import terminate_instance
 
 logger = logging.getLogger(__name__)
@@ -36,67 +39,6 @@ STALE_PROVISIONING_MINUTES = 30
 STALE_NO_IP_MINUTES = 15
 EXPIRY_GRACE_SECONDS = 60
 EXPIRY_BATCH_SIZE = 100
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  HELPERS
-# ═══════════════════════════════════════════════════════════════════════════
-
-def _create_monitoring_task(
-    db,
-    *,
-    lab_instance_id: uuid.UUID,
-    task_type: str,
-    worker_pid: int,
-    worker_host: str,
-) -> LabInstanceTask:
-    # Idempotency: return existing running task if found
-    existing = (
-        db.query(LabInstanceTask)
-        .filter(
-            LabInstanceTask.lab_instance_id == lab_instance_id,
-            LabInstanceTask.status == "running",
-            LabInstanceTask.task_type == task_type,
-        )
-        .first()
-    )
-    if existing:
-        return existing
-
-    task = LabInstanceTask(
-        id=uuid.uuid4(),
-        lab_instance_id=lab_instance_id,
-        task_type=task_type,
-        status="running",
-        started_at=datetime.now(timezone.utc),  # ← Already correct
-        worker_pid=worker_pid,
-        worker_host=worker_host,
-    )
-    db.add(task)
-    db.flush()
-    return task
-
-
-def _log_instance_event(
-    db,
-    *,
-    task_id: uuid.UUID,
-    lab_instance_id: uuid.UUID,
-    event_type: str,
-    message: str,
-    metadata: Dict[str, Any] | None = None,
-) -> LabInstanceEventLog:
-    event = LabInstanceEventLog(
-        id=uuid.uuid4(),
-        task_id=task_id,
-        lab_instance_id=lab_instance_id,
-        created_at=datetime.now(timezone.utc),  # ← Already correct
-        event_type=event_type,
-        message=message,
-        metadata_=metadata or {},
-    )
-    db.add(event)
-    return event
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -141,31 +83,47 @@ def instance_health_check(self) -> Dict[str, Any]:
 
         failed_count = 0
         for instance in list(stale_provisioning) + list(stale_no_ip):
+            instance_start_ts = datetime.now(timezone.utc)
             reason = (
                 "stuck provisioning > 30 min"
                 if instance.status == "provisioning"
                 else "running with no IP > 15 min"
             )
 
-            audit_task = _create_monitoring_task(
-                db,
-                lab_instance_id=instance.id,
+            # ── Standardized audit lifecycle ──
+            audit_task_id = start_task(
+                instance.id,
                 task_type="monitoring.health_check",
-                worker_pid=worker_pid,
-                worker_host=worker_host,
+                stage="health_check",
+                metadata={
+                    "reason": reason,
+                    "previous_status": instance.status,
+                    "celery_task_id": celery_task_id,
+                },
+                db=db,
             )
 
-            _log_instance_event(
-                db,
-                task_id=audit_task.id,
-                lab_instance_id=instance.id,
-                event_type="unhealthy_instance_detected",
-                message=f"Instance flagged as unhealthy: {reason}",
+            mark_running(
+                audit_task_id,
+                worker_pid=worker_pid,
+                worker_host=worker_host,
+                db=db,
+            )
+
+            record_event(
+                audit_task_id,
+                instance.id,
+                "unhealthy_instance_detected",
+                f"Instance flagged as unhealthy: {reason}",
+                event_code="UNHEALTHY_INSTANCE_DETECTED",
+                source=EventSource.SYSTEM.value,
+                severity=EventSeverity.WARNING.value,
                 metadata={
                     "previous_status": instance.status,
                     "reason": reason,
                     "celery_task_id": celery_task_id,
                 },
+                db=db,
             )
             db.commit()
 
@@ -178,26 +136,29 @@ def instance_health_check(self) -> Dict[str, Any]:
 
                 instance.status = "failed"
                 instance.error_message = f"Auto-failed: {reason}"
-                # ← FIX: Handle None session_state
                 state = dict(instance.session_state or {})
                 state["status"] = "failed"
                 state["failure_reason"] = reason
                 instance.session_state = state
-
                 db.commit()
 
-                # ← FIX: timezone-aware UTC
-                audit_task.status = "completed"
-                audit_task.finished_at = datetime.now(timezone.utc)
-
-                _log_instance_event(
-                    db,
-                    task_id=audit_task.id,
-                    lab_instance_id=instance.id,
-                    event_type="instance_auto_failed",
-                    message=f"Instance automatically marked as failed: {reason}",
-                    metadata={"new_status": "failed", "failure_reason": reason},
+                duration = (datetime.now(timezone.utc) - instance_start_ts).total_seconds()
+                record_event(
+                    audit_task_id,
+                    instance.id,
+                    "instance_auto_failed",
+                    f"Instance automatically marked as failed: {reason}",
+                    event_code="INSTANCE_AUTO_FAILED",
+                    source=EventSource.SYSTEM.value,
+                    severity=EventSeverity.INFO.value,
+                    metadata={
+                        "new_status": "failed",
+                        "failure_reason": reason,
+                        "duration_seconds": duration,
+                    },
+                    db=db,
                 )
+                finish_task(audit_task_id, "completed", db=db)
                 db.commit()
                 failed_count += 1
 
@@ -205,19 +166,23 @@ def instance_health_check(self) -> Dict[str, Any]:
                 db.rollback()
                 task_logger.error("Failed to mark instance %s as failed: %s", instance.id, e)
 
-                # ← FIX: timezone-aware UTC
-                audit_task.status = "failed"
-                audit_task.finished_at = datetime.now(timezone.utc)
-                audit_task.error_message = str(e)[:500]
-
-                _log_instance_event(
-                    db,
-                    task_id=audit_task.id,
-                    lab_instance_id=instance.id,
-                    event_type="auto_fail_failed",
-                    message=f"Failed to auto-fail instance: {str(e)}",
-                    metadata={"error": str(e), "reason": reason},
+                duration = (datetime.now(timezone.utc) - instance_start_ts).total_seconds()
+                record_event(
+                    audit_task_id,
+                    instance.id,
+                    "auto_fail_failed",
+                    f"Failed to auto-fail instance: {str(e)}",
+                    event_code="AUTO_FAIL_FAILED",
+                    source=EventSource.SYSTEM.value,
+                    severity=EventSeverity.ERROR.value,
+                    metadata={
+                        "error": str(e),
+                        "reason": reason,
+                        "duration_seconds": duration,
+                    },
+                    db=db,
                 )
+                finish_task(audit_task_id, "failed", error_message=str(e)[:500], db=db)
                 db.commit()
 
         task_logger.info(
@@ -274,6 +239,7 @@ def session_timeout_enforcer(self) -> Dict[str, Any]:
 
     with background_session() as db:
         for instance_id_str in expired_ids:
+            instance_start_ts = datetime.now(timezone.utc)
             instance_id = uuid.UUID(instance_id_str)
 
             instance = (
@@ -289,7 +255,6 @@ def session_timeout_enforcer(self) -> Dict[str, Any]:
                 remove_instance_expiry(instance_id_str)
                 continue
 
-            # ← FIX: Normalize DB datetime to UTC to avoid naive/aware comparison
             expires_at = instance.expires_at
             if expires_at and expires_at.tzinfo is None:
                 expires_at = expires_at.replace(tzinfo=timezone.utc)
@@ -303,29 +268,44 @@ def session_timeout_enforcer(self) -> Dict[str, Any]:
                 )
                 continue
 
-            # ── Create audit trail ──
-            audit_task = _create_monitoring_task(
-                db,
-                lab_instance_id=instance.id,
+            # ── Standardized audit lifecycle ──
+            audit_task_id = start_task(
+                instance.id,
                 task_type="monitoring.session_timeout",
-                worker_pid=worker_pid,
-                worker_host=worker_host,
-            )
-
-            _log_instance_event(
-                db,
-                task_id=audit_task.id,
-                lab_instance_id=instance.id,
-                event_type="expired_instance_detected",
-                message=(
-                    f"Instance expired at {expires_at.isoformat() if expires_at else 'unknown'}"
-                ),
+                stage="session_timeout",
                 metadata={
                     "expires_at": expires_at.isoformat() if expires_at else None,
                     "grace_seconds": EXPIRY_GRACE_SECONDS,
                     "previous_status": instance.status,
                     "celery_task_id": celery_task_id,
                 },
+                db=db,
+            )
+
+            mark_running(
+                audit_task_id,
+                worker_pid=worker_pid,
+                worker_host=worker_host,
+                db=db,
+            )
+
+            record_event(
+                audit_task_id,
+                instance.id,
+                "expired_instance_detected",
+                (
+                    f"Instance expired at {expires_at.isoformat() if expires_at else 'unknown'}"
+                ),
+                event_code="EXPIRED_INSTANCE_DETECTED",
+                source=EventSource.SYSTEM.value,
+                severity=EventSeverity.WARNING.value,
+                metadata={
+                    "expires_at": expires_at.isoformat() if expires_at else None,
+                    "grace_seconds": EXPIRY_GRACE_SECONDS,
+                    "previous_status": instance.status,
+                    "celery_task_id": celery_task_id,
+                },
+                db=db,
             )
             db.commit()
 
@@ -340,20 +320,23 @@ def session_timeout_enforcer(self) -> Dict[str, Any]:
 
                 terminate_instance(db, instance.id, instance.trainee_id)
 
-                audit_task.status = "completed"
-                audit_task.finished_at = datetime.now(timezone.utc)
-
-                _log_instance_event(
-                    db,
-                    task_id=audit_task.id,
-                    lab_instance_id=instance.id,
-                    event_type="instance_auto_terminated",
-                    message="Instance automatically terminated due to session expiry",
+                duration = (datetime.now(timezone.utc) - instance_start_ts).total_seconds()
+                record_event(
+                    audit_task_id,
+                    instance.id,
+                    "instance_auto_terminated",
+                    "Instance automatically terminated due to session expiry",
+                    event_code="INSTANCE_AUTO_TERMINATED",
+                    source=EventSource.SYSTEM.value,
+                    severity=EventSeverity.INFO.value,
                     metadata={
                         "terminated_at": datetime.now(timezone.utc).isoformat(),
                         "expires_at": expires_at.isoformat() if expires_at else None,
+                        "duration_seconds": duration,
                     },
+                    db=db,
                 )
+                finish_task(audit_task_id, "completed", db=db)
                 db.commit()
                 terminated_count += 1
 
@@ -366,21 +349,23 @@ def session_timeout_enforcer(self) -> Dict[str, Any]:
                     exc_info=True,
                 )
 
-                audit_task.status = "failed"
-                audit_task.finished_at = datetime.now(timezone.utc)
-                audit_task.error_message = str(e)[:500]
-
-                _log_instance_event(
-                    db,
-                    task_id=audit_task.id,
-                    lab_instance_id=instance.id,
-                    event_type="auto_terminate_failed",
-                    message=f"Failed to auto-terminate expired instance: {str(e)}",
+                duration = (datetime.now(timezone.utc) - instance_start_ts).total_seconds()
+                record_event(
+                    audit_task_id,
+                    instance.id,
+                    "auto_terminate_failed",
+                    f"Failed to auto-terminate expired instance: {str(e)}",
+                    event_code="AUTO_TERMINATE_FAILED",
+                    source=EventSource.SYSTEM.value,
+                    severity=EventSeverity.ERROR.value,
                     metadata={
                         "error": str(e),
                         "expires_at": expires_at.isoformat() if expires_at else None,
+                        "duration_seconds": duration,
                     },
+                    db=db,
                 )
+                finish_task(audit_task_id, "failed", error_message=str(e)[:500], db=db)
                 db.commit()
 
     task_logger.info(
