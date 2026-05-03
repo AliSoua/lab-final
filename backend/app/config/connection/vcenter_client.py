@@ -615,24 +615,28 @@ class VCenterClient:
             raise ValueError(f"Source VM {source_vm_uuid} not found on {self.host}")
 
         # Build relocate spec — pin to specific ESXi host
-        relocate_spec = vim.vm.RelocateSpec(
-            host=vim.ManagedObject(esxi_host_moid),
-        )
+        # Use vim.HostSystem(moid, stub) instead of vim.ManagedObject()
+        host_obj = vim.HostSystem(esxi_host_moid, self._service_instance._stub)
+        relocate_spec = vim.vm.RelocateSpec(host=host_obj)
 
         # Use provided resource pool or fall back to source VM's pool
         if resource_pool_moid:
-            relocate_spec.pool = vim.ManagedObject(resource_pool_moid)
+            pool_obj = vim.ResourcePool(resource_pool_moid, self._service_instance._stub)
+            relocate_spec.pool = pool_obj
         else:
             relocate_spec.pool = source_vm.resourcePool
 
         if datastore_moid:
-            relocate_spec.datastore = vim.ManagedObject(datastore_moid)
+            ds_obj = vim.Datastore(datastore_moid, self._service_instance._stub)
+            relocate_spec.datastore = ds_obj
 
         # Build clone spec with snapshot reference
+        # snapshot must be a vim.VirtualMachineSnapshot object
+        snapshot_obj = vim.VirtualMachineSnapshot(snapshot_moid, self._service_instance._stub)
         clone_spec = vim.vm.CloneSpec(
             location=relocate_spec,
-            snapshot=vim.ManagedObject(snapshot_moid),
-            linkedClone=True,  # ← KEY: linked clone
+            snapshot=snapshot_obj,
+            linkedClone=True,
             powerOn=False,
         )
 
