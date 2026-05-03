@@ -35,6 +35,7 @@ from app.services.LabInstance.utils import (
     _call_with_timeout, _find_vcenter_for_template, _find_vcenter_credentials,
     _compute_max_score, _build_initial_session_state, _sync_guacamole_connections,
 )
+from app.services.vault.credentials import read_credentials
 
 logger = logging.getLogger(__name__)
 
@@ -205,7 +206,7 @@ def run_discover_vcenter(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  TASK 3: CLONE VM
+#  TASK 3: LINKED CLONE FROM SNAPSHOT
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def run_clone_vm(
@@ -215,7 +216,7 @@ def run_clone_vm(
     vcenter_host: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Clones the VM from template.
+    Creates a linked clone from a snapshot onto the moderator's ESXi host.
     Idempotent: skips if launch_stage >= 'vm_cloned' or vm_uuid exists.
     """
     task_uuid = uuid.UUID(task_id)
@@ -249,65 +250,117 @@ def run_clone_vm(
 
         lab = instance.lab_definition
         vm_config = lab.vms[0] if lab and lab.vms else None
+        if not vm_config:
+            fail_instance(instance_uuid, task_uuid, "No VM config found in lab definition", "no_vm_config")
+            return {"status": "failed"}
+
         source_vm_id = vm_config.source_vm_id
+        snapshot_name = vm_config.snapshot_name
+        esxi_vault_path = vm_config.esxi_vault_path
+        esxi_host_name = vm_config.esxi_host
+
         lab_slug = lab.slug
         vcenter_host = vcenter_host or instance.vcenter_host
         db.commit()
 
-    # External action
-    creds = _find_vcenter_credentials(vcenter_host)
-    if not creds:
-        fail_instance(instance_uuid, task_uuid, f"No credentials for {vcenter_host}", "vcenter_creds_not_found")
+    # ── Resolve ESXi credentials from Vault ─────────────────────────────
+    if not esxi_vault_path:
+        fail_instance(instance_uuid, task_uuid, "No ESXi vault path configured for this lab VM", "no_esxi_vault_path")
         return {"status": "failed"}
 
-    client = VCenterClient(host=creds["host"], username=creds["username"], password=creds["password"])
+    esxi_creds = read_credentials(esxi_vault_path)
+    if not esxi_creds:
+        fail_instance(instance_uuid, task_uuid, f"Cannot read ESXi credentials from {esxi_vault_path}", "esxi_creds_not_found")
+        return {"status": "failed"}
+
+    # ── Resolve vCenter credentials ─────────────────────────────────────
+    vcenter_creds = _find_vcenter_credentials(vcenter_host)
+    if not vcenter_creds:
+        fail_instance(instance_uuid, task_uuid, f"No credentials for vCenter {vcenter_host}", "vcenter_creds_not_found")
+        return {"status": "failed"}
+
+    client = VCenterClient(
+        host=vcenter_creds["host"],
+        username=vcenter_creds["username"],
+        password=vcenter_creds["password"],
+    )
     if not client.connect():
         fail_instance(instance_uuid, task_uuid, f"Cannot connect to vCenter {vcenter_host}", "vcenter_connect_failed")
+        return {"status": "failed"}
+
+    # ── Resolve snapshot MOID and ESXi host MOID ────────────────────────
+    try:
+        snapshot_moid = client.find_snapshot_moid(source_vm_id, snapshot_name)
+        if not snapshot_moid:
+            raise ValueError(f"Snapshot '{snapshot_name}' not found on VM {source_vm_id}")
+
+        esxi_host_moid = client.find_host_moid(esxi_host_name)
+        if not esxi_host_moid:
+            raise ValueError(f"ESXi host '{esxi_host_name}' not found in vCenter")
+    except Exception as e:
+        client.disconnect()
+        fail_instance(instance_uuid, task_uuid, f"Failed to resolve clone targets: {e}", "resolve_failed")
         return {"status": "failed"}
 
     new_vm_name = f"{lab_slug}-{trainee_id[:8]}-{uuid.uuid4().hex[:8]}"
 
     try:
-        task_logger.info("Cloning VM | template=%s name=%s", source_vm_id, new_vm_name)
+        task_logger.info(
+            "Linked cloning VM | source=%s snapshot=%s host=%s name=%s",
+            source_vm_id, snapshot_name, esxi_host_name, new_vm_name
+        )
 
         # Emit start event
         with background_session() as db:
             record_event(
                 task_uuid, instance_uuid, "clone_started",
-                f"Starting VM clone from template {source_vm_id}",
+                f"Starting linked clone from snapshot {snapshot_name}",
                 event_code="CLONE_STARTED",
                 metadata={
-                    "template_uuid": source_vm_id,
+                    "source_vm_uuid": source_vm_id,
+                    "snapshot_name": snapshot_name,
+                    "snapshot_moid": snapshot_moid,
+                    "esxi_host": esxi_host_name,
+                    "esxi_host_moid": esxi_host_moid,
                     "new_vm_name": new_vm_name,
-                    "vcenter_host": creds["host"],
+                    "vcenter_host": vcenter_creds["host"],
                 },
                 db=db,
             )
             db.commit()
 
-        clone_result = _call_with_timeout(client.clone_vm, 220, template_uuid=source_vm_id, new_vm_name=new_vm_name)
+        # Execute linked clone
+        clone_result = _call_with_timeout(
+            client.linked_clone,
+            300,  # Linked clones are faster, but give more time
+            source_vm_uuid=source_vm_id,
+            snapshot_moid=snapshot_moid,
+            esxi_host_moid=esxi_host_moid,
+            new_vm_name=new_vm_name,
+        )
         vm_uuid = clone_result["uuid"]
 
-        task_logger.info("Clone completed | vm_uuid=%s", vm_uuid)
+        task_logger.info("Linked clone completed | vm_uuid=%s", vm_uuid)
 
         # Emit completion event
         duration = (datetime.now(timezone.utc) - task_start_ts).total_seconds()
         with background_session() as db:
             record_event(
                 task_uuid, instance_uuid, "clone_completed",
-                f"VM clone completed successfully",
+                f"Linked clone completed successfully",
                 event_code="CLONE_COMPLETED",
                 metadata={
                     "vm_uuid": vm_uuid,
                     "vm_name": new_vm_name,
-                    "vcenter_host": creds["host"],
+                    "esxi_host": esxi_host_name,
+                    "vcenter_host": vcenter_creds["host"],
                     "duration_seconds": duration,
                 },
                 db=db,
             )
             db.commit()
     except Exception as e:
-        fail_instance(instance_uuid, task_uuid, f"Clone failed: {e}", "clone_failed")
+        fail_instance(instance_uuid, task_uuid, f"Linked clone failed: {e}", "clone_failed")
         return {"status": "failed"}
     finally:
         client.disconnect()
@@ -316,7 +369,11 @@ def run_clone_vm(
     persist_stage(
         instance_uuid,
         LaunchStage.VM_CLONED,
-        updates={"vm_uuid": vm_uuid, "vm_name": new_vm_name},
+        updates={
+            "vm_uuid": vm_uuid,
+            "vm_name": new_vm_name,
+            "esxi_host": esxi_host_name,
+        },
         task_id=task_uuid,
     )
 

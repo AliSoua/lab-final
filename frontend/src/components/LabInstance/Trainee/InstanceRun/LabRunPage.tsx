@@ -133,7 +133,7 @@ export function LabRunPage({ instanceId }: LabRunPageProps) {
         try {
             closeSse()
             await terminateInstance(instanceId)
-            navigate("/labs")
+            navigate("/lab-instances")
         } catch {
             // Error handled by hook
         }

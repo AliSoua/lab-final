@@ -561,6 +561,97 @@ class VCenterClient:
                 break
         return None
 
+        
+    def find_host_moid(self, host_name: str) -> Optional[str]:
+        """Find ESXi host MOID by name (FQDN or short name)."""
+        if not self._service_instance:
+            raise RuntimeError("Not connected to vCenter")
+
+        container = self._content.viewManager.CreateContainerView(
+            self._content.rootFolder, [vim.HostSystem], True
+        )
+        try:
+            for host in container.view:
+                # Match exact, FQDN, or short name
+                names = {host.name, host.name.split(".")[0]}
+                if host_name in names or host_name.split(".")[0] in names:
+                    return host._moId
+            return None
+        finally:
+            container.Destroy()
+
+    def find_snapshot_moid(self, vm_uuid: str, snapshot_name: str) -> Optional[str]:
+        """Traverse VM snapshot tree to find MOID by name."""
+        vm = self.find_vm_by_uuid(vm_uuid)
+        if not vm or not vm.snapshot:
+            return None
+
+        def traverse(nodes):
+            for node in nodes:
+                if node.name == snapshot_name:
+                    return node.snapshot._moId
+                if node.childSnapshotList:
+                    found = traverse(node.childSnapshotList)
+                    if found:
+                        return found
+            return None
+
+        return traverse(vm.snapshot.rootSnapshotList)
+
+    def linked_clone(
+        self,
+        source_vm_uuid: str,
+        snapshot_moid: str,
+        esxi_host_moid: str,
+        new_vm_name: str,
+        resource_pool_moid: Optional[str] = None,
+        datastore_moid: Optional[str] = None,
+    ) -> dict:
+        """
+        Create a linked clone from a snapshot onto a specific ESXi host.
+        """
+        source_vm = self.find_vm_by_uuid(source_vm_uuid)
+        if not source_vm:
+            raise ValueError(f"Source VM {source_vm_uuid} not found on {self.host}")
+
+        # Build relocate spec — pin to specific ESXi host
+        relocate_spec = vim.vm.RelocateSpec(
+            host=vim.ManagedObject(esxi_host_moid),
+        )
+
+        # Use provided resource pool or fall back to source VM's pool
+        if resource_pool_moid:
+            relocate_spec.pool = vim.ManagedObject(resource_pool_moid)
+        else:
+            relocate_spec.pool = source_vm.resourcePool
+
+        if datastore_moid:
+            relocate_spec.datastore = vim.ManagedObject(datastore_moid)
+
+        # Build clone spec with snapshot reference
+        clone_spec = vim.vm.CloneSpec(
+            location=relocate_spec,
+            snapshot=vim.ManagedObject(snapshot_moid),
+            linkedClone=True,  # ← KEY: linked clone
+            powerOn=False,
+        )
+
+        # Clone into the same folder as source VM
+        folder = source_vm.parent
+        task = source_vm.CloneVM_Task(
+            folder=folder,
+            name=new_vm_name,
+            spec=clone_spec,
+        )
+
+        new_vm = self._wait_for_task(task)
+
+        return {
+            "uuid": new_vm.config.uuid,
+            "name": new_vm.name,
+            "moid": new_vm._moId,
+        }
+
 @contextmanager
 def vcenter_connection(host: str, username: str, password: str):
     """Context manager for vCenter connections."""
