@@ -212,7 +212,7 @@ class VCenterClient:
                         "path": getattr(files, "vmPathName", None) if files else None,
                         "datacenter": self._get_parent_datacenter_name(vm),
                         "cluster": self._get_parent_cluster_name(vm),
-                        "host": self.host,
+                        "host": vm.runtime.host.name if vm.runtime and vm.runtime.host else None,
                     })
                 except Exception as e:
                     vm_name = getattr(vm, "name", "unknown")
@@ -250,7 +250,7 @@ class VCenterClient:
                         "path": getattr(config.files, "vmPathName", None) if config.files else None,
                         "datacenter": self._get_parent_datacenter_name(vm),
                         "cluster": self._get_parent_cluster_name(vm),
-                        "host": self._get_parent_host_name(vm),
+                        "host": vm.runtime.host.name if vm.runtime and vm.runtime.host else None,
                         "has_snapshots": vm.snapshot is not None,
                     })
                 except Exception as e:

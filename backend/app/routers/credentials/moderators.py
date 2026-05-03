@@ -33,6 +33,23 @@ router = APIRouter(
     dependencies=[Depends(require_role("moderator"))],
 )
 
+def _host_matches(vm_host: str | None, target_hosts: list[str]) -> bool:
+    """Check if vm_host matches any target host, handling FQDN vs short name."""
+    if not vm_host:
+        return False
+    vm_lower = vm_host.lower()
+    for target in target_hosts:
+        if not target:
+            continue
+        target_lower = target.lower()
+        # Exact match
+        if vm_lower == target_lower:
+            return True
+        # One is substring of the other (FQDN vs short name)
+        if vm_lower in target_lower or target_lower in vm_lower:
+            return True
+    return False
+
 
 def _get_user_id(userinfo) -> str:
     uid = userinfo.get("sub")
@@ -579,7 +596,6 @@ def get_vms_on_host(
         )
 
     # 2. Find which vCenter manages this ESXi host
-    #    We iterate all admin vCenters and check which one has this host.
     admin_ids = _list_all_admin_ids(vault_client)
     matching_vcenter = None
 
@@ -600,9 +616,9 @@ def get_vms_on_host(
 
                     # Check if this vCenter has our ESXi host
                     hosts = vc_client.get_hosts()
-                    host_names = {h.get("name", "").lower() for h in hosts}
-                    
-                    if esxi_host.lower() in host_names or esxi_creds.get("host", "").lower() in host_names:
+                    host_names = {(h.get("name") or "").lower() for h in hosts}
+
+                    if esxi_host.lower() in host_names or (esxi_creds.get("host") or "").lower() in host_names:
                         matching_vcenter = vc_client
                         break
 
@@ -626,8 +642,7 @@ def get_vms_on_host(
         all_vms = matching_vcenter.get_vms()
         host_vms = [
             vm for vm in all_vms
-            if vm.get("host", "").lower() == esxi_host.lower()
-            or vm.get("host", "").lower() == esxi_creds.get("host", "").lower()
+            if _host_matches(vm.get("host"), [esxi_host, esxi_creds.get("host")])
         ]
 
         logger.info(
