@@ -609,38 +609,78 @@ class VCenterClient:
     ) -> dict:
         """
         Create a linked clone from a snapshot onto a specific ESXi host.
+        Uses diskMoveType=createNewChildDiskBacking (the correct way for linked clones).
         """
+        from pyVmomi import vim
+
         source_vm = self.find_vm_by_uuid(source_vm_uuid)
         if not source_vm:
             raise ValueError(f"Source VM {source_vm_uuid} not found on {self.host}")
 
-        # Build relocate spec — pin to specific ESXi host
-        # Use vim.HostSystem(moid, stub) instead of vim.ManagedObject()
-        host_obj = vim.HostSystem(esxi_host_moid, self._service_instance._stub)
-        relocate_spec = vim.vm.RelocateSpec(host=host_obj)
+        # ── VALIDATION ──────────────────────────────────────────────────────
+        if source_vm.config and source_vm.config.template:
+            raise ValueError(
+                f"Source {source_vm_uuid} is a template. "
+                f"Linked clones require a VM with a snapshot, not a template."
+            )
 
-        # Use provided resource pool or fall back to source VM's pool
+        if not source_vm.snapshot:
+            raise ValueError(
+                f"Source VM {source_vm_uuid} has no snapshots. "
+                f"Create a snapshot before attempting a linked clone."
+            )
+
+        # ── DIAGNOSTIC LOGGING ──────────────────────────────────────────────
+        logger.info(
+            "linked_clone | source_vm=%s snapshot_moid=%s esxi_host=%s",
+            source_vm.name, snapshot_moid, esxi_host_moid
+        )
+
+        # ── Build relocate spec ─────────────────────────────────────────────
+        # KEY FIX: Use diskMoveType=createNewChildDiskBacking for linked clones
+        # This is REQUIRED — linkedClone=True alone is not enough
+        relocate_spec = vim.vm.RelocateSpec(
+            diskMoveType=vim.vm.RelocateSpec.DiskMoveOptions.createNewChildDiskBacking,
+        )
+
+        # Pin to specific ESXi host
+        host_obj = vim.HostSystem(esxi_host_moid, self._service_instance._stub)
+        relocate_spec.host = host_obj
+
+        # Resolve resource pool — REQUIRED when host is specified
         if resource_pool_moid:
             pool_obj = vim.ResourcePool(resource_pool_moid, self._service_instance._stub)
             relocate_spec.pool = pool_obj
         else:
-            relocate_spec.pool = source_vm.resourcePool
+            # Find resource pool for the target host
+            pool = self._find_resource_pool_for_host(host_obj)
+            if pool:
+                relocate_spec.pool = pool
+                logger.info("Using resource pool for host %s: %s", esxi_host_moid, pool._moId)
+            else:
+                # Fallback to source VM's pool (may fail if host is in different cluster)
+                relocate_spec.pool = source_vm.resourcePool
+                logger.warning("Falling back to source VM resource pool")
 
         if datastore_moid:
             ds_obj = vim.Datastore(datastore_moid, self._service_instance._stub)
             relocate_spec.datastore = ds_obj
 
-        # Build clone spec with snapshot reference
-        # snapshot must be a vim.VirtualMachineSnapshot object
-        snapshot_obj = vim.VirtualMachineSnapshot(snapshot_moid, self._service_instance._stub)
+        # ── Build clone spec ────────────────────────────────────────────────
+        # KEY FIX: Use the snapshot object directly from the VM's snapshot tree
+        # Do NOT construct vim.VirtualMachineSnapshot(moid, stub) — it may not work
+        snapshot_obj = self._get_snapshot_obj_by_moid(source_vm, snapshot_moid)
+        if not snapshot_obj:
+            raise ValueError(f"Snapshot MOID {snapshot_moid} not found on VM {source_vm_uuid}")
+
         clone_spec = vim.vm.CloneSpec(
             location=relocate_spec,
             snapshot=snapshot_obj,
-            linkedClone=True,
             powerOn=False,
+            template=False,
         )
 
-        # Clone into the same folder as source VM
+        # ── Execute clone ───────────────────────────────────────────────────
         folder = source_vm.parent
         task = source_vm.CloneVM_Task(
             folder=folder,
@@ -655,6 +695,34 @@ class VCenterClient:
             "name": new_vm.name,
             "moid": new_vm._moId,
         }
+
+
+    def _find_resource_pool_for_host(self, host_obj) -> Optional[vim.ResourcePool]:
+        """Find the default resource pool for a host's cluster."""
+        parent = host_obj.parent
+        if isinstance(parent, vim.ClusterComputeResource):
+            return parent.resourcePool
+        elif isinstance(parent, vim.ComputeResource):
+            return parent.resourcePool
+        return None
+
+
+    def _get_snapshot_obj_by_moid(self, vm, snapshot_moid: str):
+        """Get the actual snapshot object (not just MOID string) from a VM's snapshot tree."""
+        if not vm.snapshot:
+            return None
+
+        def traverse(nodes):
+            for node in nodes:
+                if node.snapshot._moId == snapshot_moid:
+                    return node.snapshot
+                if node.childSnapshotList:
+                    found = traverse(node.childSnapshotList)
+                    if found:
+                        return found
+            return None
+
+        return traverse(vm.snapshot.rootSnapshotList)
 
 @contextmanager
 def vcenter_connection(host: str, username: str, password: str):

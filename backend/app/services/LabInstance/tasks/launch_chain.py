@@ -329,10 +329,19 @@ def run_clone_vm(
             )
             db.commit()
 
-        # Execute linked clone
-        clone_result = _call_with_timeout(
-            client.linked_clone,
-            300,  # Linked clones are faster, but give more time
+        # ── DIAGNOSTIC: Log source VM details before clone ────────────────
+        source_vm = client.find_vm_by_uuid(source_vm_id)
+        task_logger.info(
+            "Source VM diagnostic | name=%s is_template=%s config.template=%s runtime.host=%s",
+            getattr(source_vm, 'name', 'unknown'),
+            getattr(getattr(source_vm, 'config', None), 'template', 'unknown'),
+            getattr(source_vm, 'config', None) is not None,
+            getattr(getattr(source_vm, 'runtime', None), 'host', None),
+        )
+
+        # Execute linked clone — call directly, NOT through _call_with_timeout
+        # _call_with_timeout breaks instance method binding
+        clone_result = client.linked_clone(
             source_vm_uuid=source_vm_id,
             snapshot_moid=snapshot_moid,
             esxi_host_moid=esxi_host_moid,
@@ -360,6 +369,7 @@ def run_clone_vm(
             )
             db.commit()
     except Exception as e:
+        task_logger.exception("Linked clone failed: %s", e)
         fail_instance(instance_uuid, task_uuid, f"Linked clone failed: {e}", "clone_failed")
         return {"status": "failed"}
     finally:
